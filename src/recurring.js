@@ -12,12 +12,14 @@
 //   day-of-month label (monthly/bimonthly/semi-annually/annually): first | middle | last
 //                               -> 1st / 15th / last day of month
 //   skip | replace (| always)   (optional collision policy; default replace)
+//   paused                       (optional) -> stop generating until removed
 //
 //   Description directives (optional; parsed then stripped from the copy):
 //     month: june          alternative to month labels (which month(s))
 //     week: even | odd      which week for biweekly (default even/0)
 //     week: 0 | 1 | 2       which week for triweekly (default 0)
 //     dueafter: 2           due date N days out (default today)
+//     start: 2026-06-27     first eligible date; also anchors the every-N-weeks cycle
 //
 //   Every other label (e.g. "kitchen") is copied onto the spawned chore.
 //
@@ -100,6 +102,8 @@ function parseLabelConfig(labelNodes) {
       config.onExisting = name; // skip | replace | always
     } else if (name in MONTHS) {
       (config.months ||= []).push(MONTHS[name]); // jan..dec (annual/semi/bimonthly)
+    } else if (name === "paused") {
+      config.paused = true; // skip generation while present
     } else {
       passthroughLabelIds.push(l.id); // a real label (room, etc.)
     }
@@ -113,8 +117,8 @@ function mergeMonths(a, b) {
   return set.length ? set : undefined;
 }
 
-// month/week/dueafter/opposite live in the description; parsed then stripped.
-const DESC_DIRECTIVE_RE = /^\s*(month|week|dueafter|opposite)\s*:/i;
+// month/week/dueafter/opposite/start live in the description; parsed then stripped.
+const DESC_DIRECTIVE_RE = /^\s*(month|week|dueafter|opposite|start)\s*:/i;
 function parseDescriptionConfig(description) {
   const cfg = {};
   if (!description) return cfg;
@@ -138,6 +142,9 @@ function parseDescriptionConfig(description) {
   // opposite: <chore title> -> assign the other member from that chore this run
   const opp = description.match(/^\s*opposite\s*:\s*(.+)$/im);
   if (opp) cfg.opposite = opp[1].trim();
+  // start: YYYY-MM-DD -> first eligible date; also anchors the biweekly/triweekly cycle
+  const st = description.match(/^\s*start\s*:\s*(\d{4}-\d{2}-\d{2})\s*$/im);
+  if (st) cfg.start = st[1];
   return cfg;
 }
 function stripDescription(description) {
@@ -217,10 +224,14 @@ function targetDayOfMonth(chore, L) {
 
 function isDueToday(chore, now) {
   const L = localDate(now);
+  if (chore.start && L.ymd < chore.start) return false; // hasn't started yet
   const onWeekday = (chore.days || []).map((d) => WEEKDAYS[d]).includes(L.weekday);
   const onTargetDay = L.dom === targetDayOfMonth(chore, L);
   const inMonths = (fallback) =>
     (chore.months?.length ? chore.months : fallback).includes(L.month);
+  // A start date anchors the every-N-weeks cycle; otherwise use the week: phase.
+  const phase = (n) =>
+    chore.anchorWeek != null ? ((chore.anchorWeek % n) + n) % n : (chore.weekPhase ?? 0);
 
   switch (chore.cadence) {
     case "daily":
@@ -228,9 +239,9 @@ function isDueToday(chore, now) {
     case "weekly":
       return onWeekday;
     case "biweekly":
-      return onWeekday && L.weekIndex % 2 === (chore.weekPhase ?? 0);
+      return onWeekday && L.weekIndex % 2 === phase(2);
     case "triweekly":
-      return onWeekday && L.weekIndex % 3 === (chore.weekPhase ?? 0);
+      return onWeekday && L.weekIndex % 3 === phase(3);
     case "semi-monthly":
       return L.dom === 1 || L.dom === 15; // 1st and 15th
     case "monthly":
@@ -261,6 +272,7 @@ async function buildDefs(env) {
         console.warn(`Template "${t.title}" has no frequency label — skipping.`);
         continue;
       }
+      if (config.paused) continue; // `paused` label -> don't generate
       const descCfg = parseDescriptionConfig(t.description);
       defs.push({
         title: t.title,
@@ -276,6 +288,10 @@ async function buildDefs(env) {
         dueAfterDays: descCfg.dueAfterDays,
         opposite: descCfg.opposite, // assign opposite of this chore's owner
         assigneeId: t.assignee?.id, // explicit owner on the template = fixed
+        start: descCfg.start, // first eligible date
+        anchorWeek: descCfg.start
+          ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex
+          : undefined,
       });
     }
   } catch (err) {
@@ -529,19 +545,26 @@ export async function annotateTemplates(env) {
     const { config } = parseLabelConfig(t.labels?.nodes || []);
     if (!config.cadence) continue;
     const descCfg = parseDescriptionConfig(t.description);
-    const chore = {
-      cadence: config.cadence,
-      days: config.days,
-      dom: config.dom,
-      months: mergeMonths(config.months, descCfg.months),
-      weekPhase: descCfg.weekPhase,
-    };
 
-    const next = nextOccurrences(chore, 3).map(formatDate);
-    const body =
-      `${SCHEDULE_MARKER} _(auto-generated; not copied to spawned chores)_\n` +
-      `${describeSchedule(chore)}\n` +
-      `**Next:** ${next.join(" · ") || "—"}`;
+    const head = `${SCHEDULE_MARKER} _(auto-generated; not copied to spawned chores)_\n`;
+    let body;
+    if (config.paused) {
+      body = `${head}⏸️ Paused — scheduling disabled. Remove the \`paused\` label to resume.`;
+    } else {
+      const chore = {
+        cadence: config.cadence,
+        days: config.days,
+        dom: config.dom,
+        months: mergeMonths(config.months, descCfg.months),
+        weekPhase: descCfg.weekPhase,
+        start: descCfg.start,
+        anchorWeek: descCfg.start
+          ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex
+          : undefined,
+      };
+      const next = nextOccurrences(chore, 3).map(formatDate);
+      body = `${head}${describeSchedule(chore)}\n**Next:** ${next.join(" · ") || "—"}`;
+    }
 
     const existing = (t.comments?.nodes || []).find((c) =>
       c.body?.startsWith(SCHEDULE_MARKER),

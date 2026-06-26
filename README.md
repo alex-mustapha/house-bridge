@@ -169,6 +169,8 @@ so only one can be picked at a time.
   `replace` only supersedes the previous copy once it's **overdue** (so you get
   the full window to finish on time); `skip` never makes a second copy while one
   is still open.
+- **`paused` label** (optional): stops generating that chore until you remove it
+  — ideal for seasonal chores (pause mowing in winter, resume in spring).
 
 What each frequency does:
 - `daily` — every day
@@ -192,6 +194,9 @@ Optional description directives (parsed, then stripped from the copied body):
 - `dueafter: 2` — due date N days out (default today)
 - `opposite: Change sheets` — assign the *other* person from that chore's owner
   this run (both chores must be due the same day for it to apply)
+- `start: 2026-06-27` — the first eligible date (nothing generates before it);
+  for `biweekly`/`triweekly` it also **anchors** the cycle, so it proceeds every
+  2 / 3 weeks from that date (no need to figure out even/odd)
 
 Every other label (e.g. `kitchen`) is copied onto the spawned chore.
 
