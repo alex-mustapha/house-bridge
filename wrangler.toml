@@ -1,0 +1,23 @@
+name = "linear-discord-bridge"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# Daily digest + recurring-chore creation.
+# IMPORTANT: Cloudflare cron is UTC and does NOT observe daylight saving.
+# "0 12 * * *" = 8:00am EDT (summer) / 7:00am EST (winter) for US Eastern.
+# If you'd rather hold a steady 8am through winter, switch to "0 13 * * *"
+# when EST starts (early November) and back to "0 12 * * *" in March.
+[triggers]
+crons = ["0 12 * * *"]
+
+# Non-secret config. Secrets (API keys, webhook URLs) are set via
+# `wrangler secret put NAME` — see README.
+[vars]
+DUE_LOOKAHEAD_DAYS = "3"
+# Warn in #bot-log once active (non-archived) issues reach this count.
+# Free plan caps at 250; 220 gives you runway to archive.
+CAP_WARN_AT = "220"
+# Linear project that holds recurring-chore template tickets.
+RECURRING_PROJECT = "Recurring"
+# Team key used for the weekly scoreboard.
+CHORES_TEAM = "CHO"

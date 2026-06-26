@@ -1,0 +1,52 @@
+# Copy this file to `.dev.vars` for local development (`npm run dev`).
+# For production, set the same values with `wrangler secret put NAME`.
+# DO NOT commit `.dev.vars` — it's gitignored.
+
+# Shared secret you set when creating the Linear webhook (used to verify payloads).
+LINEAR_WEBHOOK_SECRET=lin_wh_xxxxxxxxxxxx
+
+# Linear personal API key (Settings -> Security & access -> Personal API keys).
+# Used by the daily cron to query due issues + create recurring chores.
+LINEAR_API_KEY=lin_api_xxxxxxxxxxxx
+
+# Discord channel webhook URLs (Channel Settings -> Integrations -> Webhooks).
+# DEFAULT is the fallback for any team without a specific webhook.
+DISCORD_WEBHOOK_DEFAULT=https://discord.com/api/webhooks/xxx/yyy
+
+# Per-team routing: DISCORD_WEBHOOK_<TEAMKEY>. Team keys are uppercase (CHO, PRJ).
+DISCORD_WEBHOOK_CHO=https://discord.com/api/webhooks/xxx/yyy
+DISCORD_WEBHOOK_PRJ=https://discord.com/api/webhooks/xxx/yyy
+
+# Where the daily due-date digest is posted.
+DISCORD_WEBHOOK_DUE=https://discord.com/api/webhooks/xxx/yyy
+
+# Where bot health + free-plan cap warnings are posted (the #bot-log channel).
+DISCORD_WEBHOOK_ADMIN=https://discord.com/api/webhooks/xxx/yyy
+
+# Optional: where the "all chores done today" celebration is posted.
+# Falls back to DISCORD_WEBHOOK_DUE, then DISCORD_WEBHOOK_DEFAULT, if unset.
+DISCORD_WEBHOOK_DONE=https://discord.com/api/webhooks/xxx/yyy
+
+# Optional: where the weekly scoreboard is posted (Mondays).
+# Falls back to DISCORD_WEBHOOK_DUE, then DISCORD_WEBHOOK_DEFAULT, if unset.
+DISCORD_WEBHOOK_STATS=https://discord.com/api/webhooks/xxx/yyy
+
+# Map Linear assignees to Discord user IDs so the daily digest can @-mention them.
+# Format: Name:DiscordUserID, comma-separated. Get IDs via Discord Developer Mode
+# (User Settings -> Advanced -> Developer Mode, then right-click a user -> Copy User ID).
+DISCORD_MENTIONS=Alex:111111111111111111,Kristal:222222222222222222
+
+# How many days ahead the digest looks for upcoming due dates.
+DUE_LOOKAHEAD_DAYS=3
+
+# Warn when active (non-archived) issues reach this count (free plan caps at 250).
+CAP_WARN_AT=220
+
+# Optional: enables the manual cron trigger at /run-cron?key=<this value>.
+# Leave unset to disable the endpoint. Set any random string to use it.
+CRON_KEY=
+
+# Optional: auto-assign recurring chores, alternating between these members each
+# time a chore spawns. Comma-separated names or emails, in alternation order
+# (first listed gets a brand-new chore). Leave unset to skip auto-assignment.
+ROTATION_MEMBERS=Alex,Kristal

@@ -1,0 +1,16 @@
+{
+  "name": "linear-discord-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bridges Linear webhooks + due-date reminders to Discord. Runs free on a Cloudflare Worker.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "cron:test": "wrangler dev --test-scheduled"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
