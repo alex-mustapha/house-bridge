@@ -358,6 +358,7 @@ secret (`wrangler secret put NAME`). Local dev reads `.dev.vars` (see
 | `CAP_WARN_AT` | `220` | Active-issue count that triggers the cap warning. |
 | `RECURRING_PROJECT` | `Recurring` | Project holding recurring templates. |
 | `CHORES_TEAM` | `CHO` | Team key used for the scoreboard. |
+| `CHORES_PROJECT` | `House Chores` | Project spawned chores are created in / tracked under. |
 
 ## Project structure
 | File | Responsibility |

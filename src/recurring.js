@@ -33,6 +33,7 @@ import {
   getUsers,
   getIssueByIdentifier,
   getTodoStateId,
+  getProjectId,
   fetchSpawned,
   fetchRecentSpawned,
 } from "./linear.js";
@@ -308,6 +309,7 @@ export async function forceReplace(env, identifier) {
     labelIds: (issue.labels?.nodes || []).map((l) => l.id),
     assigneeId,
     stateId: await getTodoStateId(env, issue.team.id),
+    projectId: await getProjectId(env, env.CHORES_PROJECT || "House Chores"),
   });
   if (result?.success) {
     console.log(`Replaced ${identifier} -> ${result.issue?.identifier}`);
@@ -342,13 +344,16 @@ export async function runWeek(env) {
   const horizonEnd = localDate(new Date(base.getTime() + 6 * 86_400_000)).ymd;
   const isOpen = (n) => !["completed", "canceled"].includes(n.state?.type);
 
+  const projectName = env.CHORES_PROJECT || "House Chores";
+  const projectId = await getProjectId(env, projectName);
+
   const ctx = { todoStates: {}, spawned: {}, lastByTitle: {} };
   const teamIds = [...new Set(defs.map((c) => c.teamId).filter(Boolean))];
   for (const teamId of teamIds) {
     ctx.todoStates[teamId] = await getTodoStateId(env, teamId);
-    ctx.spawned[teamId] = await fetchSpawned(env, teamId);
+    ctx.spawned[teamId] = await fetchSpawned(env, teamId, projectName);
 
-    const recent = await fetchRecentSpawned(env, teamId);
+    const recent = await fetchRecentSpawned(env, teamId, projectName);
     recent.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     const lbt = {};
     for (const n of recent) if (!(n.title in lbt)) lbt[n.title] = n.assignee?.id || null;
@@ -454,6 +459,7 @@ export async function runWeek(env) {
       labelIds: e.c.labelIds,
       assigneeId: e.assignee,
       stateId: ctx.todoStates[e.c.teamId],
+      projectId,
     });
     if (result?.success) {
       console.log(`Created recurring chore: ${e.c.title} (${result.issue?.identifier}) due ${e.dueDate}`);

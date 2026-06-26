@@ -92,7 +92,18 @@ export async function getTeamId(env, teamKey) {
   return data.teams?.nodes?.[0]?.id || null;
 }
 
-export async function createIssue(env, { teamId, title, description, dueDate, labelIds, assigneeId, stateId }) {
+export async function getProjectId(env, name) {
+  const query = `
+    query ProjectByName($name: String!) {
+      projects(first: 1, filter: { name: { eq: $name } }) {
+        nodes { id }
+      }
+    }`;
+  const data = await linearQuery(env, query, { name });
+  return data.projects?.nodes?.[0]?.id || null;
+}
+
+export async function createIssue(env, { teamId, title, description, dueDate, labelIds, assigneeId, stateId, projectId }) {
   const mutation = `
     mutation CreateIssue($input: IssueCreateInput!) {
       issueCreate(input: $input) {
@@ -106,6 +117,7 @@ export async function createIssue(env, { teamId, title, description, dueDate, la
   if (labelIds?.length) input.labelIds = labelIds;
   if (assigneeId) input.assigneeId = assigneeId;
   if (stateId) input.stateId = stateId;
+  if (projectId) input.projectId = projectId;
   const data = await linearQuery(env, mutation, { input });
   return data.issueCreate;
 }
@@ -126,15 +138,15 @@ export async function getDoneStateId(env, teamId) {
   return (byName || byType)?.id || null;
 }
 
-// Active (non-done) chores whose title contains `text` (case-insensitive),
-// excluding templates. Used to mark a chore done by spoken/typed name.
-export async function findActiveByTitle(env, text) {
+// Active (non-done) chores in the chores project whose title contains `text`
+// (case-insensitive). Used to mark a chore done by spoken/typed name.
+export async function findActiveByTitle(env, text, projectName) {
   const query = `
-    query Match($text: String!) {
+    query Match($text: String!, $project: String!) {
       issues(
         first: 25
         filter: {
-          project: { null: true }
+          project: { name: { eq: $project } }
           state: { type: { nin: ["completed", "canceled"] } }
           title: { containsIgnoreCase: $text }
         }
@@ -142,7 +154,7 @@ export async function findActiveByTitle(env, text) {
         nodes { id title dueDate assignee { name } team { id } }
       }
     }`;
-  const data = await linearQuery(env, query, { text });
+  const data = await linearQuery(env, query, { text, project: projectName });
   return data.issues?.nodes || [];
 }
 
@@ -161,7 +173,7 @@ export async function setIssueState(env, id, stateId) {
 // Mark the best-matching active chore done by (fuzzy) title — soonest-due wins.
 // Shared by the /done endpoint and the Alexa skill.
 export async function markChoreDone(env, match) {
-  const matches = await findActiveByTitle(env, match);
+  const matches = await findActiveByTitle(env, match, env.CHORES_PROJECT || "House Chores");
   if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };
   matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
   const issue = matches[0];
@@ -323,37 +335,37 @@ export async function fetchAssignedActiveIssues(env, assigneeId) {
   return data.issues?.nodes || [];
 }
 
-// All non-archived, project-less spawned chores in a team — one query that feeds
+// All non-archived spawned chores in the chores project — one query that feeds
 // week-generation dedup (per title+dueDate), overdue cleanup, and load seeding.
 // Returns { id, title, dueDate, assignee{id}, state{type} }.
-export async function fetchSpawned(env, teamId) {
+export async function fetchSpawned(env, teamId, projectName) {
   const query = `
-    query Spawned($teamId: ID!) {
+    query Spawned($teamId: ID!, $project: String!) {
       issues(
         first: 250
-        filter: { team: { id: { eq: $teamId } }, project: { null: true } }
+        filter: { team: { id: { eq: $teamId } }, project: { name: { eq: $project } } }
       ) {
         nodes { id title dueDate assignee { id } state { type } }
       }
     }`;
-  const data = await linearQuery(env, query, { teamId });
+  const data = await linearQuery(env, query, { teamId, project: projectName });
   return data.issues?.nodes || [];
 }
 
-// Recent project-less spawned chores (archived included) for last-assignee
-// lookup — one query feeds the rotation for the whole week.
-export async function fetchRecentSpawned(env, teamId) {
+// Recent spawned chores in the chores project (archived included) for
+// last-assignee lookup — one query feeds the rotation for the whole week.
+export async function fetchRecentSpawned(env, teamId, projectName) {
   const query = `
-    query RecentSpawned($teamId: ID!) {
+    query RecentSpawned($teamId: ID!, $project: String!) {
       issues(
         first: 250
         includeArchived: true
-        filter: { team: { id: { eq: $teamId } }, project: { null: true } }
+        filter: { team: { id: { eq: $teamId } }, project: { name: { eq: $project } } }
       ) {
         nodes { title createdAt assignee { id } }
       }
     }`;
-  const data = await linearQuery(env, query, { teamId });
+  const data = await linearQuery(env, query, { teamId, project: projectName });
   return data.issues?.nodes || [];
 }
 

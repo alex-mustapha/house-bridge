@@ -22,3 +22,5 @@ CAP_WARN_AT = "220"
 RECURRING_PROJECT = "Recurring"
 # Team key used for the weekly scoreboard.
 CHORES_TEAM = "CHO"
+# Project that spawned chores are created in (and tracked under).
+CHORES_PROJECT = "House Chores"
