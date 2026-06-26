@@ -153,10 +153,10 @@ and it's copied verbatim onto every spawned chore.
 Cadence is set with labels. Put each set in a Linear label **group** where noted
 so only one can be picked at a time.
 
-- **`frequency` group** (pick one): `daily`, `weekly`, `biweekly`,
+- **`frequency` group** (pick one): `daily`, `weekly`, `biweekly`, `triweekly`,
   `semi-monthly`, `monthly`, `bimonthly`, `semi-annually`, `annually`
 - **weekday labels** (ungrouped, pick any): `monday` … `sunday` — used by
-  `weekly` and `biweekly`
+  `weekly`, `biweekly`, and `triweekly`
 - **`day-of-month` group** (pick one): `first` / `middle` / `last` →
   1st / 15th / last day — used by `monthly`, `bimonthly`, `semi-annually`,
   `annually`
@@ -167,6 +167,8 @@ What each frequency does:
 - `weekly` — on its weekday labels
 - `biweekly` — weekday labels, every other week (`week: even`/`odd` in
   description picks which; default even)
+- `triweekly` — weekday labels, every third week (`week: 0`/`1`/`2` in
+  description picks which; default 0)
 - `semi-monthly` — 1st and 15th
 - `monthly` — its day-of-month label, every month
 - `bimonthly` — its day-of-month label, every other month (default odd months;
@@ -178,7 +180,7 @@ What each frequency does:
 
 Optional description directives (parsed, then stripped from the copied body):
 - `month: june` or `month: jan, jul` — which month(s) for annual/semi-annual/bimonthly
-- `week: even` / `week: odd` — biweekly phase
+- `week: even` / `week: odd` — biweekly phase; `week: 0`/`1`/`2` — triweekly phase
 - `dueafter: 2` — due date N days out (default today)
 
 Every other label (e.g. `kitchen`) is copied onto the spawned chore.

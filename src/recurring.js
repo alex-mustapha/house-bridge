@@ -4,16 +4,18 @@
 // Cadence is expressed with LABELS; the description is free for a checklist and
 // is copied verbatim onto each spawned chore. No code edit / deploy needed.
 //
-//   frequency label (pick one): daily | weekly | biweekly | semi-monthly |
-//                               monthly | bimonthly | semi-annually | annually
-//   weekday labels (weekly/biweekly; pick any): monday .. sunday
+//   frequency label (pick one): daily | weekly | biweekly | triweekly |
+//                               semi-monthly | monthly | bimonthly |
+//                               semi-annually | annually
+//   weekday labels (weekly/biweekly/triweekly; pick any): monday .. sunday
 //   day-of-month label (monthly/bimonthly/semi-annually/annually): first | middle | last
 //                               -> 1st / 15th / last day of month
 //   skip | replace (| always)   (optional collision policy; default replace)
 //
 //   Description directives (optional; parsed then stripped from the copy):
 //     month: june          which month(s) for annually/semi-annually/bimonthly
-//     week: even | odd      which alternating week for biweekly (default even)
+//     week: even | odd      which week for biweekly (default even/0)
+//     week: 0 | 1 | 2       which week for triweekly (default 0)
 //     dueafter: 2           due date N days out (default today)
 //
 //   Every other label (e.g. "kitchen") is copied onto the spawned chore.
@@ -47,6 +49,7 @@ const CADENCE = new Set([
   "daily",
   "weekly",
   "biweekly",
+  "triweekly",
   "semi-monthly",
   "monthly",
   "bimonthly",
@@ -107,8 +110,12 @@ function parseDescriptionConfig(description) {
       .filter((n) => n >= 1 && n <= 12);
     if (months.length) cfg.months = months;
   }
-  const weekLine = description.match(/^\s*week\s*:\s*(even|odd)\s*$/im);
-  if (weekLine) cfg.week = weekLine[1].toLowerCase();
+  // week phase for biweekly (even/odd) and triweekly (0/1/2).
+  const weekLine = description.match(/^\s*week\s*:\s*(even|odd|\d+)\s*$/im);
+  if (weekLine) {
+    const w = weekLine[1].toLowerCase();
+    cfg.weekPhase = w === "even" ? 0 : w === "odd" ? 1 : parseInt(w, 10);
+  }
   const da = description.match(/^\s*dueafter\s*:\s*(\d{1,3})\s*$/im);
   if (da) cfg.dueAfterDays = parseInt(da[1], 10);
   return cfg;
@@ -163,12 +170,13 @@ function targetDayOfMonth(chore, now) {
   return 1;
 }
 
-// Alternating-week index off the epoch; lets biweekly pick "even" or "odd" weeks.
-function weekParity(now) {
+// Week number off the epoch; biweekly uses %2, triweekly uses %3, against the
+// chore's chosen phase. Default phase 0.
+function weekIndex(now) {
   const dayCount = Math.floor(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 86_400_000,
   );
-  return Math.floor(dayCount / 7) % 2;
+  return Math.floor(dayCount / 7);
 }
 
 function isDueToday(chore, now) {
@@ -186,7 +194,9 @@ function isDueToday(chore, now) {
     case "weekly":
       return onWeekday;
     case "biweekly":
-      return onWeekday && weekParity(now) === (chore.week === "odd" ? 1 : 0);
+      return onWeekday && weekIndex(now) % 2 === (chore.weekPhase ?? 0);
+    case "triweekly":
+      return onWeekday && weekIndex(now) % 3 === (chore.weekPhase ?? 0);
     case "semi-monthly":
       return dom === 1 || dom === 15; // 1st and 15th
     case "monthly":
@@ -228,7 +238,7 @@ async function buildDefs(env) {
         days: config.days,
         dom: config.dom,
         months: descCfg.months,
-        week: descCfg.week,
+        weekPhase: descCfg.weekPhase,
         dueAfterDays: descCfg.dueAfterDays,
         assigneeId: t.assignee?.id, // explicit owner on the template = fixed
       });
