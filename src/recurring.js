@@ -318,88 +318,10 @@ export async function forceReplace(env, identifier) {
 // Spawn every chore due on `now`'s local date — handling assignment (rotation +
 // "opposite" coupling) and the overdue-only replace policy. `defs`/`rotation`
 // are passed in so a whole week can be generated without re-fetching.
-// Spawn every chore due on `now`'s local date — handling assignment (rotation +
-// "opposite" coupling) and the overdue-only replace policy. Uses `ctx` (prefetched
-// per-team maps) so it makes no Linear queries except create/archive — keeping a
-// whole week's generation under the Worker subrequest cap.
-async function spawnForDay(env, defs, rotation, ctx, now) {
-  const L = localDate(now);
-  const today = L.ymd;
-  const due = defs.filter((c) => isDueToday(c, now));
-  if (!due.length) return;
-
-  const lastFor = (c) => ctx.lastByTitle[c.teamId]?.[c.title] ?? null;
-  const openFor = (c) => ctx.openByTitle[c.teamId]?.[c.title] || [];
-
-  // Decide each chore's assignee up front so coupled chores ("opposite:") can
-  // reference another chore's assignment from the same day. (Local lookups.)
-  const assignment = {};
-  for (const c of due) {
-    let a = c.assigneeId; // fixed owner on the template wins
-    if (!a && rotation.length >= 2) {
-      const idx = rotation.indexOf(lastFor(c));
-      a = rotation[(idx + 1) % rotation.length];
-    }
-    assignment[c.title] = a;
-  }
-  for (const c of due) {
-    if (c.opposite && rotation.length >= 2 && assignment[c.opposite] != null) {
-      assignment[c.title] =
-        rotation.find((id) => id !== assignment[c.opposite]) ?? assignment[c.title];
-    }
-  }
-
-  for (const c of due) {
-    if (!c.teamId) {
-      console.error(`Recurring "${c.title}": could not resolve a team.`);
-      continue;
-    }
-
-    // Collision policy against any still-open spawned copy (from prefetch).
-    const strategy = c.onExisting || "replace";
-    if (strategy !== "always") {
-      const open = openFor(c);
-      if (open.length) {
-        if (strategy === "skip") {
-          console.log(`Skipping "${c.title}" — ${open.length} still open.`);
-          continue;
-        }
-        // replace: leave a copy still within its window so there's time to
-        // finish on time; only supersede once the open copy is overdue.
-        const stillCurrent = open.some((i) => !i.dueDate || i.dueDate >= today);
-        if (stillCurrent) {
-          console.log(`"${c.title}" open and not overdue — leaving it.`);
-          continue;
-        }
-        for (const issue of open) await archiveIssue(env, issue.id);
-        console.log(`Replaced ${open.length} overdue "${c.title}".`);
-      }
-    }
-
-    const dueDate = c.dueAfterDays
-      ? new Date(Date.UTC(L.year, L.month - 1, L.dom) + c.dueAfterDays * 86_400_000)
-          .toISOString()
-          .slice(0, 10)
-      : today;
-
-    const result = await createIssue(env, {
-      teamId: c.teamId,
-      title: c.title,
-      description: c.description,
-      dueDate,
-      labelIds: c.labelIds,
-      assigneeId: assignment[c.title],
-      stateId: ctx.todoStates[c.teamId],
-    });
-    if (result?.success) {
-      console.log(`Created recurring chore: ${c.title} (${result.issue?.identifier}) due ${dueDate}`);
-    }
-  }
-}
-
 // Establish the coming week's chores (today + next 6 days), each on its real due
-// day, so the full week is visible up front and can be done early. Run weekly
-// (during the Monday recap) — not part of the daily cadence.
+// day. Assignment is balanced across the whole week (≈50/50, accounting for
+// fixed owners and "opposite" pairs) instead of per-chore alternation, so weeks
+// aren't lopsided. Run weekly (during the Monday recap), not daily.
 export async function runWeek(env) {
   const defs = await buildDefs(env);
   if (!defs.length) return;
@@ -413,8 +335,8 @@ export async function runWeek(env) {
     }
   }
 
-  // Prefetch per team (a few queries total) so the per-day spawn does no lookups
-  // and the week stays under the Worker subrequest cap.
+  // Prefetch per team (a few queries total) so planning needs no lookups and the
+  // week stays under the Worker subrequest cap.
   const ctx = { todoStates: {}, openByTitle: {}, lastByTitle: {} };
   const teamIds = [...new Set(defs.map((c) => c.teamId).filter(Boolean))];
   for (const teamId of teamIds) {
@@ -432,8 +354,97 @@ export async function runWeek(env) {
     ctx.lastByTitle[teamId] = lbt;
   }
 
+  // PLAN: gather every chore to create this week (after dedup), in day order.
   const base = new Date();
+  const plan = [];
+  const planned = new Set();
   for (let d = 0; d < 7; d++) {
-    await spawnForDay(env, defs, rotation, ctx, new Date(base.getTime() + d * 86_400_000));
+    const L = localDate(new Date(base.getTime() + d * 86_400_000));
+    for (const c of defs) {
+      if (!c.teamId || !isDueToday(c, new Date(`${L.ymd}T12:00:00Z`))) continue;
+      if (planned.has(c.title)) continue;
+      const open = ctx.openByTitle[c.teamId]?.[c.title] || [];
+      const strategy = c.onExisting || "replace";
+      let toArchive = [];
+      if (strategy !== "always" && open.length) {
+        if (strategy === "skip") {
+          console.log(`Skipping "${c.title}" — ${open.length} still open.`);
+          continue;
+        }
+        if (open.some((i) => !i.dueDate || i.dueDate >= L.ymd)) {
+          console.log(`"${c.title}" open and not overdue — leaving it.`);
+          continue;
+        }
+        toArchive = open.map((i) => i.id); // replace overdue copies
+      }
+      const dueDate = c.dueAfterDays
+        ? new Date(Date.UTC(L.year, L.month - 1, L.dom) + c.dueAfterDays * 86_400_000)
+            .toISOString()
+            .slice(0, 10)
+        : L.ymd;
+      plan.push({ c, dueDate, toArchive });
+      planned.add(c.title);
+    }
+  }
+  if (!plan.length) return;
+
+  // ASSIGN: balance the week ≈50/50. Fixed owners first, then free chores to
+  // whoever has fewer so far (tie -> alternate from last time, else a weekly
+  // seed), then "opposite" chores mirror their partner.
+  const assignment = {};
+  if (rotation.length >= 2) {
+    const [A, B] = rotation;
+    const counts = { [A]: 0, [B]: 0 };
+    const seed = localDate(base).weekIndex % 2 === 0 ? A : B;
+    const bump = (id) => {
+      if (id in counts) counts[id]++;
+    };
+    for (const { c } of plan) {
+      if (c.assigneeId) {
+        assignment[c.title] = c.assigneeId;
+        bump(c.assigneeId);
+      }
+    }
+    for (const { c } of plan) {
+      if (c.assigneeId || c.opposite) continue;
+      let cand;
+      if (counts[A] < counts[B]) cand = A;
+      else if (counts[B] < counts[A]) cand = B;
+      else {
+        const last = ctx.lastByTitle[c.teamId]?.[c.title];
+        cand = last === A ? B : last === B ? A : seed;
+      }
+      assignment[c.title] = cand;
+      bump(cand);
+    }
+    for (const { c } of plan) {
+      if (!c.opposite) continue;
+      const target = assignment[c.opposite];
+      const cand =
+        target != null
+          ? rotation.find((id) => id !== target) ?? target
+          : counts[A] <= counts[B] ? A : B;
+      assignment[c.title] = cand;
+      bump(cand);
+    }
+  } else {
+    for (const { c } of plan) assignment[c.title] = c.assigneeId;
+  }
+
+  // EXECUTE.
+  for (const { c, dueDate, toArchive } of plan) {
+    for (const id of toArchive) await archiveIssue(env, id);
+    const result = await createIssue(env, {
+      teamId: c.teamId,
+      title: c.title,
+      description: c.description,
+      dueDate,
+      labelIds: c.labelIds,
+      assigneeId: assignment[c.title],
+      stateId: ctx.todoStates[c.teamId],
+    });
+    if (result?.success) {
+      console.log(`Created recurring chore: ${c.title} (${result.issue?.identifier}) due ${dueDate}`);
+    }
   }
 }

@@ -193,12 +193,13 @@ Optional description directives (parsed, then stripped from the copied body):
 
 Every other label (e.g. `kitchen`) is copied onto the spawned chore.
 
-**Auto-assignment (rotation).** Set `ROTATION_MEMBERS` to your two members
-(names or emails, in alternation order — `wrangler secret put ROTATION_MEMBERS`,
-e.g. `Alex,Kristal`). Each time a chore spawns, the Worker looks up who had the
-previous copy (archived included) and assigns the other person — so chores
-switch off automatically. Give a template ticket an explicit assignee to opt it
-out of rotation (fixed owner).
+**Auto-assignment (balanced).** Set `ROTATION_MEMBERS` to your two members
+(names or emails — `wrangler secret put ROTATION_MEMBERS`, e.g. `Alex,Kristal`).
+When the week is generated, chores are split **≈50/50 across the whole week**
+rather than each alternating independently — so weeks aren't lopsided. Fixed
+owners (a template with an explicit assignee) and `opposite:` pairs are counted
+in, the lighter-loaded person gets each next chore (ties alternate from last
+time), and which person eats the odd chore flips each week.
 
 Example — kitchen cleaned M/W/F, deep-cleaned on the 1st of each month:
 - Ticket `Clean the kitchen`: labels `weekly` `monday` `wednesday` `friday` `kitchen`
