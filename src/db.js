@@ -18,11 +18,11 @@ async function ensureSchema(env) {
   await env.DB.prepare(SCHEMA).run();
 }
 
-// on_time / late / missed / open, relative to today (Eastern).
-function statusOf(h, today) {
-  const completed = h.completedAt ? h.completedAt.slice(0, 10) : null;
-  if (completed) return completed <= h.dueDate ? "on_time" : "late";
-  return h.dueDate < today ? "missed" : "open";
+// on_time / late / missed / open. Completion is compared in Eastern (not UTC),
+// so an evening-of-the-due-day finish counts as on time.
+function statusOf(completedYmd, dueDate, today) {
+  if (completedYmd) return completedYmd <= dueDate ? "on_time" : "late";
+  return dueDate < today ? "missed" : "open";
 }
 
 // Snapshot the last 30 days of chore outcomes into D1, upserting by issue id so
@@ -41,8 +41,9 @@ export async function logChores(env) {
   if (!history.length) return;
 
   const now = new Date().toISOString();
-  const stmts = history.map((h) =>
-    env.DB.prepare(
+  const stmts = history.map((h) => {
+    const completedYmd = h.completedAt ? localDate(new Date(h.completedAt)).ymd : null;
+    return env.DB.prepare(
       `INSERT INTO chore_log (id, title, assignee, due_date, completed_date, status, recorded_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
        ON CONFLICT(id) DO UPDATE SET
@@ -53,11 +54,11 @@ export async function logChores(env) {
       h.title || "",
       h.assignee?.name || null,
       h.dueDate,
-      h.completedAt ? h.completedAt.slice(0, 10) : null,
-      statusOf(h, today),
+      completedYmd,
+      statusOf(completedYmd, h.dueDate, today),
       now,
-    ),
-  );
+    );
+  });
   await env.DB.batch(stmts);
   console.log(`Logged ${stmts.length} chore outcomes to D1.`);
 }
