@@ -160,6 +160,8 @@ so only one can be picked at a time.
   `semi-monthly`, `monthly`, `bimonthly`, `semi-annually`, `annually`
 - **weekday labels** (ungrouped, pick any): `monday` … `sunday` — used by
   `weekly`, `biweekly`, and `triweekly`
+- **month labels** (ungrouped, pick any): `january` … `december` — which month(s)
+  for `annually` / `semi-annually` / `bimonthly` (or use the `month:` directive)
 - **`day-of-month` group** (pick one): `first` / `middle` / `last` →
   1st / 15th / last day — used by `monthly`, `bimonthly`, `semi-annually`,
   `annually`

@@ -8,12 +8,13 @@
 //                               semi-monthly | monthly | bimonthly |
 //                               semi-annually | annually
 //   weekday labels (weekly/biweekly/triweekly; pick any): monday .. sunday
+//   month labels (annually/semi-annually/bimonthly; pick any): january .. december
 //   day-of-month label (monthly/bimonthly/semi-annually/annually): first | middle | last
 //                               -> 1st / 15th / last day of month
 //   skip | replace (| always)   (optional collision policy; default replace)
 //
 //   Description directives (optional; parsed then stripped from the copy):
-//     month: june          which month(s) for annually/semi-annually/bimonthly
+//     month: june          alternative to month labels (which month(s))
 //     week: even | odd      which week for biweekly (default even/0)
 //     week: 0 | 1 | 2       which week for triweekly (default 0)
 //     dueafter: 2           due date N days out (default today)
@@ -92,11 +93,19 @@ function parseLabelConfig(labelNodes) {
       config.dom = name; // first | middle | last
     } else if (ONMISS.has(name)) {
       config.onExisting = name; // skip | replace | always
+    } else if (name in MONTHS) {
+      (config.months ||= []).push(MONTHS[name]); // jan..dec (annual/semi/bimonthly)
     } else {
       passthroughLabelIds.push(l.id); // a real label (room, etc.)
     }
   }
   return { config, passthroughLabelIds };
+}
+
+// Combine month labels and any `month:` description directive into a deduped list.
+function mergeMonths(a, b) {
+  const set = [...new Set([...(a || []), ...(b || [])])];
+  return set.length ? set : undefined;
 }
 
 // month/week/dueafter/opposite live in the description; parsed then stripped.
@@ -257,7 +266,7 @@ async function buildDefs(env) {
         cadence: config.cadence,
         days: config.days,
         dom: config.dom,
-        months: descCfg.months,
+        months: mergeMonths(config.months, descCfg.months),
         weekPhase: descCfg.weekPhase,
         dueAfterDays: descCfg.dueAfterDays,
         opposite: descCfg.opposite, // assign opposite of this chore's owner
