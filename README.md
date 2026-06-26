@@ -63,11 +63,11 @@ Webhook → channel mapping for this layout:
 
 ```
 Linear issue/comment event ──webhook──▶ Worker.fetch ──▶ Discord channel webhook
-Manual toolkit (HTTP) ───────────────▶ Worker.fetch  ──▶ run cron / replace issue / scoreboard
+Manual toolkit (HTTP) ───────────────▶ Worker.fetch  ──▶ run cron / run week / replace / scoreboard
 Cloudflare cron (daily) ─────────────▶ Worker.scheduled ─┬▶ due-date digest (by owner) ▶ Discord
-                                                          ├▶ create recurring chores in Linear
                                                           ├▶ free-plan cap check ▶ Discord
-                                                          └▶ weekly scoreboard (Mondays) ▶ Discord
+                                                          └▶ Mondays: generate the week's chores
+                                                                     + per-person scoreboard ▶ Discord
 ```
 
 Why a Worker at all? Linear and Discord webhooks use **incompatible JSON
@@ -138,8 +138,11 @@ Save. Linear now POSTs events to the Worker, which verifies the signature and
 forwards them to Discord.
 
 ### 7. Recurring chores — authored in Linear (no code)
-The daily cron reads template tickets from a Linear project and spawns the real
-chores. To add/change a chore you just edit Linear — nothing to deploy.
+Each **Monday** the weekly recap reads template tickets from a Linear project and
+generates the **coming week's** chores at once (each on its real due day), so the
+full week is visible up front and can be done early. To add/change a chore you
+just edit Linear — nothing to deploy. (Use `/run-week` to generate on demand,
+e.g. to bootstrap mid-week.)
 
 **One-time:** in the **Chores** team, create a project named **`Recurring`**
 (must match `RECURRING_PROJECT` in `wrangler.toml`). Filter it out of your normal
@@ -236,13 +239,15 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 
 | Endpoint | What it does |
 |---|---|
-| `GET /run-cron?key=…` | Runs the full daily cron now: digest, recurring spawns, cap check (+ scoreboard if it's Monday). |
-| `GET /scoreboard?key=…` | Posts the weekly scoreboard immediately, any day. |
+| `GET /run-cron?key=…` | Runs the daily cron now: digest + cap check (+ weekly generation & scoreboard if it's Monday). |
+| `GET /run-week?key=…` | Generates the coming week's chores immediately, any day (bootstrap/test). |
+| `GET /scoreboard?key=…` | Posts the per-person scoreboard immediately, any day. |
 | `GET /replace?key=…&issue=CHO-12` | Archives `CHO-12` and spawns a fresh copy (same title/labels/description, due today, assignee rotated to the other member). |
 | `GET /` | Health check — returns `linear-discord-bridge ok`. |
 
 ```
 curl "https://<worker>/run-cron?key=YOUR_KEY"
+curl "https://<worker>/run-week?key=YOUR_KEY"
 curl "https://<worker>/scoreboard?key=YOUR_KEY"
 curl "https://<worker>/replace?key=YOUR_KEY&issue=CHO-12"
 ```

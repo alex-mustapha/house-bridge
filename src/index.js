@@ -3,8 +3,9 @@
 // Two entry points:
 //   fetch()      - receives Linear webhooks (real-time) and serves the manual
 //                  toolkit endpoints (see README "Manual toolkit").
-//   scheduled()  - the daily cron: digest, recurring chores, cap check, and the
-//                  Monday scoreboard.
+//   scheduled()  - daily: due-date digest + cap check. On Mondays it also runs
+//                  the weekly recap: generate the coming week's chores + post
+//                  the per-person scoreboard.
 
 import { verifyLinearSignature } from "./verify.js";
 import {
@@ -23,7 +24,7 @@ import {
   fetchChoreHistory,
   getTeamId,
 } from "./linear.js";
-import { runRecurring, forceReplace, localDate } from "./recurring.js";
+import { runWeek, forceReplace, localDate } from "./recurring.js";
 import { computeStats } from "./stats.js";
 
 // Parse DISCORD_MENTIONS ("Alex:123,Kristal:456") into { alex: "123", ... }.
@@ -65,6 +66,11 @@ export default {
       ctx.waitUntil(forceReplace(env, issue));
       return new Response(`replacing ${issue}\n`, { status: 200 });
     }
+    if (url.pathname === "/run-week") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      ctx.waitUntil(runWeek(env));
+      return new Response("week generation triggered\n", { status: 200 });
+    }
 
     if (request.method === "GET") {
       return new Response("linear-discord-bridge ok\n", { status: 200 });
@@ -104,7 +110,7 @@ export default {
     return new Response("ok", { status: 200 });
   },
 
-  // Daily cron: due-date digest + recurring-chore creation.
+  // Daily: digest + cap. Mondays also generate the week + post the scoreboard.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(handleCron(env));
   },
@@ -160,12 +166,16 @@ function resolveWebhook(teamKey, env) {
 }
 
 async function handleCron(env) {
-  // 1. Recurring chores FIRST, so the digest below reflects the freshly spawned
-  //    tickets and never links to copies that `replace` is about to archive.
-  try {
-    await runRecurring(env);
-  } catch (err) {
-    console.error("Recurring chores failed:", err);
+  const isMonday = localDate(new Date()).weekday === 1;
+
+  // 1. Weekly recap (Mondays only): establish the coming week's chores up front,
+  //    before the digest so it reflects them. Not part of the daily cadence.
+  if (isMonday) {
+    try {
+      await runWeek(env);
+    } catch (err) {
+      console.error("Weekly generation failed:", err);
+    }
   }
 
   // 2. Due-date digest, split by owner with @-mentions.

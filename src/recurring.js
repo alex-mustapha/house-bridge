@@ -312,27 +312,19 @@ export async function forceReplace(env, identifier) {
   return { ok: !!result?.success, identifier: result?.issue?.identifier };
 }
 
-export async function runRecurring(env) {
-  const now = new Date();
+// Spawn every chore due on `now`'s local date — handling assignment (rotation +
+// "opposite" coupling) and the overdue-only replace policy. `defs`/`rotation`
+// are passed in so a whole week can be generated without re-fetching.
+async function spawnForDay(env, defs, rotation, now) {
   const L = localDate(now);
   const today = L.ymd;
-  const defs = (await buildDefs(env)).filter((c) => isDueToday(c, now));
-  if (!defs.length) return;
-
-  // Resolve the rotation roster once (if configured).
-  let rotation = [];
-  if (env.ROTATION_MEMBERS) {
-    rotation = matchMembers(env.ROTATION_MEMBERS, await getUsers(env));
-    if (rotation.length < 2) {
-      console.warn(`Rotation disabled: matched ${rotation.length} member(s), need 2.`);
-      rotation = [];
-    }
-  }
+  const due = defs.filter((c) => isDueToday(c, now));
+  if (!due.length) return;
 
   // Decide each chore's assignee up front so coupled chores ("opposite:") can
-  // reference another chore's assignment from the same run.
+  // reference another chore's assignment from the same day.
   const assignment = {};
-  for (const c of defs) {
+  for (const c of due) {
     let a = c.assigneeId; // fixed owner on the template wins
     if (!a && rotation.length >= 2) {
       const last = await getLastAssignee(env, c.teamId, c.title);
@@ -341,14 +333,14 @@ export async function runRecurring(env) {
     }
     assignment[c.title] = a;
   }
-  for (const c of defs) {
+  for (const c of due) {
     if (c.opposite && rotation.length >= 2 && assignment[c.opposite] != null) {
       assignment[c.title] =
         rotation.find((id) => id !== assignment[c.opposite]) ?? assignment[c.title];
     }
   }
 
-  for (const c of defs) {
+  for (const c of due) {
     if (!c.teamId) {
       console.error(`Recurring "${c.title}": could not resolve a team.`);
       continue;
@@ -381,18 +373,38 @@ export async function runRecurring(env) {
           .slice(0, 10)
       : today;
 
-    const assigneeId = assignment[c.title];
-
     const result = await createIssue(env, {
       teamId: c.teamId,
       title: c.title,
       description: c.description,
       dueDate,
       labelIds: c.labelIds,
-      assigneeId,
+      assigneeId: assignment[c.title],
     });
     if (result?.success) {
-      console.log(`Created recurring chore: ${c.title} (${result.issue?.identifier})`);
+      console.log(`Created recurring chore: ${c.title} (${result.issue?.identifier}) due ${dueDate}`);
     }
+  }
+}
+
+// Establish the coming week's chores (today + next 6 days), each on its real due
+// day, so the full week is visible up front and can be done early. Run weekly
+// (during the Monday recap) — not part of the daily cadence.
+export async function runWeek(env) {
+  const defs = await buildDefs(env);
+  if (!defs.length) return;
+
+  let rotation = [];
+  if (env.ROTATION_MEMBERS) {
+    rotation = matchMembers(env.ROTATION_MEMBERS, await getUsers(env));
+    if (rotation.length < 2) {
+      console.warn(`Rotation disabled: matched ${rotation.length} member(s), need 2.`);
+      rotation = [];
+    }
+  }
+
+  const base = new Date();
+  for (let d = 0; d < 7; d++) {
+    await spawnForDay(env, defs, rotation, new Date(base.getTime() + d * 86_400_000));
   }
 }
