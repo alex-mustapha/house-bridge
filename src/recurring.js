@@ -348,10 +348,15 @@ export async function runRecurring(env) {
           console.log(`Skipping "${c.title}" — ${open.length} still open.`);
           continue;
         }
-        if (strategy === "replace") {
-          for (const issue of open) await archiveIssue(env, issue.id);
-          console.log(`Replaced ${open.length} stale "${c.title}".`);
+        // replace: leave a copy that's still within its window so there's time
+        // to finish on time; only supersede once the open copy is overdue.
+        const stillCurrent = open.some((i) => !i.dueDate || i.dueDate >= today);
+        if (stillCurrent) {
+          console.log(`"${c.title}" open and not overdue — leaving it.`);
+          continue;
         }
+        for (const issue of open) await archiveIssue(env, issue.id);
+        console.log(`Replaced ${open.length} overdue "${c.title}".`);
       }
     }
 

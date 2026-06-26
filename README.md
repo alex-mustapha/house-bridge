@@ -160,7 +160,10 @@ so only one can be picked at a time.
 - **`day-of-month` group** (pick one): `first` / `middle` / `last` →
   1st / 15th / last day — used by `monthly`, `bimonthly`, `semi-annually`,
   `annually`
-- **collision group** (optional): `skip` / `replace` — default `replace`
+- **collision group** (optional): `skip` / `replace` — default `replace`.
+  `replace` only supersedes the previous copy once it's **overdue** (so you get
+  the full window to finish on time); `skip` never makes a second copy while one
+  is still open.
 
 What each frequency does:
 - `daily` — every day

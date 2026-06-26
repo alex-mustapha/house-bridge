@@ -217,7 +217,7 @@ export async function findOpenIssuesByTitle(env, teamId, title) {
           state: { type: { nin: ["completed", "canceled"] } }
         }
       ) {
-        nodes { id identifier }
+        nodes { id identifier dueDate }
       }
     }`;
   const data = await linearQuery(env, query, { teamId, title });
