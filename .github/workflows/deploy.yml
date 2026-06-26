@@ -1,0 +1,41 @@
+# Deploys the Worker to Cloudflare.
+#
+# DRAFT — manual-run only for now. `npm run deploy` from a dev machine is still
+# the primary deploy path. This workflow won't run on push until you enable the
+# `push:` trigger below.
+#
+# To use it:
+#   1. Create a Cloudflare API token: dash.cloudflare.com -> My Profile ->
+#      API Tokens -> Create Token -> "Edit Cloudflare Workers" template.
+#   2. In GitHub: repo Settings -> Secrets and variables -> Actions -> New
+#      repository secret -> CLOUDFLARE_API_TOKEN (and CLOUDFLARE_ACCOUNT_ID
+#      only if the deploy step asks for it).
+#   3. Actions tab -> "Deploy Worker" -> Run workflow.
+#
+# This uploads code only. The Worker's secrets (LINEAR_API_KEY, webhook URLs,
+# ROTATION_MEMBERS, etc.) were set with `wrangler secret put` and persist across
+# deploys — the Action neither needs nor touches them.
+#
+# To make every push to main auto-deploy, uncomment the `push:` trigger.
+
+name: Deploy Worker
+
+on:
+  workflow_dispatch: {}
+  # push:
+  #   branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}  # uncomment if the deploy asks for it

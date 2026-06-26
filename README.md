@@ -209,6 +209,15 @@ unset to disable that feature.
 
 ---
 
+## Continuous deployment (draft)
+`.github/workflows/deploy.yml` can deploy the Worker from GitHub via
+`cloudflare/wrangler-action`. It's currently **manual-run only**
+(`workflow_dispatch`) — primary deploys are still `npm run deploy`. To enable it:
+add a `CLOUDFLARE_API_TOKEN` repo secret ("Edit Cloudflare Workers" token), then
+run it from the Actions tab. Uncomment the `push:` trigger in the workflow to
+auto-deploy on every push to `main`. It uploads code only — your Worker secrets
+persist and aren't touched.
+
 ## Adjusting the schedule
 The cron in `wrangler.toml` is in **UTC**. Change `crons` to hit your local
 morning (the file has examples), then redeploy.
