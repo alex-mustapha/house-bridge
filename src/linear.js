@@ -253,7 +253,7 @@ export async function fetchAssignedActiveIssues(env, assigneeId) {
           state: { type: { nin: ["completed", "canceled"] } }
         }
       ) {
-        nodes { identifier title dueDate url state { name } team { key } }
+        nodes { identifier title dueDate url state { name } team { key } project { name } }
       }
     }`;
   const data = await linearQuery(env, query, { id: assigneeId });
