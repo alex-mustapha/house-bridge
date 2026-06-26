@@ -15,8 +15,10 @@ import {
   buildCapWarningEmbed,
   buildAllDoneEmbed,
   buildScoreboardMessage,
+  buildStatsEmbed,
   postToDiscord,
 } from "./discord.js";
+import { logChores, queryStats } from "./db.js";
 import {
   fetchDueIssues,
   fetchActiveIssueCount,
@@ -99,6 +101,21 @@ export default {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       ctx.waitUntil(postScoreboard(env, true));
       return new Response("scoreboard triggered\n", { status: 200 });
+    }
+    if (url.pathname === "/stats") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const days = parseInt(url.searchParams.get("days") || "90", 10);
+      try {
+        await logChores(env); // refresh the log so the report is current
+      } catch (err) {
+        console.error("D1 logging failed:", err);
+      }
+      const stats = await queryStats(env, days);
+      if (!stats) return new Response("D1 not configured\n", { status: 200 });
+      const target =
+        env.DISCORD_WEBHOOK_STATS || env.DISCORD_WEBHOOK_DUE || env.DISCORD_WEBHOOK_DEFAULT;
+      if (target) await postToDiscord(target, { embeds: [buildStatsEmbed(stats)] });
+      return new Response("stats posted\n", { status: 200 });
     }
     if (url.pathname === "/replace") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
@@ -259,6 +276,15 @@ async function handleCron(env) {
     await postScoreboard(env, false);
   } catch (err) {
     console.error("Scoreboard failed:", err);
+  }
+
+  // 5. Snapshot the week's outcomes to D1 for long-term analytics (Mondays).
+  if (isMonday) {
+    try {
+      await logChores(env);
+    } catch (err) {
+      console.error("D1 logging failed:", err);
+    }
   }
 }
 

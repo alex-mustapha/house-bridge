@@ -24,3 +24,9 @@ RECURRING_PROJECT = "Recurring"
 CHORES_TEAM = "CHO"
 # Project that spawned chores are created in (and tracked under).
 CHORES_PROJECT = "House Chores"
+
+# D1 database for long-term chore analytics (free tier).
+[[d1_databases]]
+binding = "DB"
+database_name = "chore-stats"
+database_id = "1f02a152-b650-443e-adb4-b9c71b8b9516"

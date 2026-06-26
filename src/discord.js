@@ -180,6 +180,51 @@ export function buildAllDoneEmbed(teamName) {
   };
 }
 
+// Long-term stats report from D1 aggregates (see db.queryStats).
+export function buildStatsEmbed(stats) {
+  const { days, byPerson, missed } = stats;
+  const people = {};
+  let done = 0;
+  let onTime = 0;
+  let missedTotal = 0;
+
+  for (const r of byPerson) {
+    const p = (people[r.person] ||= { done: 0, onTime: 0, missed: 0 });
+    if (r.status === "on_time") {
+      p.onTime += r.n;
+      p.done += r.n;
+      onTime += r.n;
+      done += r.n;
+    } else if (r.status === "late") {
+      p.done += r.n;
+      done += r.n;
+    } else if (r.status === "missed") {
+      p.missed += r.n;
+      missedTotal += r.n;
+    }
+  }
+
+  const total = done + missedTotal;
+  const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+  const peopleLines =
+    Object.entries(people)
+      .map(([n, s]) => `**${n}** — ${s.done} done (${pct(s.onTime, s.done)}% on time) · ${s.missed} missed`)
+      .join("\n") || "—";
+  const missedLines = missed.length
+    ? missed.map((m) => `• ${m.title} — ${m.n}`).join("\n")
+    : "—";
+
+  return {
+    title: `📊 Chore stats — last ${days} days`,
+    description:
+      `✅ **${done}** done · ❌ **${missedTotal}** missed · ` +
+      `${pct(done, total)}% completion · ${pct(onTime, done)}% on time\n\n` +
+      `${peopleLines}\n\n**Most missed**\n${missedLines}`,
+    color: 0x9b59b6, // purple
+    timestamp: new Date().toISOString(),
+  };
+}
+
 export async function postToDiscord(webhookUrl, body) {
   const res = await fetch(webhookUrl, {
     method: "POST",

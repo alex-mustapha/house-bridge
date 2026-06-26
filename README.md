@@ -243,6 +243,7 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 | `GET /run-cron?key=…` | Runs the daily cron now: digest + cap check (+ weekly generation & scoreboard if it's Monday). |
 | `GET /run-week?key=…` | Generates the coming week's chores immediately, any day (bootstrap/test). |
 | `GET /scoreboard?key=…` | Posts the per-person scoreboard immediately, any day. |
+| `GET /stats?key=…&days=90` | Posts a long-term stats report (done / on-time / missed / completion %, per person, most-missed chores) from the D1 log over the window. |
 | `GET /replace?key=…&issue=CHO-12` | Archives `CHO-12` and spawns a fresh copy (same title/labels/description, due today, assignee rotated to the other member). |
 | `GET /done?key=…&match=bathroom` | Marks the soonest-due active chore whose title contains the text as **Done** (excludes templates). Powers voice/shortcut "I cleaned the bathroom". |
 | `GET /` | Health check — returns `linear-discord-bridge ok`. |
@@ -360,6 +361,14 @@ secret (`wrangler secret put NAME`). Local dev reads `.dev.vars` (see
 | `CHORES_TEAM` | `CHO` | Team key used for the scoreboard. |
 | `CHORES_PROJECT` | `House Chores` | Project spawned chores are created in / tracked under. |
 
+## Analytics (D1)
+Linear's free plan has no Insights, so long-term tracking lives in a **Cloudflare
+D1** database (`chore-stats`, bound as `DB`). Each Monday the recap snapshots the
+last 30 days of chore outcomes into the `chore_log` table (upsert by issue id, so
+late completions update in place). Query it any time with `/stats?key=…&days=N`,
+which posts a report (done / on-time / missed / completion %, per-person split,
+most-missed chores). It's well within D1's free tier (5 GB, 100k writes/day).
+
 ## Project structure
 | File | Responsibility |
 |---|---|
@@ -369,6 +378,7 @@ secret (`wrangler secret put NAME`). Local dev reads `.dev.vars` (see
 | `src/discord.js` | Builds Discord embeds/messages and posts them. |
 | `src/recurring.js` | Recurring-chore engine: label parsing, cadence, rotation, replace. |
 | `src/stats.js` | Weekly scoreboard computation. |
+| `src/db.js` | D1 analytics: weekly snapshot + `/stats` queries. |
 | `wrangler.toml` | Worker config, cron schedule, non-secret vars. |
 | `SETUP.md` | First-time setup checklist. |
 

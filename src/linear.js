@@ -237,7 +237,7 @@ export async function fetchChoreHistory(env, teamId, since) {
           dueDate: { gte: "${since}" }
         }
       ) {
-        nodes { dueDate completedAt assignee { name } }
+        nodes { identifier title dueDate completedAt assignee { name } }
       }
     }`;
   const data = await linearQuery(env, query, { teamId });
