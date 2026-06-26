@@ -1,29 +1,60 @@
 {
   "interactionModel": {
     "languageModel": {
-      "invocationName": "chores",
+      "invocationName": "house chores",
       "intents": [
         { "name": "AMAZON.HelpIntent", "samples": [] },
         { "name": "AMAZON.StopIntent", "samples": [] },
         { "name": "AMAZON.CancelIntent", "samples": [] },
         { "name": "AMAZON.NavigateHomeIntent", "samples": [] },
+        { "name": "AMAZON.FallbackIntent", "samples": [] },
         {
           "name": "MarkDoneIntent",
-          "slots": [{ "name": "chore", "type": "AMAZON.SearchQuery" }],
+          "slots": [{ "name": "chore", "type": "ChoreKeyword" }],
           "samples": [
             "I cleaned the {chore}",
             "I just cleaned the {chore}",
-            "I finished the {chore}",
-            "I did the {chore}",
-            "I took care of the {chore}",
-            "mark the {chore} done",
             "I cleaned {chore}",
+            "I finished the {chore}",
             "I finished {chore}",
-            "I did {chore}"
+            "I did the {chore}",
+            "I did {chore}",
+            "I took care of the {chore}",
+            "I took out the {chore}",
+            "I fed the {chore}",
+            "I fed {chore}",
+            "mark {chore} done",
+            "mark the {chore} done",
+            "mark {chore} as done",
+            "{chore} is done",
+            "{chore} done"
           ]
         }
       ],
-      "types": []
+      "types": [
+        {
+          "name": "ChoreKeyword",
+          "values": [
+            { "name": { "value": "bathroom" } },
+            { "name": { "value": "kitchen" } },
+            { "name": { "value": "dishes" } },
+            { "name": { "value": "trash", "synonyms": ["garbage", "rubbish"] } },
+            { "name": { "value": "sheets", "synonyms": ["bed sheets"] } },
+            { "name": { "value": "laundry" } },
+            { "name": { "value": "litter box", "synonyms": ["litterbox", "litter"] } },
+            { "name": { "value": "lawn", "synonyms": ["grass"] } },
+            { "name": { "value": "mop", "synonyms": ["floors", "floor"] } },
+            { "name": { "value": "upstairs" } },
+            { "name": { "value": "downstairs" } },
+            { "name": { "value": "dinner" } },
+            { "name": { "value": "toothbrush" } },
+            { "name": { "value": "plants" } },
+            { "name": { "value": "dog", "synonyms": ["nero"] } },
+            { "name": { "value": "nails" } },
+            { "name": { "value": "monarch", "synonyms": ["budget", "finances"] } }
+          ]
+        }
+      ]
     }
   }
 }
