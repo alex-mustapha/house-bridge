@@ -37,7 +37,12 @@ import {
   getProjectId,
   fetchSpawned,
   fetchRecentSpawned,
+  fetchTemplatesForAnnotation,
+  upsertComment,
 } from "./linear.js";
+
+const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const SCHEDULE_MARKER = "🔁 **Schedule**";
 
 const WEEKDAYS = {
   sunday: 0,
@@ -473,5 +478,75 @@ export async function runWeek(env) {
     if (result?.success) {
       console.log(`Created recurring chore: ${e.c.title} (${result.issue?.identifier}) due ${e.dueDate}`);
     }
+  }
+}
+
+// "2026-09-01" -> "Sep 1, 2026"
+function formatDate(ymd) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return `${MON_ABBR[m - 1]} ${d}, ${y}`;
+}
+
+// Human-readable cadence from a parsed chore config.
+function describeSchedule(c) {
+  const days = (c.days || []).map((d) => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(", ");
+  const dom = c.dom === "middle" ? "the 15th" : c.dom === "last" ? "the last day" : "the 1st";
+  const months = (c.months || []).map((m) => MON_ABBR[m - 1]).join(", ");
+  const inMonths = months ? ` (${months})` : "";
+  switch (c.cadence) {
+    case "daily": return "Every day";
+    case "weekly": return `Weekly on ${days || "—"}`;
+    case "biweekly": return `Every other week on ${days || "—"}`;
+    case "triweekly": return `Every 3 weeks on ${days || "—"}`;
+    case "semi-monthly": return "Twice a month — the 1st & 15th";
+    case "monthly": return `Monthly on ${dom}`;
+    case "bimonthly": return `Every other month on ${dom}${inMonths}`;
+    case "semi-annually": return `Twice a year on ${dom}${inMonths}`;
+    case "annually": return `Once a year on ${dom}${inMonths}`;
+    default: return "—";
+  }
+}
+
+// The next `count` due dates for a chore (scans up to ~400 days; pure compute).
+function nextOccurrences(chore, count) {
+  const out = [];
+  const base = new Date();
+  for (let d = 0; d < 400 && out.length < count; d++) {
+    const day = new Date(base.getTime() + d * 86_400_000);
+    if (isDueToday(chore, day)) out.push(localDate(day).ymd);
+  }
+  return out;
+}
+
+// Add/refresh a "Schedule" comment on each template describing its cadence and
+// next due dates. Comments aren't copied to spawned chores. Skips unchanged
+// comments to avoid notification noise.
+export async function annotateTemplates(env) {
+  const projectName = env.RECURRING_PROJECT || "Recurring";
+  const templates = await fetchTemplatesForAnnotation(env, projectName);
+
+  for (const t of templates) {
+    const { config } = parseLabelConfig(t.labels?.nodes || []);
+    if (!config.cadence) continue;
+    const descCfg = parseDescriptionConfig(t.description);
+    const chore = {
+      cadence: config.cadence,
+      days: config.days,
+      dom: config.dom,
+      months: mergeMonths(config.months, descCfg.months),
+      weekPhase: descCfg.weekPhase,
+    };
+
+    const next = nextOccurrences(chore, 3).map(formatDate);
+    const body =
+      `${SCHEDULE_MARKER} _(auto-generated; not copied to spawned chores)_\n` +
+      `${describeSchedule(chore)}\n` +
+      `**Next:** ${next.join(" · ") || "—"}`;
+
+    const existing = (t.comments?.nodes || []).find((c) =>
+      c.body?.startsWith(SCHEDULE_MARKER),
+    );
+    if (existing?.body === body) continue; // unchanged — skip to avoid noise
+    await upsertComment(env, t.id, existing?.id, body);
   }
 }

@@ -27,7 +27,7 @@ import {
   getTeamId,
   markChoreDone,
 } from "./linear.js";
-import { runWeek, forceReplace, localDate } from "./recurring.js";
+import { runWeek, forceReplace, localDate, annotateTemplates } from "./recurring.js";
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { verifyAlexaRequest, handleAlexa } from "./alexa.js";
@@ -128,6 +128,11 @@ export default {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       ctx.waitUntil(runWeek(env));
       return new Response("week generation triggered\n", { status: 200 });
+    }
+    if (url.pathname === "/annotate") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      ctx.waitUntil(annotateTemplates(env));
+      return new Response("annotation triggered\n", { status: 200 });
     }
     if (url.pathname === "/done") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
@@ -284,6 +289,16 @@ async function handleCron(env) {
       await logChores(env);
     } catch (err) {
       console.error("D1 logging failed:", err);
+    }
+  }
+
+  // 6. Refresh template schedule comments (Sundays — keeps "next" dates current
+  //    without colliding with Monday's heavier generation run).
+  if (localDate(new Date()).weekday === 0) {
+    try {
+      await annotateTemplates(env);
+    } catch (err) {
+      console.error("Annotate failed:", err);
     }
   }
 }

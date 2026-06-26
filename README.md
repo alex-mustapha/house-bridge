@@ -244,6 +244,7 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 |---|---|
 | `GET /run-cron?key=…` | Runs the daily cron now: digest + cap check (+ weekly generation & scoreboard if it's Monday). |
 | `GET /run-week?key=…` | Generates the coming week's chores immediately, any day (bootstrap/test). |
+| `GET /annotate?key=…` | Refreshes the "Schedule" comment on each Recurring template (cadence + next due dates). Also runs weekly (Sundays). |
 | `GET /scoreboard?key=…` | Posts the per-person scoreboard immediately, any day. |
 | `GET /stats?key=…&days=90` | Posts a long-term stats report (done / on-time / missed / completion %, per person, most-missed chores) from the D1 log over the window. |
 | `GET /replace?key=…&issue=CHO-12` | Archives `CHO-12` and spawns a fresh copy (same title/labels/description, due today, assignee rotated to the other member). |

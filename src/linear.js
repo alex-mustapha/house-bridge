@@ -369,6 +369,39 @@ export async function fetchRecentSpawned(env, teamId, projectName) {
   return data.issues?.nodes || [];
 }
 
+// Templates with their label names and existing comments — for annotating each
+// template with a human-readable schedule comment.
+export async function fetchTemplatesForAnnotation(env, projectName) {
+  const query = `
+    query Annotate($name: String!) {
+      issues(first: 100, filter: { project: { name: { eq: $name } } }) {
+        nodes {
+          id
+          title
+          description
+          labels { nodes { name } }
+          comments { nodes { id body } }
+        }
+      }
+    }`;
+  const data = await linearQuery(env, query, { name: projectName });
+  return data.issues?.nodes || [];
+}
+
+// Create or update a comment on an issue.
+export async function upsertComment(env, issueId, commentId, body) {
+  if (commentId) {
+    const m = `mutation Update($id: String!, $body: String!) {
+      commentUpdate(id: $id, input: { body: $body }) { success }
+    }`;
+    return (await linearQuery(env, m, { id: commentId, body })).commentUpdate;
+  }
+  const m = `mutation Create($issueId: String!, $body: String!) {
+    commentCreate(input: { issueId: $issueId, body: $body }) { success }
+  }`;
+  return (await linearQuery(env, m, { issueId, body })).commentCreate;
+}
+
 // Reads recurring-chore template tickets from a Linear project (default
 // "Recurring"). Each template's cadence lives in its description; its labels
 // (e.g. a room) are carried onto every spawned copy.
