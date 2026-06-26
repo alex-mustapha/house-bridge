@@ -128,7 +128,7 @@ async function tasksResponse(interaction, env) {
     const header = key ? dayHeader(key, today) : "No due date";
     const body = groups
       .get(key)
-      .map((i) => `• [${i.title}](${i.url})${i.state?.name ? ` _(${i.state.name})_` : ""}`)
+      .map((i) => `• [${i.title}](${i.url})`)
       .join("\n");
     return `**${header}**\n${body}`;
   });
