@@ -114,7 +114,7 @@ export async function createIssue(env, { teamId, title, description, dueDate, la
 // "unstarted" type) so spawned chores land in Todo, not Backlog.
 export async function getTodoStateId(env, teamId) {
   const query = `
-    query States($teamId: String!) {
+    query States($teamId: ID!) {
       workflowStates(first: 50, filter: { team: { id: { eq: $teamId } } }) {
         nodes { id name type }
       }
