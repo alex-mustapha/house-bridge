@@ -241,6 +241,43 @@ export async function findOpenIssuesByTitle(env, teamId, title) {
   return data.issues?.nodes || [];
 }
 
+// All open (non-completed/canceled), project-less spawned chores in a team —
+// one query for week-generation dedup. Returns { id, title, dueDate }.
+export async function fetchOpenSpawned(env, teamId) {
+  const query = `
+    query OpenSpawned($teamId: ID!) {
+      issues(
+        first: 250
+        filter: {
+          team: { id: { eq: $teamId } }
+          project: { null: true }
+          state: { type: { nin: ["completed", "canceled"] } }
+        }
+      ) {
+        nodes { id title dueDate }
+      }
+    }`;
+  const data = await linearQuery(env, query, { teamId });
+  return data.issues?.nodes || [];
+}
+
+// Recent project-less spawned chores (archived included) for last-assignee
+// lookup — one query feeds the rotation for the whole week.
+export async function fetchRecentSpawned(env, teamId) {
+  const query = `
+    query RecentSpawned($teamId: ID!) {
+      issues(
+        first: 250
+        includeArchived: true
+        filter: { team: { id: { eq: $teamId } }, project: { null: true } }
+      ) {
+        nodes { title createdAt assignee { id } }
+      }
+    }`;
+  const data = await linearQuery(env, query, { teamId });
+  return data.issues?.nodes || [];
+}
+
 // Reads recurring-chore template tickets from a Linear project (default
 // "Recurring"). Each template's cadence lives in its description; its labels
 // (e.g. a room) are carried onto every spawned copy.

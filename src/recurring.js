@@ -31,9 +31,10 @@ import {
   archiveIssue,
   fetchRecurringTemplates,
   getUsers,
-  getLastAssignee,
   getIssueByIdentifier,
   getTodoStateId,
+  fetchOpenSpawned,
+  fetchRecentSpawned,
 } from "./linear.js";
 
 const WEEKDAYS = {
@@ -317,20 +318,26 @@ export async function forceReplace(env, identifier) {
 // Spawn every chore due on `now`'s local date — handling assignment (rotation +
 // "opposite" coupling) and the overdue-only replace policy. `defs`/`rotation`
 // are passed in so a whole week can be generated without re-fetching.
-async function spawnForDay(env, defs, rotation, todoStates, now) {
+// Spawn every chore due on `now`'s local date — handling assignment (rotation +
+// "opposite" coupling) and the overdue-only replace policy. Uses `ctx` (prefetched
+// per-team maps) so it makes no Linear queries except create/archive — keeping a
+// whole week's generation under the Worker subrequest cap.
+async function spawnForDay(env, defs, rotation, ctx, now) {
   const L = localDate(now);
   const today = L.ymd;
   const due = defs.filter((c) => isDueToday(c, now));
   if (!due.length) return;
 
+  const lastFor = (c) => ctx.lastByTitle[c.teamId]?.[c.title] ?? null;
+  const openFor = (c) => ctx.openByTitle[c.teamId]?.[c.title] || [];
+
   // Decide each chore's assignee up front so coupled chores ("opposite:") can
-  // reference another chore's assignment from the same day.
+  // reference another chore's assignment from the same day. (Local lookups.)
   const assignment = {};
   for (const c of due) {
     let a = c.assigneeId; // fixed owner on the template wins
     if (!a && rotation.length >= 2) {
-      const last = await getLastAssignee(env, c.teamId, c.title);
-      const idx = rotation.indexOf(last);
+      const idx = rotation.indexOf(lastFor(c));
       a = rotation[(idx + 1) % rotation.length];
     }
     assignment[c.title] = a;
@@ -348,17 +355,17 @@ async function spawnForDay(env, defs, rotation, todoStates, now) {
       continue;
     }
 
-    // Collision policy against any still-open spawned copy.
+    // Collision policy against any still-open spawned copy (from prefetch).
     const strategy = c.onExisting || "replace";
     if (strategy !== "always") {
-      const open = await findOpenIssuesByTitle(env, c.teamId, c.title);
+      const open = openFor(c);
       if (open.length) {
         if (strategy === "skip") {
           console.log(`Skipping "${c.title}" — ${open.length} still open.`);
           continue;
         }
-        // replace: leave a copy that's still within its window so there's time
-        // to finish on time; only supersede once the open copy is overdue.
+        // replace: leave a copy still within its window so there's time to
+        // finish on time; only supersede once the open copy is overdue.
         const stillCurrent = open.some((i) => !i.dueDate || i.dueDate >= today);
         if (stillCurrent) {
           console.log(`"${c.title}" open and not overdue — leaving it.`);
@@ -382,7 +389,7 @@ async function spawnForDay(env, defs, rotation, todoStates, now) {
       dueDate,
       labelIds: c.labelIds,
       assigneeId: assignment[c.title],
-      stateId: todoStates[c.teamId],
+      stateId: ctx.todoStates[c.teamId],
     });
     if (result?.success) {
       console.log(`Created recurring chore: ${c.title} (${result.issue?.identifier}) due ${dueDate}`);
@@ -406,16 +413,27 @@ export async function runWeek(env) {
     }
   }
 
-  // Resolve each team's Todo state once so spawned chores land in Todo.
-  const todoStates = {};
-  for (const c of defs) {
-    if (c.teamId && !(c.teamId in todoStates)) {
-      todoStates[c.teamId] = await getTodoStateId(env, c.teamId);
-    }
+  // Prefetch per team (a few queries total) so the per-day spawn does no lookups
+  // and the week stays under the Worker subrequest cap.
+  const ctx = { todoStates: {}, openByTitle: {}, lastByTitle: {} };
+  const teamIds = [...new Set(defs.map((c) => c.teamId).filter(Boolean))];
+  for (const teamId of teamIds) {
+    ctx.todoStates[teamId] = await getTodoStateId(env, teamId);
+
+    const open = await fetchOpenSpawned(env, teamId);
+    const obt = {};
+    for (const n of open) (obt[n.title] ||= []).push({ id: n.id, dueDate: n.dueDate });
+    ctx.openByTitle[teamId] = obt;
+
+    const recent = await fetchRecentSpawned(env, teamId);
+    recent.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    const lbt = {};
+    for (const n of recent) if (!(n.title in lbt)) lbt[n.title] = n.assignee?.id || null;
+    ctx.lastByTitle[teamId] = lbt;
   }
 
   const base = new Date();
   for (let d = 0; d < 7; d++) {
-    await spawnForDay(env, defs, rotation, todoStates, new Date(base.getTime() + d * 86_400_000));
+    await spawnForDay(env, defs, rotation, ctx, new Date(base.getTime() + d * 86_400_000));
   }
 }
