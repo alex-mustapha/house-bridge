@@ -15,7 +15,7 @@ function dayHeader(ymd, today) {
   const label = `${WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}, ${MON[m - 1]} ${d}`;
   if (ymd < today) return `🔴 ${label} · overdue`;
   if (ymd === today) return `🟠 ${label} · today`;
-  return `📅 ${label}`;
+  return label;
 }
 
 const EPHEMERAL = 64; // interaction response flag: only the caller sees it
@@ -125,7 +125,7 @@ async function tasksResponse(interaction, env) {
   );
 
   const sections = keys.map((key) => {
-    const header = key ? dayHeader(key, today) : "📅 No due date";
+    const header = key ? dayHeader(key, today) : "No due date";
     const body = groups
       .get(key)
       .map((i) => `• [${i.title}](${i.url})${i.state?.name ? ` _(${i.state.name})_` : ""}`)
