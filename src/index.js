@@ -26,6 +26,7 @@ import {
 } from "./linear.js";
 import { runWeek, forceReplace, localDate } from "./recurring.js";
 import { computeStats } from "./stats.js";
+import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 
 // Parse DISCORD_MENTIONS ("Alex:123,Kristal:456") into { alex: "123", ... }.
 function parseMentions(spec) {
@@ -47,6 +48,26 @@ export default {
   // Receives Linear webhooks (real-time issue/comment events).
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    // Discord slash-command interactions (signed POST from Discord).
+    if (url.pathname === "/interactions" && request.method === "POST") {
+      const sig = request.headers.get("x-signature-ed25519");
+      const ts = request.headers.get("x-signature-timestamp");
+      const body = await request.text();
+      if (!(await verifyDiscordSignature(env.DISCORD_PUBLIC_KEY, sig, ts, body))) {
+        return new Response("invalid request signature", { status: 401 });
+      }
+      let interaction;
+      try {
+        interaction = JSON.parse(body);
+      } catch {
+        return new Response("bad json", { status: 400 });
+      }
+      const resp = await handleInteraction(interaction, env);
+      return new Response(JSON.stringify(resp), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
 
     // Manual toolkit (all require ?key=<CRON_KEY>; 404 otherwise). See README.
     if (url.pathname === "/run-cron") {

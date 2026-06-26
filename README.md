@@ -268,12 +268,37 @@ This is inbound only (Discord → Linear); this Worker handles everything outbou
 Run both side by side.
 
 **Projects — not supported by the native integration.** Linear's Discord
-integration creates issues but not projects. To create projects (or other custom
-commands) from Discord you need a small **Discord slash-command app** that posts
-to a Worker endpoint, which then calls Linear's API. That's a separate build
-(create a Discord application, register slash commands, add an interactions
-endpoint with Ed25519 request verification). It can live in this same Worker —
-ask if you want it added.
+integration creates issues but not projects. Creating projects from Discord would
+use the same custom slash-command mechanism as `/tasks` below — ask if you want
+that command added.
+
+## Discord slash commands
+
+This Worker serves a Discord **interactions endpoint** (`POST /interactions`,
+Ed25519-verified) for custom slash commands. Currently:
+
+- **`/tasks [user]`** — lists a person's active (non-done) Linear tasks. Defaults
+  to you; pass a user to see theirs. Reply is ephemeral (only you see it). Maps
+  Discord users to Linear accounts via `DISCORD_MENTIONS`.
+
+**One-time setup:**
+1. Create an app at the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**.
+2. **General Information** → copy the **Public Key** → `wrangler secret put DISCORD_PUBLIC_KEY`. Copy the **Application ID** (used below).
+3. **Bot** → Add Bot → copy the **Bot Token** (used below).
+4. `npm run deploy` so the endpoint is live with the public key set.
+5. Back in **General Information**, set **Interactions Endpoint URL** to
+   `https://<your-worker>/interactions` and save — Discord sends a signed PING the
+   Worker must answer (it will, once `DISCORD_PUBLIC_KEY` is set).
+6. Authorize the app in your server (scope `applications.commands`):
+   `https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=applications.commands`
+7. Register the command (guild commands appear instantly):
+   ```
+   $env:DISCORD_APP_ID="..."; $env:DISCORD_BOT_TOKEN="..."; $env:DISCORD_GUILD_ID="..."
+   node scripts/register-commands.js
+   ```
+   (Get the server ID via Discord Developer Mode → right-click server → Copy Server ID.)
+
+Then type `/tasks` in any channel the app can see.
 
 ## Configuration reference
 Non-secret vars live in `wrangler.toml`; everything sensitive is a Wrangler

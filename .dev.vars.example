@@ -31,10 +31,15 @@ DISCORD_WEBHOOK_DONE=https://discord.com/api/webhooks/xxx/yyy
 # Falls back to DISCORD_WEBHOOK_DUE, then DISCORD_WEBHOOK_DEFAULT, if unset.
 DISCORD_WEBHOOK_STATS=https://discord.com/api/webhooks/xxx/yyy
 
-# Map Linear assignees to Discord user IDs so the daily digest can @-mention them.
+# Map Linear assignees to Discord user IDs so the daily digest can @-mention them
+# AND the /tasks command can map a Discord user to their Linear account.
 # Format: Name:DiscordUserID, comma-separated. Get IDs via Discord Developer Mode
 # (User Settings -> Advanced -> Developer Mode, then right-click a user -> Copy User ID).
 DISCORD_MENTIONS=Alex:111111111111111111,Kristal:222222222222222222
+
+# Discord slash commands (the /tasks command). From the Discord Developer Portal:
+# DISCORD_PUBLIC_KEY = application's Public Key (General Information) — verifies requests.
+DISCORD_PUBLIC_KEY=abc123...
 
 # How many days ahead the digest looks for upcoming due dates.
 DUE_LOOKAHEAD_DAYS=3

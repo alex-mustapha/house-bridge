@@ -241,6 +241,25 @@ export async function findOpenIssuesByTitle(env, teamId, title) {
   return data.issues?.nodes || [];
 }
 
+// Active (non-completed/canceled) issues assigned to a user, for the /tasks
+// Discord command.
+export async function fetchAssignedActiveIssues(env, assigneeId) {
+  const query = `
+    query Assigned($id: ID!) {
+      issues(
+        first: 100
+        filter: {
+          assignee: { id: { eq: $id } }
+          state: { type: { nin: ["completed", "canceled"] } }
+        }
+      ) {
+        nodes { identifier title dueDate url state { name } team { key } }
+      }
+    }`;
+  const data = await linearQuery(env, query, { id: assigneeId });
+  return data.issues?.nodes || [];
+}
+
 // All non-archived, project-less spawned chores in a team — one query that feeds
 // week-generation dedup (per title+dueDate), overdue cleanup, and load seeding.
 // Returns { id, title, dueDate, assignee{id}, state{type} }.
