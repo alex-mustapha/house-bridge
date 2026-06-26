@@ -113,7 +113,7 @@ async function tasksResponse(interaction, env) {
   const today = localDate(new Date()).ymd;
   const lines = issues.map(
     (i) =>
-      `• \`${i.identifier}\` ${i.title}` +
+      `• [${i.title}](${i.url})` +
       `${i.dueDate ? ` — ${formatDue(i.dueDate, today)}` : ""}` +
       `${i.state?.name ? ` _(${i.state.name})_` : ""}`,
   );
