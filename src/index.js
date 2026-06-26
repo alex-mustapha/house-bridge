@@ -13,7 +13,7 @@ import {
   buildDigestMessage,
   buildCapWarningEmbed,
   buildAllDoneEmbed,
-  buildScoreboardEmbed,
+  buildScoreboardMessage,
   postToDiscord,
 } from "./discord.js";
 import {
@@ -215,5 +215,5 @@ async function postScoreboard(env, force) {
   if (!teamId || !url) return;
   const since = new Date(now.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
   const history = await fetchChoreHistory(env, teamId, since);
-  await postToDiscord(url, { embeds: [buildScoreboardEmbed(computeStats(history, now))] });
+  await postToDiscord(url, buildScoreboardMessage(computeStats(history, now)));
 }

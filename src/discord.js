@@ -136,23 +136,27 @@ export function buildDigestMessage(issues, mentionMap, today) {
   };
 }
 
-export function buildScoreboardEmbed(stats) {
-  const { done, onTime, late, missed, byPerson, streak } = stats;
-  const people =
-    Object.entries(byPerson)
-      .sort((a, b) => b[1] - a[1])
-      .map(([n, c]) => `${n} ${c}`)
-      .join(" · ") || "—";
-  return {
-    title: "📊 Last week",
+// One embed per person, so each gets their own weekly scoreboard.
+export function buildScoreboardMessage(stats) {
+  const embeds = stats.people.map((p) => ({
+    title: `📊 ${p.name} — last week`,
     description:
-      `✅ **${done}** chores done (${onTime} on time, ${late} late)\n` +
-      `❌ **${missed}** missed\n` +
-      `👤 ${people}\n` +
-      `🔥 ${streak}-day all-done streak`,
+      `✅ **${p.done}** done (${p.onTime} on time, ${p.late} late)\n` +
+      `❌ **${p.missed}** missed\n` +
+      `🔥 ${p.streak}-day streak`,
     color: 0x9b59b6, // purple
     timestamp: new Date().toISOString(),
-  };
+  }));
+
+  if (!embeds.length) {
+    embeds.push({
+      title: "📊 Last week",
+      description: "No chores in the last 7 days.",
+      color: 0x9b59b6,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return { embeds };
 }
 
 export function buildCapWarningEmbed(count, cap = 250) {

@@ -13,8 +13,8 @@ shared household workspace:
   limit so you know when to archive.
 - **"All done today" celebration** — when you complete a chore and nothing else
   due today/overdue remains in that team, posts a 🎉 to Discord.
-- **Weekly scoreboard** — every Monday, completion stats (done, on-time, missed,
-  per-person split, streak).
+- **Weekly scoreboard** — every Monday, a separate scoreboard per person
+  (done, on-time, missed, streak).
 - **Manual toolkit** — key-guarded HTTP endpoints to run the cron, force a
   replace, or post the scoreboard on demand.
 

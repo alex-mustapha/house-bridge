@@ -1,5 +1,5 @@
-// Computes the weekly scoreboard from chore history (issues with due dates,
-// completion timestamps, and assignees). Pure logic, no I/O.
+// Computes the weekly scoreboard, broken down per assignee, from chore history
+// (issues with due dates, completion timestamps, and assignees). Pure logic.
 
 function ymd(d) {
   return d.toISOString().slice(0, 10);
@@ -12,41 +12,50 @@ export function computeStats(issues, now) {
   const today = ymd(now);
   const weekAgo = ymd(shiftDays(now, 7));
 
-  let done = 0;
-  let onTime = 0;
-  let late = 0;
-  let missed = 0;
-  const byPerson = {};
+  // Per-person tallies over the last 7 days (by due date).
+  const acc = {};
+  const ensure = (name) =>
+    (acc[name] ||= { done: 0, onTime: 0, late: 0, missed: 0 });
 
-  // Tallies over the last 7 days (by due date).
   for (const i of issues) {
     if (!i.dueDate || i.dueDate < weekAgo || i.dueDate > today) continue;
+    const who = i.assignee?.name;
+    if (!who) continue; // unassigned chores aren't relevant to per-person scores
+    const a = ensure(who);
     const completed = i.completedAt ? i.completedAt.slice(0, 10) : null;
     if (completed) {
-      done++;
-      if (completed <= i.dueDate) onTime++;
-      else late++;
-      const p = i.assignee?.name || "Unassigned";
-      byPerson[p] = (byPerson[p] || 0) + 1;
+      a.done++;
+      if (completed <= i.dueDate) a.onTime++;
+      else a.late++;
     } else if (i.dueDate < today) {
-      missed++; // past due and never completed
+      a.missed++; // past due, never completed
     }
   }
 
-  // Streak: consecutive prior days (ending yesterday) on which every chore due
-  // that day was completed. Days with no chores are skipped, not counted.
-  const byDay = {};
+  // Per-person streak: consecutive prior days (ending yesterday) on which every
+  // chore assigned to that person and due that day was completed.
+  const byDayPerson = {};
   for (const i of issues) {
     if (!i.dueDate) continue;
-    (byDay[i.dueDate] ||= []).push(i);
+    const who = i.assignee?.name;
+    if (!who) continue;
+    ((byDayPerson[who] ||= {})[i.dueDate] ||= []).push(i);
   }
-  let streak = 0;
-  for (let n = 1; n <= 30; n++) {
-    const items = byDay[ymd(shiftDays(now, n))];
-    if (!items) continue;
-    if (items.every((i) => i.completedAt)) streak++;
-    else break;
-  }
+  const streakFor = (name) => {
+    const byDay = byDayPerson[name] || {};
+    let s = 0;
+    for (let n = 1; n <= 30; n++) {
+      const items = byDay[ymd(shiftDays(now, n))];
+      if (!items) continue;
+      if (items.every((i) => i.completedAt)) s++;
+      else break;
+    }
+    return s;
+  };
 
-  return { done, onTime, late, missed, byPerson, streak };
+  const people = Object.keys(acc)
+    .map((name) => ({ name, ...acc[name], streak: streakFor(name) }))
+    .sort((a, b) => b.done - a.done);
+
+  return { people };
 }
