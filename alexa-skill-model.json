@@ -1,0 +1,29 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "chores",
+      "intents": [
+        { "name": "AMAZON.HelpIntent", "samples": [] },
+        { "name": "AMAZON.StopIntent", "samples": [] },
+        { "name": "AMAZON.CancelIntent", "samples": [] },
+        { "name": "AMAZON.NavigateHomeIntent", "samples": [] },
+        {
+          "name": "MarkDoneIntent",
+          "slots": [{ "name": "chore", "type": "AMAZON.SearchQuery" }],
+          "samples": [
+            "I cleaned the {chore}",
+            "I just cleaned the {chore}",
+            "I finished the {chore}",
+            "I did the {chore}",
+            "I took care of the {chore}",
+            "mark the {chore} done",
+            "I cleaned {chore}",
+            "I finished {chore}",
+            "I did {chore}"
+          ]
+        }
+      ],
+      "types": []
+    }
+  }
+}

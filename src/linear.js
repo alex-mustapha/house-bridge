@@ -158,6 +158,21 @@ export async function setIssueState(env, id, stateId) {
   return data.issueUpdate;
 }
 
+// Mark the best-matching active chore done by (fuzzy) title — soonest-due wins.
+// Shared by the /done endpoint and the Alexa skill.
+export async function markChoreDone(env, match) {
+  const matches = await findActiveByTitle(env, match);
+  if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };
+  matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
+  const issue = matches[0];
+  const stateId = await getDoneStateId(env, issue.team.id);
+  if (!stateId) return { ok: false, message: "No Done state found" };
+  const res = await setIssueState(env, issue.id, stateId);
+  return res?.success
+    ? { ok: true, title: issue.title, message: `Marked "${issue.title}" done` }
+    : { ok: false, message: "Update failed" };
+}
+
 // Resolve a team's "Todo" workflow state id (by name, falling back to the
 // "unstarted" type) so spawned chores land in Todo, not Backlog.
 export async function getTodoStateId(env, teamId) {

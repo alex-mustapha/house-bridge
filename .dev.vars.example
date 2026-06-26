@@ -41,6 +41,11 @@ DISCORD_MENTIONS=Alex:111111111111111111,Kristal:222222222222222222
 # DISCORD_PUBLIC_KEY = application's Public Key (General Information) — verifies requests.
 DISCORD_PUBLIC_KEY=abc123...
 
+# Alexa custom skill (the "chores" skill). The skill's ID, from the Alexa
+# Developer Console (Endpoint page). Requests claiming a different skill are
+# rejected. Leave unset to accept any (fine before you've created the skill).
+ALEXA_SKILL_ID=amzn1.ask.skill.xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
 # How many days ahead the digest looks for upcoming due dates.
 DUE_LOOKAHEAD_DAYS=3
 

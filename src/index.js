@@ -23,13 +23,12 @@ import {
   anyOpenDueByTeam,
   fetchChoreHistory,
   getTeamId,
-  findActiveByTitle,
-  getDoneStateId,
-  setIssueState,
+  markChoreDone,
 } from "./linear.js";
 import { runWeek, forceReplace, localDate } from "./recurring.js";
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
+import { verifyAlexaRequest, handleAlexa } from "./alexa.js";
 
 // Parse DISCORD_MENTIONS ("Alex:123,Kristal:456") into { alex: "123", ... }.
 function parseMentions(spec) {
@@ -47,20 +46,6 @@ function authed(url, env) {
   return Boolean(env.CRON_KEY) && url.searchParams.get("key") === env.CRON_KEY;
 }
 
-// Mark the best-matching active chore done by (fuzzy) title — the soonest-due
-// one wins. Powers the /done endpoint (voice assistants, shortcuts, etc.).
-async function markChoreDone(env, match) {
-  const matches = await findActiveByTitle(env, match);
-  if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };
-  matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
-  const issue = matches[0];
-  const stateId = await getDoneStateId(env, issue.team.id);
-  if (!stateId) return { ok: false, message: "No Done state found" };
-  const res = await setIssueState(env, issue.id, stateId);
-  return res?.success
-    ? { ok: true, message: `Marked "${issue.title}" done` }
-    : { ok: false, message: "Update failed" };
-}
 
 export default {
   // Receives Linear webhooks (real-time issue/comment events).
@@ -82,6 +67,23 @@ export default {
         return new Response("bad json", { status: 400 });
       }
       const resp = await handleInteraction(interaction, env);
+      return new Response(JSON.stringify(resp), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Alexa custom-skill requests (signed POST from Alexa).
+    if (url.pathname === "/alexa" && request.method === "POST") {
+      let payload;
+      try {
+        payload = JSON.parse(await request.text());
+      } catch {
+        return new Response("bad json", { status: 400 });
+      }
+      if (!verifyAlexaRequest(payload, env)) {
+        return new Response("unauthorized", { status: 401 });
+      }
+      const resp = await handleAlexa(payload, env);
       return new Response(JSON.stringify(resp), {
         headers: { "Content-Type": "application/json" },
       });

@@ -257,6 +257,26 @@ The `/done` endpoint marks a chore done by name, so any trigger can drive it:
 
 Marking done also fires the normal ✅ Discord post and the "all done today" check.
 
+### Alexa custom skill ("Alexa, tell chores I cleaned the bathroom")
+The Worker serves an Alexa endpoint at `POST /alexa`. Setup (all in the web
+[Alexa Developer Console](https://developer.amazon.com/alexa/console/ask) — sign
+in with the **same Amazon account as your Echo** so the dev skill works on your
+devices without publishing):
+1. **Create Skill** → name `Chores` → model **Custom** → hosting **Provision your
+   own** → **Start from Scratch**.
+2. **Build → Invocation** → invocation name: `chores`.
+3. **Build → Interaction Model → JSON Editor** → paste `alexa-skill-model.json`
+   → **Save** → **Build Model**.
+4. **Build → Endpoint** → **HTTPS** → Default Region:
+   `https://<your-worker>/alexa` → SSL cert type: *"…sub-domain of a domain that
+   has a wildcard certificate…"* (true for `*.workers.dev`) → **Save**.
+5. Copy the **Skill ID** (Endpoint page) → `wrangler secret put ALEXA_SKILL_ID`.
+6. **Test** tab → set to **Development** → try "tell chores I cleaned the
+   bathroom", then say it on your Echo.
+
+The `MarkDoneIntent` captures the chore as free text and routes through the same
+`markChoreDone` logic as `/done`.
+
 ```
 curl "https://<worker>/run-cron?key=YOUR_KEY"
 curl "https://<worker>/run-week?key=YOUR_KEY"
