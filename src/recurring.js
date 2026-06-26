@@ -33,6 +33,7 @@ import {
   getUsers,
   getLastAssignee,
   getIssueByIdentifier,
+  getTodoStateId,
 } from "./linear.js";
 
 const WEEKDAYS = {
@@ -305,6 +306,7 @@ export async function forceReplace(env, identifier) {
     dueDate: today,
     labelIds: (issue.labels?.nodes || []).map((l) => l.id),
     assigneeId,
+    stateId: await getTodoStateId(env, issue.team.id),
   });
   if (result?.success) {
     console.log(`Replaced ${identifier} -> ${result.issue?.identifier}`);
@@ -315,7 +317,7 @@ export async function forceReplace(env, identifier) {
 // Spawn every chore due on `now`'s local date — handling assignment (rotation +
 // "opposite" coupling) and the overdue-only replace policy. `defs`/`rotation`
 // are passed in so a whole week can be generated without re-fetching.
-async function spawnForDay(env, defs, rotation, now) {
+async function spawnForDay(env, defs, rotation, todoStates, now) {
   const L = localDate(now);
   const today = L.ymd;
   const due = defs.filter((c) => isDueToday(c, now));
@@ -380,6 +382,7 @@ async function spawnForDay(env, defs, rotation, now) {
       dueDate,
       labelIds: c.labelIds,
       assigneeId: assignment[c.title],
+      stateId: todoStates[c.teamId],
     });
     if (result?.success) {
       console.log(`Created recurring chore: ${c.title} (${result.issue?.identifier}) due ${dueDate}`);
@@ -403,8 +406,16 @@ export async function runWeek(env) {
     }
   }
 
+  // Resolve each team's Todo state once so spawned chores land in Todo.
+  const todoStates = {};
+  for (const c of defs) {
+    if (c.teamId && !(c.teamId in todoStates)) {
+      todoStates[c.teamId] = await getTodoStateId(env, c.teamId);
+    }
+  }
+
   const base = new Date();
   for (let d = 0; d < 7; d++) {
-    await spawnForDay(env, defs, rotation, new Date(base.getTime() + d * 86_400_000));
+    await spawnForDay(env, defs, rotation, todoStates, new Date(base.getTime() + d * 86_400_000));
   }
 }

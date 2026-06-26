@@ -92,7 +92,7 @@ export async function getTeamId(env, teamKey) {
   return data.teams?.nodes?.[0]?.id || null;
 }
 
-export async function createIssue(env, { teamId, title, description, dueDate, labelIds, assigneeId }) {
+export async function createIssue(env, { teamId, title, description, dueDate, labelIds, assigneeId, stateId }) {
   const mutation = `
     mutation CreateIssue($input: IssueCreateInput!) {
       issueCreate(input: $input) {
@@ -105,8 +105,25 @@ export async function createIssue(env, { teamId, title, description, dueDate, la
   if (dueDate) input.dueDate = dueDate;
   if (labelIds?.length) input.labelIds = labelIds;
   if (assigneeId) input.assigneeId = assigneeId;
+  if (stateId) input.stateId = stateId;
   const data = await linearQuery(env, mutation, { input });
   return data.issueCreate;
+}
+
+// Resolve a team's "Todo" workflow state id (by name, falling back to the
+// "unstarted" type) so spawned chores land in Todo, not Backlog.
+export async function getTodoStateId(env, teamId) {
+  const query = `
+    query States($teamId: String!) {
+      workflowStates(first: 50, filter: { team: { id: { eq: $teamId } } }) {
+        nodes { id name type }
+      }
+    }`;
+  const data = await linearQuery(env, query, { teamId });
+  const nodes = data.workflowStates?.nodes || [];
+  const byName = nodes.find((s) => s.name.toLowerCase() === "todo");
+  const byType = nodes.find((s) => s.type === "unstarted");
+  return (byName || byType)?.id || null;
 }
 
 // Look up a single issue by its human identifier (e.g. "CHO-12").
