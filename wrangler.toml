@@ -13,7 +13,8 @@ crons = ["0 12 * * *"]
 # Non-secret config. Secrets (API keys, webhook URLs) are set via
 # `wrangler secret put NAME` — see README.
 [vars]
-DUE_LOOKAHEAD_DAYS = "3"
+# How many days ahead the daily digest looks. 0 = only today + overdue.
+DUE_LOOKAHEAD_DAYS = "0"
 # Warn in #bot-log once active (non-archived) issues reach this count.
 # Free plan caps at 250; 220 gives you runway to archive.
 CAP_WARN_AT = "220"

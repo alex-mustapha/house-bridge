@@ -97,56 +97,32 @@ function mentionFor(name, mentionMap) {
   return null;
 }
 
-const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-// "2026-06-27" -> "Saturday, Jun 27" day-group header, with overdue/today marker.
-function dayHeader(ymd, today) {
-  const [y, m, d] = ymd.split("-").map(Number);
-  const label = `${WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}, ${MON[m - 1]} ${d}`;
-  if (ymd < today) return `🔴 ${label} · overdue`;
-  if (ymd === today) return `🟠 ${label} · today`;
-  return label;
-}
-
-// Daily digest grouped by due day (mirrors /tasks): linked titles, no ticket
-// number or status. Owners are still @-pinged in `content` (mentions only
-// notify from content, not the embed), and each line notes whose chore it is.
+// Daily digest of today's + overdue chores, grouped by assignee. Owners are
+// @-pinged in `content` (mentions only notify from content, not the embed);
+// overdue lines get a 🔴 marker.
 export function buildDigestMessage(issues, mentionMap, today) {
-  const groups = new Map(); // dueDate ("" if none) -> issues[]
+  const groups = new Map(); // owner name | "Unassigned" -> issues[]
   for (const i of issues) {
-    const key = i.dueDate || "";
+    const key = i.assignee?.name || "Unassigned";
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(i);
   }
-  const keys = [...groups.keys()].sort((a, b) =>
-    (a || "9999-99-99").localeCompare(b || "9999-99-99"),
+
+  const line = (i) =>
+    `• ${i.dueDate && i.dueDate < today ? "🔴 " : ""}[${i.title}](${i.url})`;
+  const sections = [...groups.entries()].map(
+    ([name, items]) => `**${name}**\n${items.map(line).join("\n")}`,
   );
 
-  const sections = keys.map((key) => {
-    const header = key ? dayHeader(key, today) : "No due date";
-    const body = groups
-      .get(key)
-      .map((i) => `• [${i.title}](${i.url})${i.assignee?.name ? ` — ${i.assignee.name}` : ""}`)
-      .join("\n");
-    return `**${header}**\n${body}`;
-  });
-
-  // Ping each owner who has chores in the window, with their count.
-  const counts = new Map();
-  for (const i of issues) {
-    const n = i.assignee?.name;
-    if (n) counts.set(n, (counts.get(n) || 0) + 1);
-  }
-  const pings = [...counts.entries()].map(
-    ([name, c]) => `${mentionFor(name, mentionMap) || name} — ${c}`,
-  );
+  const pings = [...groups.entries()]
+    .filter(([name]) => name !== "Unassigned")
+    .map(([name, items]) => `${mentionFor(name, mentionMap) || name} — ${items.length}`);
 
   return {
     content: `🔔 **Today's chores**${pings.length ? `\n${pings.join(" · ")}` : ""}`,
     embeds: [
       {
-        title: "📅 Daily chores",
+        title: "Today's chores",
         description: sections.join("\n\n").slice(0, 4000),
         color: COLORS.dueToday,
         timestamp: new Date().toISOString(),

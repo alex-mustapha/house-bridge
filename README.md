@@ -5,8 +5,8 @@ shared household workspace:
 
 - **Real-time updates** — issue created / updated / completed / commented, posted
   as rich Discord embeds, routed per team.
-- **Daily digest** — due/overdue chores, **split by owner and @-mentioning each
-  person**, with room tags, on a cron.
+- **Daily digest** — today's + overdue chores, **grouped by assignee and
+  @-mentioning each person**, on a cron.
 - **Recurring chores** — a free replacement for Linear's paid recurring issues,
   authored entirely in Linear, with auto-assignment that alternates owners.
 - **Free-plan cap warning** — pings `#bot-log` as you approach the 250 active-issue
@@ -354,7 +354,7 @@ secret (`wrangler secret put NAME`). Local dev reads `.dev.vars` (see
 **Vars (`wrangler.toml`)**
 | Name | Default | Purpose |
 |---|---|---|
-| `DUE_LOOKAHEAD_DAYS` | `3` | Digest look-ahead window (days). |
+| `DUE_LOOKAHEAD_DAYS` | `0` | Days ahead the digest includes; `0` = today + overdue. |
 | `CAP_WARN_AT` | `220` | Active-issue count that triggers the cap warning. |
 | `RECURRING_PROJECT` | `Recurring` | Project holding recurring templates. |
 | `CHORES_TEAM` | `CHO` | Team key used for the scoreboard. |
