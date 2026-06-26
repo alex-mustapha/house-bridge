@@ -3,6 +3,18 @@
 // issues. Discord POSTs to the Worker's /interactions endpoint.
 
 import { getUsers, fetchAssignedActiveIssues } from "./linear.js";
+import { localDate } from "./recurring.js";
+
+const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// "2026-06-27" -> "🟠 Sat Jun 27" (weekday + date, with overdue/today marker).
+function formatDue(ymd, today) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const wd = WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+  const mark = ymd < today ? "🔴 " : ymd === today ? "🟠 " : "";
+  return `${mark}${wd} ${MON[m - 1]} ${d}`;
+}
 
 const EPHEMERAL = 64; // interaction response flag: only the caller sees it
 
@@ -98,10 +110,11 @@ async function tasksResponse(interaction, env) {
   }
 
   issues.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
+  const today = localDate(new Date()).ymd;
   const lines = issues.map(
     (i) =>
       `• \`${i.identifier}\` ${i.title}` +
-      `${i.dueDate ? ` — due \`${i.dueDate}\`` : ""}` +
+      `${i.dueDate ? ` — ${formatDue(i.dueDate, today)}` : ""}` +
       `${i.state?.name ? ` _(${i.state.name})_` : ""}`,
   );
 
