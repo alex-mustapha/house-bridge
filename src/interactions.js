@@ -14,19 +14,29 @@ function hexToBytes(hex) {
   return bytes;
 }
 
+// Import the app's Ed25519 public key, tolerating both algorithm names the
+// Cloudflare runtime has used ("Ed25519" and legacy "NODE-ED25519").
+async function importEdKey(raw) {
+  try {
+    return await crypto.subtle.importKey("raw", raw, { name: "Ed25519" }, false, ["verify"]);
+  } catch {
+    return await crypto.subtle.importKey(
+      "raw",
+      raw,
+      { name: "NODE-ED25519", namedCurve: "NODE-ED25519" },
+      false,
+      ["verify"],
+    );
+  }
+}
+
 // Discord signs each request; verify it with the app's public key (hex).
 export async function verifyDiscordSignature(publicKeyHex, signature, timestamp, body) {
   if (!publicKeyHex || !signature || !timestamp) return false;
   try {
-    const key = await crypto.subtle.importKey(
-      "raw",
-      hexToBytes(publicKeyHex),
-      { name: "Ed25519" },
-      false,
-      ["verify"],
-    );
+    const key = await importEdKey(hexToBytes(publicKeyHex));
     return await crypto.subtle.verify(
-      "Ed25519",
+      key.algorithm?.name || "Ed25519",
       key,
       hexToBytes(signature),
       new TextEncoder().encode(timestamp + body),
