@@ -5,15 +5,17 @@
 import { getUsers, fetchAssignedActiveIssues } from "./linear.js";
 import { localDate } from "./recurring.js";
 
-const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// "2026-06-27" -> "🟠 Sat Jun 27" (weekday + date, with overdue/today marker).
-function formatDue(ymd, today) {
+// "2026-06-27" -> "Saturday, Jun 27" as a day-group header, with overdue/today
+// markers relative to `today`.
+function dayHeader(ymd, today) {
   const [y, m, d] = ymd.split("-").map(Number);
-  const wd = WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
-  const mark = ymd < today ? "🔴 " : ymd === today ? "🟠 " : "";
-  return `${mark}${wd} ${MON[m - 1]} ${d}`;
+  const label = `${WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}, ${MON[m - 1]} ${d}`;
+  if (ymd < today) return `🔴 ${label} · overdue`;
+  if (ymd === today) return `🟠 ${label} · today`;
+  return `📅 ${label}`;
 }
 
 const EPHEMERAL = 64; // interaction response flag: only the caller sees it
@@ -109,14 +111,27 @@ async function tasksResponse(interaction, env) {
     return reply(`🎉 ${user.name || name} has no open tasks.`);
   }
 
-  issues.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
   const today = localDate(new Date()).ymd;
-  const lines = issues.map(
-    (i) =>
-      `• [${i.title}](${i.url})` +
-      `${i.dueDate ? ` — ${formatDue(i.dueDate, today)}` : ""}` +
-      `${i.state?.name ? ` _(${i.state.name})_` : ""}`,
+
+  // Group by due date, soonest first; undated last.
+  const groups = new Map();
+  for (const i of issues) {
+    const key = i.dueDate || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(i);
+  }
+  const keys = [...groups.keys()].sort((a, b) =>
+    (a || "9999-99-99").localeCompare(b || "9999-99-99"),
   );
+
+  const sections = keys.map((key) => {
+    const header = key ? dayHeader(key, today) : "📅 No due date";
+    const body = groups
+      .get(key)
+      .map((i) => `• [${i.title}](${i.url})${i.state?.name ? ` _(${i.state.name})_` : ""}`)
+      .join("\n");
+    return `**${header}**\n${body}`;
+  });
 
   return {
     type: 4,
@@ -124,7 +139,7 @@ async function tasksResponse(interaction, env) {
       embeds: [
         {
           title: `📋 ${user.name || name} — ${issues.length} open task${issues.length === 1 ? "" : "s"}`,
-          description: lines.join("\n").slice(0, 4000),
+          description: sections.join("\n\n").slice(0, 4000),
           color: 0x5e6ad2,
         },
       ],
