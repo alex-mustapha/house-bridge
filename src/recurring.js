@@ -96,8 +96,8 @@ function parseLabelConfig(labelNodes) {
   return { config, passthroughLabelIds };
 }
 
-// month/week/dueafter live in the description; parsed then stripped from body.
-const DESC_DIRECTIVE_RE = /^\s*(month|week|dueafter)\s*:/i;
+// month/week/dueafter/opposite live in the description; parsed then stripped.
+const DESC_DIRECTIVE_RE = /^\s*(month|week|dueafter|opposite)\s*:/i;
 function parseDescriptionConfig(description) {
   const cfg = {};
   if (!description) return cfg;
@@ -118,6 +118,9 @@ function parseDescriptionConfig(description) {
   }
   const da = description.match(/^\s*dueafter\s*:\s*(\d{1,3})\s*$/im);
   if (da) cfg.dueAfterDays = parseInt(da[1], 10);
+  // opposite: <chore title> -> assign the other member from that chore this run
+  const opp = description.match(/^\s*opposite\s*:\s*(.+)$/im);
+  if (opp) cfg.opposite = opp[1].trim();
   return cfg;
 }
 function stripDescription(description) {
@@ -240,6 +243,7 @@ async function buildDefs(env) {
         months: descCfg.months,
         weekPhase: descCfg.weekPhase,
         dueAfterDays: descCfg.dueAfterDays,
+        opposite: descCfg.opposite, // assign opposite of this chore's owner
         assigneeId: t.assignee?.id, // explicit owner on the template = fixed
       });
     }
@@ -310,6 +314,25 @@ export async function runRecurring(env) {
     }
   }
 
+  // Decide each chore's assignee up front so coupled chores ("opposite:") can
+  // reference another chore's assignment from the same run.
+  const assignment = {};
+  for (const c of defs) {
+    let a = c.assigneeId; // fixed owner on the template wins
+    if (!a && rotation.length >= 2) {
+      const last = await getLastAssignee(env, c.teamId, c.title);
+      const idx = rotation.indexOf(last);
+      a = rotation[(idx + 1) % rotation.length];
+    }
+    assignment[c.title] = a;
+  }
+  for (const c of defs) {
+    if (c.opposite && rotation.length >= 2 && assignment[c.opposite] != null) {
+      assignment[c.title] =
+        rotation.find((id) => id !== assignment[c.opposite]) ?? assignment[c.title];
+    }
+  }
+
   for (const c of defs) {
     if (!c.teamId) {
       console.error(`Recurring "${c.title}": could not resolve a team.`);
@@ -336,13 +359,7 @@ export async function runRecurring(env) {
       ? new Date(Date.now() + c.dueAfterDays * 86_400_000).toISOString().slice(0, 10)
       : today;
 
-    // Explicit template assignee is fixed; otherwise alternate from last time.
-    let assigneeId = c.assigneeId;
-    if (!assigneeId && rotation.length >= 2) {
-      const last = await getLastAssignee(env, c.teamId, c.title);
-      const idx = rotation.indexOf(last); // -1 if none/unknown -> starts at [0]
-      assigneeId = rotation[(idx + 1) % rotation.length];
-    }
+    const assigneeId = assignment[c.title];
 
     const result = await createIssue(env, {
       teamId: c.teamId,

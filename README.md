@@ -182,6 +182,8 @@ Optional description directives (parsed, then stripped from the copied body):
 - `month: june` or `month: jan, jul` — which month(s) for annual/semi-annual/bimonthly
 - `week: even` / `week: odd` — biweekly phase; `week: 0`/`1`/`2` — triweekly phase
 - `dueafter: 2` — due date N days out (default today)
+- `opposite: Change sheets` — assign the *other* person from that chore's owner
+  this run (both chores must be due the same day for it to apply)
 
 Every other label (e.g. `kitchen`) is copied onto the spawned chore.
 
