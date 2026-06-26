@@ -33,7 +33,7 @@ import {
   getUsers,
   getIssueByIdentifier,
   getTodoStateId,
-  fetchOpenSpawned,
+  fetchSpawned,
   fetchRecentSpawned,
 } from "./linear.js";
 
@@ -335,17 +335,18 @@ export async function runWeek(env) {
     }
   }
 
-  // Prefetch per team (a few queries total) so planning needs no lookups and the
-  // week stays under the Worker subrequest cap.
-  const ctx = { todoStates: {}, openByTitle: {}, lastByTitle: {} };
+  // Prefetch per team (a few queries total) so planning needs no per-chore
+  // lookups and the week stays under the Worker subrequest cap.
+  const base = new Date();
+  const todayYmd = localDate(base).ymd;
+  const horizonEnd = localDate(new Date(base.getTime() + 6 * 86_400_000)).ymd;
+  const isOpen = (n) => !["completed", "canceled"].includes(n.state?.type);
+
+  const ctx = { todoStates: {}, spawned: {}, lastByTitle: {} };
   const teamIds = [...new Set(defs.map((c) => c.teamId).filter(Boolean))];
   for (const teamId of teamIds) {
     ctx.todoStates[teamId] = await getTodoStateId(env, teamId);
-
-    const open = await fetchOpenSpawned(env, teamId);
-    const obt = {};
-    for (const n of open) (obt[n.title] ||= []).push({ id: n.id, dueDate: n.dueDate });
-    ctx.openByTitle[teamId] = obt;
+    ctx.spawned[teamId] = await fetchSpawned(env, teamId);
 
     const recent = await fetchRecentSpawned(env, teamId);
     recent.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
@@ -354,97 +355,108 @@ export async function runWeek(env) {
     ctx.lastByTitle[teamId] = lbt;
   }
 
-  // PLAN: gather every chore to create this week (after dedup), in day order.
-  const base = new Date();
+  // Dedup set: an occurrence already exists for this (team, title, due date).
+  const existing = new Set();
+  for (const teamId of teamIds) {
+    for (const n of ctx.spawned[teamId]) {
+      if (n.dueDate) existing.add(`${teamId}::${n.title}@${n.dueDate}`);
+    }
+  }
+
+  // PLAN: one entry per (chore, day-it's-due) in the next 7 days, skipping any
+  // occurrence that already exists.
   const plan = [];
-  const planned = new Set();
   for (let d = 0; d < 7; d++) {
     const L = localDate(new Date(base.getTime() + d * 86_400_000));
     for (const c of defs) {
       if (!c.teamId || !isDueToday(c, new Date(`${L.ymd}T12:00:00Z`))) continue;
-      if (planned.has(c.title)) continue;
-      const open = ctx.openByTitle[c.teamId]?.[c.title] || [];
-      const strategy = c.onExisting || "replace";
-      let toArchive = [];
-      if (strategy !== "always" && open.length) {
-        if (strategy === "skip") {
-          console.log(`Skipping "${c.title}" — ${open.length} still open.`);
-          continue;
-        }
-        if (open.some((i) => !i.dueDate || i.dueDate >= L.ymd)) {
-          console.log(`"${c.title}" open and not overdue — leaving it.`);
-          continue;
-        }
-        toArchive = open.map((i) => i.id); // replace overdue copies
-      }
       const dueDate = c.dueAfterDays
         ? new Date(Date.UTC(L.year, L.month - 1, L.dom) + c.dueAfterDays * 86_400_000)
             .toISOString()
             .slice(0, 10)
         : L.ymd;
-      plan.push({ c, dueDate, toArchive });
-      planned.add(c.title);
+      const key = `${c.teamId}::${c.title}@${dueDate}`;
+      if (existing.has(key)) continue;
+      existing.add(key);
+      plan.push({ c, dueDate });
     }
   }
-  if (!plan.length) return;
 
-  // ASSIGN: balance the week ≈50/50. Fixed owners first, then free chores to
-  // whoever has fewer so far (tie -> alternate from last time, else a weekly
-  // seed), then "opposite" chores mirror their partner.
-  const assignment = {};
-  if (rotation.length >= 2) {
+  // CLEANUP (replace policy): archive open copies whose due date is past, so
+  // missed occurrences don't pile up.
+  const toArchive = [];
+  for (const teamId of teamIds) {
+    for (const n of ctx.spawned[teamId]) {
+      if (!n.dueDate || n.dueDate >= todayYmd || !isOpen(n)) continue;
+      const c = defs.find((x) => x.teamId === teamId && x.title === n.title);
+      if (c && (c.onExisting || "replace") === "replace") toArchive.push(n.id);
+    }
+  }
+
+  // ASSIGN per occurrence, balancing the week ≈50/50. Seed counts from chores
+  // already assigned this week so mid-week re-runs stay balanced.
+  if (rotation.length >= 2 && plan.length) {
     const [A, B] = rotation;
     const counts = { [A]: 0, [B]: 0 };
+    for (const teamId of teamIds) {
+      for (const n of ctx.spawned[teamId]) {
+        if (!isOpen(n) || !n.dueDate || n.dueDate < todayYmd || n.dueDate > horizonEnd) continue;
+        const id = n.assignee?.id;
+        if (id in counts) counts[id]++;
+      }
+    }
     const seed = localDate(base).weekIndex % 2 === 0 ? A : B;
     const bump = (id) => {
       if (id in counts) counts[id]++;
     };
-    for (const { c } of plan) {
-      if (c.assigneeId) {
-        assignment[c.title] = c.assigneeId;
-        bump(c.assigneeId);
+    for (const e of plan) {
+      if (e.c.assigneeId) {
+        e.assignee = e.c.assigneeId;
+        bump(e.assignee);
       }
     }
-    for (const { c } of plan) {
-      if (c.assigneeId || c.opposite) continue;
+    for (const e of plan) {
+      if (e.c.assigneeId || e.c.opposite) continue;
       let cand;
       if (counts[A] < counts[B]) cand = A;
       else if (counts[B] < counts[A]) cand = B;
       else {
-        const last = ctx.lastByTitle[c.teamId]?.[c.title];
+        const last = ctx.lastByTitle[e.c.teamId]?.[e.c.title];
         cand = last === A ? B : last === B ? A : seed;
       }
-      assignment[c.title] = cand;
+      e.assignee = cand;
       bump(cand);
     }
-    for (const { c } of plan) {
-      if (!c.opposite) continue;
-      const target = assignment[c.opposite];
+    for (const e of plan) {
+      if (!e.c.opposite) continue;
+      const sib = plan.find(
+        (x) => x.c.teamId === e.c.teamId && x.c.title === e.c.opposite && x.dueDate === e.dueDate,
+      );
       const cand =
-        target != null
-          ? rotation.find((id) => id !== target) ?? target
+        sib?.assignee != null
+          ? rotation.find((id) => id !== sib.assignee) ?? sib.assignee
           : counts[A] <= counts[B] ? A : B;
-      assignment[c.title] = cand;
+      e.assignee = cand;
       bump(cand);
     }
   } else {
-    for (const { c } of plan) assignment[c.title] = c.assigneeId;
+    for (const e of plan) e.assignee = e.c.assigneeId;
   }
 
   // EXECUTE.
-  for (const { c, dueDate, toArchive } of plan) {
-    for (const id of toArchive) await archiveIssue(env, id);
+  for (const id of toArchive) await archiveIssue(env, id);
+  for (const e of plan) {
     const result = await createIssue(env, {
-      teamId: c.teamId,
-      title: c.title,
-      description: c.description,
-      dueDate,
-      labelIds: c.labelIds,
-      assigneeId: assignment[c.title],
-      stateId: ctx.todoStates[c.teamId],
+      teamId: e.c.teamId,
+      title: e.c.title,
+      description: e.c.description,
+      dueDate: e.dueDate,
+      labelIds: e.c.labelIds,
+      assigneeId: e.assignee,
+      stateId: ctx.todoStates[e.c.teamId],
     });
     if (result?.success) {
-      console.log(`Created recurring chore: ${c.title} (${result.issue?.identifier}) due ${dueDate}`);
+      console.log(`Created recurring chore: ${e.c.title} (${result.issue?.identifier}) due ${e.dueDate}`);
     }
   }
 }

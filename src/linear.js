@@ -241,20 +241,17 @@ export async function findOpenIssuesByTitle(env, teamId, title) {
   return data.issues?.nodes || [];
 }
 
-// All open (non-completed/canceled), project-less spawned chores in a team —
-// one query for week-generation dedup. Returns { id, title, dueDate }.
-export async function fetchOpenSpawned(env, teamId) {
+// All non-archived, project-less spawned chores in a team — one query that feeds
+// week-generation dedup (per title+dueDate), overdue cleanup, and load seeding.
+// Returns { id, title, dueDate, assignee{id}, state{type} }.
+export async function fetchSpawned(env, teamId) {
   const query = `
-    query OpenSpawned($teamId: ID!) {
+    query Spawned($teamId: ID!) {
       issues(
         first: 250
-        filter: {
-          team: { id: { eq: $teamId } }
-          project: { null: true }
-          state: { type: { nin: ["completed", "canceled"] } }
-        }
+        filter: { team: { id: { eq: $teamId } }, project: { null: true } }
       ) {
-        nodes { id title dueDate }
+        nodes { id title dueDate assignee { id } state { type } }
       }
     }`;
   const data = await linearQuery(env, query, { teamId });
