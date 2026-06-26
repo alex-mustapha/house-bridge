@@ -162,34 +162,48 @@ function matchMembers(spec, users) {
   return ids;
 }
 
-function lastDayOfMonth(now) {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+// Current date in America/New_York (Eastern). Computing the day in local time
+// (not UTC) means weekday / day-of-month / week-phase / due dates reflect the
+// household's actual calendar day no matter when the UTC cron fires. DST-safe.
+export function localDate(now) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const get = (t) => parts.find((p) => p.type === t).value;
+  const year = +get("year");
+  const month = +get("month");
+  const day = +get("day");
+  const utcMidnight = Date.UTC(year, month - 1, day);
+  return {
+    ymd: `${get("year")}-${get("month")}-${get("day")}`,
+    weekday: new Date(utcMidnight).getUTCDay(),
+    dom: day,
+    month,
+    year,
+    weekIndex: Math.floor(utcMidnight / 86_400_000 / 7),
+  };
+}
+
+function lastDayOfMonth(L) {
+  return new Date(Date.UTC(L.year, L.month, 0)).getUTCDate();
 }
 
 // first -> 1, middle -> 15, last -> last day; default first.
-function targetDayOfMonth(chore, now) {
+function targetDayOfMonth(chore, L) {
   if (chore.dom === "middle") return 15;
-  if (chore.dom === "last") return lastDayOfMonth(now);
+  if (chore.dom === "last") return lastDayOfMonth(L);
   return 1;
 }
 
-// Week number off the epoch; biweekly uses %2, triweekly uses %3, against the
-// chore's chosen phase. Default phase 0.
-function weekIndex(now) {
-  const dayCount = Math.floor(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 86_400_000,
-  );
-  return Math.floor(dayCount / 7);
-}
-
 function isDueToday(chore, now) {
-  const weekday = now.getUTCDay();
-  const dom = now.getUTCDate();
-  const month = now.getUTCMonth() + 1;
-  const onWeekday = (chore.days || []).map((d) => WEEKDAYS[d]).includes(weekday);
-  const onTargetDay = dom === targetDayOfMonth(chore, now);
+  const L = localDate(now);
+  const onWeekday = (chore.days || []).map((d) => WEEKDAYS[d]).includes(L.weekday);
+  const onTargetDay = L.dom === targetDayOfMonth(chore, L);
   const inMonths = (fallback) =>
-    (chore.months?.length ? chore.months : fallback).includes(month);
+    (chore.months?.length ? chore.months : fallback).includes(L.month);
 
   switch (chore.cadence) {
     case "daily":
@@ -197,11 +211,11 @@ function isDueToday(chore, now) {
     case "weekly":
       return onWeekday;
     case "biweekly":
-      return onWeekday && weekIndex(now) % 2 === (chore.weekPhase ?? 0);
+      return onWeekday && L.weekIndex % 2 === (chore.weekPhase ?? 0);
     case "triweekly":
-      return onWeekday && weekIndex(now) % 3 === (chore.weekPhase ?? 0);
+      return onWeekday && L.weekIndex % 3 === (chore.weekPhase ?? 0);
     case "semi-monthly":
-      return dom === 1 || dom === 15; // 1st and 15th
+      return L.dom === 1 || L.dom === 15; // 1st and 15th
     case "monthly":
       return onTargetDay;
     case "bimonthly":
@@ -283,7 +297,7 @@ export async function forceReplace(env, identifier) {
     }
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate(new Date()).ymd;
   const result = await createIssue(env, {
     teamId: issue.team.id,
     title: issue.title,
@@ -300,7 +314,8 @@ export async function forceReplace(env, identifier) {
 
 export async function runRecurring(env) {
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
+  const L = localDate(now);
+  const today = L.ymd;
   const defs = (await buildDefs(env)).filter((c) => isDueToday(c, now));
   if (!defs.length) return;
 
@@ -361,7 +376,9 @@ export async function runRecurring(env) {
     }
 
     const dueDate = c.dueAfterDays
-      ? new Date(Date.now() + c.dueAfterDays * 86_400_000).toISOString().slice(0, 10)
+      ? new Date(Date.UTC(L.year, L.month - 1, L.dom) + c.dueAfterDays * 86_400_000)
+          .toISOString()
+          .slice(0, 10)
       : today;
 
     const assigneeId = assignment[c.title];

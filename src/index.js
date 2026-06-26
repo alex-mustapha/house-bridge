@@ -23,7 +23,7 @@ import {
   fetchChoreHistory,
   getTeamId,
 } from "./linear.js";
-import { runRecurring, forceReplace } from "./recurring.js";
+import { runRecurring, forceReplace, localDate } from "./recurring.js";
 import { computeStats } from "./stats.js";
 
 // Parse DISCORD_MENTIONS ("Alex:123,Kristal:456") into { alex: "123", ... }.
@@ -142,7 +142,7 @@ async function handleEvent(payload, env) {
 }
 
 async function maybeCelebrate(data, env) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate(new Date()).ymd;
   // Only relevant when the thing just completed was actually due today/earlier.
   if (!data.dueDate || data.dueDate > today || !data.team?.id) return;
   if (await anyOpenDueByTeam(env, data.team.id, today)) return; // still chores left
@@ -172,7 +172,7 @@ async function handleCron(env) {
   try {
     const issues = await fetchDueIssues(env);
     if (issues.length && env.DISCORD_WEBHOOK_DUE) {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDate(new Date()).ymd;
       const mentions = parseMentions(env.DISCORD_MENTIONS);
       await postToDiscord(
         env.DISCORD_WEBHOOK_DUE,
