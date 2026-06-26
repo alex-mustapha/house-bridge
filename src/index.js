@@ -23,6 +23,9 @@ import {
   anyOpenDueByTeam,
   fetchChoreHistory,
   getTeamId,
+  findActiveByTitle,
+  getDoneStateId,
+  setIssueState,
 } from "./linear.js";
 import { runWeek, forceReplace, localDate } from "./recurring.js";
 import { computeStats } from "./stats.js";
@@ -42,6 +45,21 @@ function parseMentions(spec) {
 // Guard for the manual toolkit endpoints: requires ?key=<CRON_KEY>.
 function authed(url, env) {
   return Boolean(env.CRON_KEY) && url.searchParams.get("key") === env.CRON_KEY;
+}
+
+// Mark the best-matching active chore done by (fuzzy) title — the soonest-due
+// one wins. Powers the /done endpoint (voice assistants, shortcuts, etc.).
+async function markChoreDone(env, match) {
+  const matches = await findActiveByTitle(env, match);
+  if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };
+  matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
+  const issue = matches[0];
+  const stateId = await getDoneStateId(env, issue.team.id);
+  if (!stateId) return { ok: false, message: "No Done state found" };
+  const res = await setIssueState(env, issue.id, stateId);
+  return res?.success
+    ? { ok: true, message: `Marked "${issue.title}" done` }
+    : { ok: false, message: "Update failed" };
 }
 
 export default {
@@ -91,6 +109,13 @@ export default {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       ctx.waitUntil(runWeek(env));
       return new Response("week generation triggered\n", { status: 200 });
+    }
+    if (url.pathname === "/done") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const match = url.searchParams.get("match");
+      if (!match) return new Response("missing ?match=<text>\n", { status: 400 });
+      const { message } = await markChoreDone(env, match);
+      return new Response(message + "\n", { status: 200 });
     }
 
     if (request.method === "GET") {

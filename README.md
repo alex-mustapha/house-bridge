@@ -244,7 +244,18 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 | `GET /run-week?key=…` | Generates the coming week's chores immediately, any day (bootstrap/test). |
 | `GET /scoreboard?key=…` | Posts the per-person scoreboard immediately, any day. |
 | `GET /replace?key=…&issue=CHO-12` | Archives `CHO-12` and spawns a fresh copy (same title/labels/description, due today, assignee rotated to the other member). |
+| `GET /done?key=…&match=bathroom` | Marks the soonest-due active chore whose title contains the text as **Done** (excludes templates). Powers voice/shortcut "I cleaned the bathroom". |
 | `GET /` | Health check — returns `linear-discord-bridge ok`. |
+
+### Voice / "I just cleaned the X" (Alexa, Shortcuts, etc.)
+The `/done` endpoint marks a chore done by name, so any trigger can drive it:
+- **Alexa (natural phrase):** a custom skill needs an invocation name, so to say a
+  bare *"Alexa, I just cleaned the bathroom"* you use an **Alexa Routine** on that
+  phrase + a webhook bridge (IFTTT "Say a specific phrase" → Webhooks, or Voice
+  Monkey) that does `GET /done?key=…&match=bathroom`. One routine per chore phrase.
+- **iPhone/Siri Shortcut:** a Shortcut that hits the same URL — no third party.
+
+Marking done also fires the normal ✅ Discord post and the "all done today" check.
 
 ```
 curl "https://<worker>/run-cron?key=YOUR_KEY"

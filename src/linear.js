@@ -110,6 +110,54 @@ export async function createIssue(env, { teamId, title, description, dueDate, la
   return data.issueCreate;
 }
 
+// A team's "Done" workflow state id (by name, falling back to the "completed"
+// type) — used to mark a chore done.
+export async function getDoneStateId(env, teamId) {
+  const query = `
+    query States($teamId: ID!) {
+      workflowStates(first: 50, filter: { team: { id: { eq: $teamId } } }) {
+        nodes { id name type }
+      }
+    }`;
+  const data = await linearQuery(env, query, { teamId });
+  const nodes = data.workflowStates?.nodes || [];
+  const byName = nodes.find((s) => s.name.toLowerCase() === "done");
+  const byType = nodes.find((s) => s.type === "completed");
+  return (byName || byType)?.id || null;
+}
+
+// Active (non-done) chores whose title contains `text` (case-insensitive),
+// excluding templates. Used to mark a chore done by spoken/typed name.
+export async function findActiveByTitle(env, text) {
+  const query = `
+    query Match($text: String!) {
+      issues(
+        first: 25
+        filter: {
+          project: { null: true }
+          state: { type: { nin: ["completed", "canceled"] } }
+          title: { containsIgnoreCase: $text }
+        }
+      ) {
+        nodes { id title dueDate assignee { name } team { id } }
+      }
+    }`;
+  const data = await linearQuery(env, query, { text });
+  return data.issues?.nodes || [];
+}
+
+export async function setIssueState(env, id, stateId) {
+  const mutation = `
+    mutation SetState($id: String!, $stateId: String!) {
+      issueUpdate(id: $id, input: { stateId: $stateId }) {
+        success
+        issue { identifier title }
+      }
+    }`;
+  const data = await linearQuery(env, mutation, { id, stateId });
+  return data.issueUpdate;
+}
+
 // Resolve a team's "Todo" workflow state id (by name, falling back to the
 // "unstarted" type) so spawned chores land in Todo, not Backlog.
 export async function getTodoStateId(env, teamId) {
