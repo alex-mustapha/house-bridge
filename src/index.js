@@ -32,6 +32,7 @@ import {
 import { runWeek, forceReplace, localDate, annotateTemplates } from "./recurring.js";
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
+import { renderWidgetPage } from "./widgetpage.js";
 import { verifyAlexaRequest, handleAlexa } from "./alexa.js";
 
 // Parse DISCORD_MENTIONS ("Alex:123,Kristal:456") into { alex: "123", ... }.
@@ -176,6 +177,14 @@ export default {
       const status = await dayStatus(env, url.searchParams.get("user") || "");
       return new Response(JSON.stringify(status), {
         headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.pathname === "/widget") {
+      // Styled HTML status page (Android-friendly "Add to Home screen" target).
+      const user = url.searchParams.get("user") || "";
+      const status = await dayStatus(env, user);
+      return new Response(renderWidgetPage(user, status), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }
 
