@@ -57,16 +57,28 @@ export function renderWidgetPage(user, status) {
   .count { font-size: 30px; font-weight: 800; line-height: 1.1; }
   .who { font-size: 13px; opacity: .82; margin-top: 2px; }
   ul { list-style: none; margin: 22px 0 0; flex: 1; }
-  li a {
-    display: flex; align-items: center; gap: 11px;
-    padding: 14px 4px; font-size: 16px; color: #fff; text-decoration: none;
+  li {
+    display: flex; align-items: center;
     border-top: 1px solid rgba(255,255,255,.16);
+  }
+  li:last-child { border-bottom: 1px solid rgba(255,255,255,.16); }
+  li .open {
+    display: flex; align-items: center; gap: 11px; flex: 1; min-width: 0;
+    padding: 14px 4px; font-size: 16px; color: #fff; text-decoration: none;
     -webkit-tap-highlight-color: rgba(255,255,255,.15);
   }
-  li:last-child a { border-bottom: 1px solid rgba(255,255,255,.16); }
-  li a:active { background: rgba(255,255,255,.12); }
+  li .open:active { background: rgba(255,255,255,.12); }
+  li .open span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   li .dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.9); flex: none; }
   li .chev { margin-left: auto; opacity: .6; font-size: 18px; }
+  li .done {
+    flex: none; margin-left: 10px; width: 42px; height: 42px; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.16);
+    color: #fff; font-size: 19px; line-height: 1; cursor: pointer; -webkit-appearance: none;
+  }
+  li .done:active { background: rgba(255,255,255,.34); }
+  li .done:disabled { opacity: .55; }
+  li.completing .open { opacity: .5; text-decoration: line-through; }
   .empty { margin-top: 28px; font-size: 18px; opacity: .92; }
   .foot { margin-top: 20px; font-size: 12px; opacity: .7; }
   .foot a { color: #fff; opacity: .85; }
@@ -78,7 +90,7 @@ export function renderWidgetPage(user, status) {
     <div class="badge" id="badge">📋</div>
     <div>
       <div class="count" id="count">…</div>
-      <div class="who">${title} · tap a chore to mark it done in Linear</div>
+      <div class="who" id="who">${title}</div>
     </div>
   </div>
   <ul id="list"></ul>
@@ -87,6 +99,9 @@ export function renderWidgetPage(user, status) {
 <script>
   const USER = ${JSON.stringify(user)};
   const LINEAR_URL = ${JSON.stringify(LINEAR_URL)};
+  // Read the key from THIS page's URL (kept out of the served HTML / repo).
+  // When present, each chore gets a "done" button; otherwise the page is read-only.
+  const KEY = new URLSearchParams(location.search).get("key") || "";
   function esc(s) {
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
@@ -96,6 +111,7 @@ export function renderWidgetPage(user, status) {
     const count = document.getElementById("count");
     const list = document.getElementById("list");
     const foot = document.getElementById("foot");
+    const who = document.getElementById("who");
     card.classList.remove("done", "err");
     if (!s || s.error) {
       card.classList.add("err"); badge.textContent = "❔";
@@ -107,19 +123,47 @@ export function renderWidgetPage(user, status) {
       card.classList.add("done"); badge.textContent = "✅";
       count.textContent = "All done";
       list.innerHTML = '<div class="empty">Nice work — nothing left today. 🎉</div>';
+      who.textContent = ${JSON.stringify(title)};
     } else {
       badge.textContent = "📋";
       count.textContent = s.remaining + (s.remaining === 1 ? " chore left" : " chores left");
-      list.innerHTML = tasks.map(t =>
-        '<li><a href="' + esc(t.url || LINEAR_URL) + '">' +
-        '<span class="dot"></span><span>' + esc(t.title) + '</span>' +
-        '<span class="chev">›</span></a></li>'
-      ).join("");
+      who.textContent = KEY ? "tap ✓ to mark done · tap a chore to open it" : "tap a chore to open it in Linear";
+      list.innerHTML = tasks.map(t => {
+        const t2 = esc(t.title);
+        const href = esc(t.url || LINEAR_URL);
+        const right = KEY
+          ? '<button class="done" data-title="' + t2 + '" aria-label="Mark done">✓</button>'
+          : '';
+        return '<li><a class="open" href="' + href + '"><span class="dot"></span>' +
+          '<span class="t">' + t2 + '</span>' + (KEY ? '' : '<span class="chev">›</span>') +
+          '</a>' + right + '</li>';
+      }).join("");
     }
     const now = new Date();
     foot.innerHTML = 'updated ' + now.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"}) +
       ' · <a href="' + esc(LINEAR_URL) + '">open in Linear</a>';
   }
+
+  // Mark a chore done via the keyed /done endpoint (event-delegated on the list).
+  document.getElementById("list").addEventListener("click", async (e) => {
+    const btn = e.target.closest(".done");
+    if (!btn) return;
+    e.preventDefault();
+    btn.disabled = true;
+    const li = btn.closest("li");
+    li.classList.add("completing");
+    try {
+      const r = await fetch("/done?match=" + encodeURIComponent(btn.dataset.title) +
+        "&key=" + encodeURIComponent(KEY), { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      await refresh();
+    } catch (err) {
+      li.classList.remove("completing");
+      btn.disabled = false;
+      btn.textContent = "!";
+      setTimeout(() => { btn.textContent = "✓"; }, 1500);
+    }
+  });
   async function refresh() {
     try {
       const r = await fetch("/status" + (USER ? "?user=" + encodeURIComponent(USER) : ""), {cache: "no-store"});
