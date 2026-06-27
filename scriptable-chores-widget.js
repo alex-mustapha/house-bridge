@@ -72,28 +72,31 @@ async function buildWidget() {
       : done
         ? [new Color("#34d399"), new Color("#047857")]
         : [new Color("#fb7185"), new Color("#9d174d")];
+    const small = fam === "systemSmall";
     w.backgroundGradient = grad;
     w.cornerRadius = 24;
-    w.setPadding(14, 16, 14, 16);
+    w.setPadding(13, 15, 13, 15);
 
     const row = w.addStack();
     row.centerAlignContent();
     const img = row.addImage(symbol(ok, done).image);
-    img.imageSize = new Size(20, 20);
+    img.imageSize = small ? new Size(17, 17) : new Size(20, 20);
     img.tintColor = Color.white();
-    row.addSpacer(7);
+    row.addSpacer(6);
     const head = row.addText(!ok ? "Chores" : done ? "All done" : `${remaining} left`);
     head.textColor = Color.white();
-    head.font = Font.boldSystemFont(18);
+    head.font = Font.boldSystemFont(small ? 16 : 18);
 
-    w.addSpacer(8);
+    w.addSpacer(small ? 6 : 8);
     if (!done && ok && tasks.length) {
-      const max = fam === "systemSmall" ? 3 : 6;
-      for (const line of listLines(tasks, max, 34)) {
+      const max = small ? 4 : 6;
+      const width = small ? 16 : 34;
+      for (const line of listLines(tasks, max, width)) {
         const t = w.addText(line);
         t.textColor = new Color("#ffffff", 0.92);
-        t.font = Font.mediumSystemFont(12);
+        t.font = Font.mediumSystemFont(small ? 11 : 12);
         t.lineLimit = 1;
+        t.minimumScaleFactor = 0.85;
       }
     } else {
       const s = w.addText(done && ok ? "Nice work — nothing left today." : "today's chores");
