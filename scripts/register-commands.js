@@ -30,6 +30,24 @@ const commands = [
       },
     ],
   },
+  {
+    name: "project",
+    description: "List open issues in a project",
+    options: [
+      {
+        type: 3, // STRING
+        name: "project",
+        description: "Which project",
+        required: true,
+        autocomplete: true,
+      },
+    ],
+  },
+  {
+    name: "unassigned",
+    description: "List open issues with no assignee (excludes recurring templates)",
+    options: [],
+  },
 ];
 
 const res = await fetch(

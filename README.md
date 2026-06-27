@@ -320,6 +320,10 @@ Ed25519-verified) for custom slash commands. Currently:
 - **`/tasks [user]`** — lists a person's active (non-done) Linear tasks. Defaults
   to you; pass a user to see theirs. Reply is ephemeral (only you see it). Maps
   Discord users to Linear accounts via `DISCORD_MENTIONS`.
+- **`/project <project>`** — lists open issues in a project (the `project` option
+  autocompletes from your live project list), grouped by due day with assignees.
+- **`/unassigned`** — lists open issues with no assignee, excluding recurring
+  templates (the `Recurring` project).
 
 **One-time setup:**
 1. Create an app at the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**.

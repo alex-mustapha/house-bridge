@@ -335,6 +335,50 @@ export async function fetchAssignedActiveIssues(env, assigneeId) {
   return data.issues?.nodes || [];
 }
 
+// Project names (for the /project command's autocomplete).
+export async function fetchProjectNames(env) {
+  const query = `query { projects(first: 50) { nodes { name } } }`;
+  const data = await linearQuery(env, query);
+  return (data.projects?.nodes || []).map((p) => p.name);
+}
+
+// Active (non-done) issues in a given project, for /project.
+export async function fetchActiveByProject(env, projectName) {
+  const query = `
+    query ByProject($name: String!) {
+      issues(
+        first: 100
+        filter: {
+          project: { name: { eq: $name } }
+          state: { type: { nin: ["completed", "canceled"] } }
+        }
+      ) {
+        nodes { title dueDate url assignee { name } }
+      }
+    }`;
+  const data = await linearQuery(env, query, { name: projectName });
+  return data.issues?.nodes || [];
+}
+
+// Active (non-done) issues with no assignee, for /unassigned. Recurring
+// templates are filtered out by the caller (by project name).
+export async function fetchUnassignedActive(env) {
+  const query = `
+    query Unassigned {
+      issues(
+        first: 100
+        filter: {
+          assignee: { null: true }
+          state: { type: { nin: ["completed", "canceled"] } }
+        }
+      ) {
+        nodes { title dueDate url project { name } }
+      }
+    }`;
+  const data = await linearQuery(env, query);
+  return data.issues?.nodes || [];
+}
+
 // All non-archived spawned chores in the chores project — one query that feeds
 // week-generation dedup (per title+dueDate), overdue cleanup, and load seeding.
 // Returns { id, title, dueDate, assignee{id}, state{type} }.

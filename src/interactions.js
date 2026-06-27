@@ -2,7 +2,13 @@
 // verification and the /tasks command, which lists a user's active Linear
 // issues. Discord POSTs to the Worker's /interactions endpoint.
 
-import { getUsers, fetchAssignedActiveIssues } from "./linear.js";
+import {
+  getUsers,
+  fetchAssignedActiveIssues,
+  fetchProjectNames,
+  fetchActiveByProject,
+  fetchUnassignedActive,
+} from "./linear.js";
 import { localDate } from "./recurring.js";
 
 const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -74,10 +80,83 @@ function mentionMap(spec) {
 
 export async function handleInteraction(interaction, env) {
   if (interaction.type === 1) return { type: 1 }; // PING -> PONG
-  if (interaction.type === 2 && interaction.data?.name === "tasks") {
-    return tasksResponse(interaction, env);
+  if (interaction.type === 4) return autocompleteResponse(interaction, env); // option autocomplete
+  if (interaction.type === 2) {
+    switch (interaction.data?.name) {
+      case "tasks":
+        return tasksResponse(interaction, env);
+      case "project":
+        return projectResponse(interaction, env);
+      case "unassigned":
+        return unassignedResponse(interaction, env);
+    }
   }
   return { type: 4, data: { content: "Unsupported command.", flags: EPHEMERAL } };
+}
+
+// Live project list for the /project command's autocomplete.
+async function autocompleteResponse(interaction, env) {
+  if (interaction.data?.name !== "project") return { type: 8, data: { choices: [] } };
+  const focused = (interaction.data.options || []).find((o) => o.focused);
+  const typed = (focused?.value || "").toLowerCase();
+  const names = await fetchProjectNames(env);
+  const choices = names
+    .filter((n) => n.toLowerCase().includes(typed))
+    .slice(0, 25)
+    .map((n) => ({ name: n, value: n }));
+  return { type: 8, data: { choices } };
+}
+
+// Group issues by due day (soonest first; undated last) into embed sections,
+// formatting each line with `lineFn`.
+function dayGroupedSections(issues, today, lineFn) {
+  const groups = new Map();
+  for (const i of issues) {
+    const key = i.dueDate || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(i);
+  }
+  return [...groups.keys()]
+    .sort((a, b) => (a || "9999-99-99").localeCompare(b || "9999-99-99"))
+    .map((key) => {
+      const header = key ? dayHeader(key, today) : "No due date";
+      return `**${header}**\n${groups.get(key).map(lineFn).join("\n")}`;
+    });
+}
+
+function embedReply(title, sections) {
+  return {
+    type: 4,
+    data: {
+      embeds: [{ title, description: sections.join("\n\n").slice(0, 4000), color: 0x5e6ad2 }],
+      flags: EPHEMERAL,
+    },
+  };
+}
+
+async function projectResponse(interaction, env) {
+  const projectName = (interaction.data.options || []).find((o) => o.name === "project")?.value;
+  if (!projectName) return reply("Pick a project.");
+  const issues = await fetchActiveByProject(env, projectName);
+  if (!issues.length) return reply(`🎉 No open issues in ${projectName}.`);
+  const today = localDate(new Date()).ymd;
+  const sections = dayGroupedSections(issues, today, (i) =>
+    `• [${i.title}](${i.url})${i.assignee?.name ? ` — ${i.assignee.name}` : ""}`,
+  );
+  return embedReply(`📁 ${projectName} — ${issues.length} open`, sections);
+}
+
+async function unassignedResponse(interaction, env) {
+  const recurring = env.RECURRING_PROJECT || "Recurring";
+  const issues = (await fetchUnassignedActive(env)).filter(
+    (i) => i.project?.name !== recurring,
+  );
+  if (!issues.length) return reply("🎉 Nothing unassigned.");
+  const today = localDate(new Date()).ymd;
+  const sections = dayGroupedSections(issues, today, (i) =>
+    `• [${i.title}](${i.url})${i.project?.name ? ` · ${i.project.name}` : ""}`,
+  );
+  return embedReply(`🙋 Unassigned — ${issues.length}`, sections);
 }
 
 async function tasksResponse(interaction, env) {
@@ -112,40 +191,11 @@ async function tasksResponse(interaction, env) {
   }
 
   const today = localDate(new Date()).ymd;
-
-  // Group by due date, soonest first; undated last.
-  const groups = new Map();
-  for (const i of issues) {
-    const key = i.dueDate || "";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(i);
-  }
-  const keys = [...groups.keys()].sort((a, b) =>
-    (a || "9999-99-99").localeCompare(b || "9999-99-99"),
+  const sections = dayGroupedSections(issues, today, (i) => `• [${i.title}](${i.url})`);
+  return embedReply(
+    `📋 ${user.name || name} — ${issues.length} open task${issues.length === 1 ? "" : "s"}`,
+    sections,
   );
-
-  const sections = keys.map((key) => {
-    const header = key ? dayHeader(key, today) : "No due date";
-    const body = groups
-      .get(key)
-      .map((i) => `• [${i.title}](${i.url})`)
-      .join("\n");
-    return `**${header}**\n${body}`;
-  });
-
-  return {
-    type: 4,
-    data: {
-      embeds: [
-        {
-          title: `📋 ${user.name || name} — ${issues.length} open task${issues.length === 1 ? "" : "s"}`,
-          description: sections.join("\n\n").slice(0, 4000),
-          color: 0x5e6ad2,
-        },
-      ],
-      flags: EPHEMERAL,
-    },
-  };
 }
 
 function reply(content) {
