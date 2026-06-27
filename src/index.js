@@ -168,7 +168,8 @@ export default {
       return new Response(message + "\n", { status: 200 });
     }
     if (url.pathname === "/status") {
-      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      // Read-only, non-sensitive (just done/remaining counts) — left unguarded
+      // so the phone widget needs no secret. All mutating endpoints stay keyed.
       const status = await dayStatus(env, url.searchParams.get("user") || "");
       return new Response(JSON.stringify(status), {
         headers: { "Content-Type": "application/json" },
