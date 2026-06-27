@@ -26,6 +26,7 @@ async function buildWidget() {
   let remaining = 0;
   let tasks = [];
   let completed = [];
+  let streak = 0;
   let ok = true;
   try {
     // Cache-bust + no-cache so a refresh always reflects chores just marked done.
@@ -39,6 +40,7 @@ async function buildWidget() {
       remaining = r.remaining;
       tasks = r.tasks || [];
       completed = r.completed || [];
+      streak = r.streak || 0;
     }
   } catch (e) {
     ok = false;
@@ -49,7 +51,8 @@ async function buildWidget() {
 
   if (fam === "accessoryInline") {
     // Inline (single line, next to the clock): count only.
-    w.addText(!ok ? "Chores ?" : done ? "✅ Chores done" : `❗ ${remaining} chore${remaining === 1 ? "" : "s"} left`);
+    const doneTxt = streak > 0 ? `✅ Done · 🔥${streak}` : "✅ Chores done";
+    w.addText(!ok ? "Chores ?" : done ? doneTxt : `❗ ${remaining} chore${remaining === 1 ? "" : "s"} left`);
   } else if (fam === "accessoryCircular") {
     const t = w.addText(!ok ? "?" : done ? "✅" : `❗${remaining}`);
     t.font = Font.boldSystemFont(20);
@@ -64,6 +67,10 @@ async function buildWidget() {
     row.addSpacer(5);
     const head = row.addText(!ok ? "Chores: ?" : done ? "All done today" : `${remaining} chore${remaining === 1 ? "" : "s"} left`);
     head.font = Font.semiboldSystemFont(13);
+    if (done && ok && streak > 0) {
+      const t = w.addText(`🔥 ${streak}-day streak`);
+      t.font = Font.systemFont(11);
+    }
     for (const line of listLines(tasks, 2, 26)) {
       const t = w.addText(line);
       t.font = Font.systemFont(11);
@@ -105,9 +112,12 @@ async function buildWidget() {
         t.minimumScaleFactor = 0.85;
       }
     } else {
-      const s = w.addText(done && ok ? "Nice work — nothing left today." : "today's chores");
+      const msg = done && ok
+        ? (streak > 0 ? `🔥 ${streak}-day streak` : "Nice work — nothing left today.")
+        : "today's chores";
+      const s = w.addText(msg);
       s.textColor = new Color("#ffffff", 0.9);
-      s.font = Font.systemFont(12);
+      s.font = done && ok && streak > 0 ? Font.boldSystemFont(15) : Font.systemFont(12);
     }
     if (ok && completed.length) {
       w.addSpacer(6);

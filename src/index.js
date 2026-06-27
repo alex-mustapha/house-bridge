@@ -29,6 +29,7 @@ import {
   getUsers,
   fetchAssignedActiveIssues,
   fetchRecentCompletedAssigned,
+  fetchAssignedDueInWindow,
 } from "./linear.js";
 import { runWeek, forceReplace, localDate, annotateTemplates } from "./recurring.js";
 import { computeStats } from "./stats.js";
@@ -50,6 +51,36 @@ function parseMentions(spec) {
 // Guard for the manual toolkit endpoints: requires ?key=<CRON_KEY>.
 function authed(url, env) {
   return Boolean(env.CRON_KEY) && url.searchParams.get("key") === env.CRON_KEY;
+}
+
+// Shift an Eastern calendar date string (YYYY-MM-DD) back by n days.
+function ymdMinus(ymd, n) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10);
+}
+
+// Consecutive-day streak: walking back from `today`, count days where every
+// chore due that day is completed. Days with no chores bridge the streak (don't
+// count, don't break). Today not-yet-finished doesn't break it; a missed past
+// day does.
+function computeStreak(issues, today, recurringName) {
+  const byDay = new Map();
+  for (const i of issues) {
+    if (!i.dueDate || i.project?.name === recurringName) continue;
+    const e = byDay.get(i.dueDate) || { total: 0, done: 0 };
+    e.total++;
+    if (i.state?.type === "completed") e.done++;
+    byDay.set(i.dueDate, e);
+  }
+  let streak = 0;
+  for (let d = 0; d < 60; d++) {
+    const e = byDay.get(ymdMinus(today, d));
+    if (!e || e.total === 0) continue; // no chores that day — bridge
+    if (e.done === e.total) { streak++; continue; } // cleared the day
+    if (d === 0) continue; // today still in progress — don't break
+    break; // a past day was missed
+  }
+  return streak;
 }
 
 // Today's chore status for a person (or the household if no user) — powers the
@@ -82,11 +113,13 @@ async function dayStatus(env, userName) {
       )
       .sort((a, b) => (b.completedAt || "").localeCompare(a.completedAt || ""))
       .map((i) => ({ title: i.title, url: i.url }));
-    return { done: items.length === 0, remaining: items.length, tasks, completed };
+    const windowIssues = await fetchAssignedDueInWindow(env, u.id, ymdMinus(today, 59), today);
+    const streak = computeStreak(windowIssues, today, recurring);
+    return { done: items.length === 0, remaining: items.length, tasks, completed, streak };
   }
   const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
   const any = teamId ? await anyOpenDueByTeam(env, teamId, today) : false;
-  return { done: !any, remaining: any ? 1 : 0, tasks: [], completed: [] };
+  return { done: !any, remaining: any ? 1 : 0, tasks: [], completed: [], streak: 0 };
 }
 
 

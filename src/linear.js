@@ -335,6 +335,26 @@ export async function fetchAssignedActiveIssues(env, assigneeId) {
   return data.issues?.nodes || [];
 }
 
+// All of a user's dated chores (open + completed, excluding canceled) due within
+// [since, until] (YYYY-MM-DD). Used to compute the daily completion streak.
+export async function fetchAssignedDueInWindow(env, assigneeId, since, until) {
+  const query = `
+    query DueWindow($id: ID!) {
+      issues(
+        first: 250
+        filter: {
+          assignee: { id: { eq: $id } }
+          dueDate: { gte: "${since}", lte: "${until}" }
+          state: { type: { neq: "canceled" } }
+        }
+      ) {
+        nodes { dueDate completedAt project { name } state { type } }
+      }
+    }`;
+  const data = await linearQuery(env, query, { id: assigneeId });
+  return data.issues?.nodes || [];
+}
+
 // Issues assigned to a user completed in the last ~2 days (caller filters to the
 // exact Eastern "today"). Used for the widget's "done today" list.
 export async function fetchRecentCompletedAssigned(env, assigneeId) {

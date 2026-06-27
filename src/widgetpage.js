@@ -56,6 +56,9 @@ export function renderWidgetPage(user, status) {
   }
   .count { font-size: 30px; font-weight: 800; line-height: 1.1; }
   .who { font-size: 13px; opacity: .82; margin-top: 2px; }
+  .streak { margin-top: 14px; font-size: 15px; font-weight: 700; display: none; }
+  .streak.show { display: block; }
+  .streak.big { font-size: 19px; }
   ul { list-style: none; margin: 22px 0 0; flex: 1; }
   li {
     display: flex; align-items: center;
@@ -98,6 +101,7 @@ export function renderWidgetPage(user, status) {
       <div class="who" id="who">${title}</div>
     </div>
   </div>
+  <div class="streak" id="streak"></div>
   <ul id="list"></ul>
   <div id="donewrap"></div>
   <div class="foot" id="foot"></div>
@@ -119,12 +123,16 @@ export function renderWidgetPage(user, status) {
     const foot = document.getElementById("foot");
     const who = document.getElementById("who");
     const donewrap = document.getElementById("donewrap");
+    const streak = document.getElementById("streak");
     card.classList.remove("done", "err");
     if (!s || s.error) {
       card.classList.add("err"); badge.textContent = "❔";
       count.textContent = "Unavailable"; list.innerHTML = "";
-      donewrap.innerHTML = ""; foot.textContent = ""; return;
+      donewrap.innerHTML = ""; streak.className = "streak"; foot.textContent = ""; return;
     }
+    const n = s.streak || 0;
+    streak.textContent = n > 0 ? "🔥 " + n + "-day streak" : "";
+    streak.className = "streak" + (n > 0 ? " show" : "") + (s.done && n > 0 ? " big" : "");
     const tasks = s.tasks || [];
     if (s.done) {
       card.classList.add("done"); badge.textContent = "✅";
