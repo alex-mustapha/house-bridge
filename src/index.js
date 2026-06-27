@@ -176,7 +176,7 @@ export default {
       // so the phone widget needs no secret. All mutating endpoints stay keyed.
       const status = await dayStatus(env, url.searchParams.get("user") || "");
       return new Response(JSON.stringify(status), {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/widget") {
@@ -184,7 +184,7 @@ export default {
       const user = url.searchParams.get("user") || "";
       const status = await dayStatus(env, user);
       return new Response(renderWidgetPage(user, status), {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
       });
     }
 

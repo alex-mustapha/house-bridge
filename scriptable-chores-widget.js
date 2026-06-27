@@ -27,8 +27,11 @@ async function buildWidget() {
   let tasks = [];
   let ok = true;
   try {
-    const url = `${WORKER}/status${USER ? `?user=${encodeURIComponent(USER)}` : ""}`;
-    const r = await new Request(url).loadJSON();
+    // Cache-bust + no-cache so a refresh always reflects chores just marked done.
+    const q = USER ? `?user=${encodeURIComponent(USER)}&` : "?";
+    const req = new Request(`${WORKER}/status${q}t=${Date.now()}`);
+    req.headers = { "Cache-Control": "no-cache" };
+    const r = await req.loadJSON();
     if (r.error) ok = false;
     else {
       done = r.done;
@@ -108,6 +111,8 @@ async function buildWidget() {
   }
 
   w.url = TAP_URL; // Home Screen taps open directly
+  // Hint iOS to refresh ~10 min out (it still throttles; not instant).
+  w.refreshAfterDate = new Date(Date.now() + 10 * 60 * 1000);
   return w;
 }
 
