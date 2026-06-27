@@ -254,6 +254,7 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 | `GET /stats?key=…&days=90` | Posts a long-term stats report (done / on-time / missed / completion %, per person, most-missed chores) from the D1 log over the window. |
 | `GET /replace?key=…&issue=CHO-12` | Archives `CHO-12` and spawns a fresh copy (same title/labels/description, due today, assignee rotated to the other member). |
 | `GET /done?key=…&match=bathroom` | Marks the soonest-due active chore whose title contains the text as **Done** (excludes templates). Powers voice/shortcut "I cleaned the bathroom". |
+| `GET /status?key=…&user=Alex` | JSON `{done, remaining}` for that person's chores due today/overdue (omit `user` for whole-household). Powers the iPhone widget. |
 | `GET /` | Health check — returns `linear-discord-bridge ok`. |
 
 ### Voice / "I just cleaned the X" (Alexa, Shortcuts, etc.)
@@ -343,6 +344,14 @@ Ed25519-verified) for custom slash commands. Currently:
    (Get the server ID via Discord Developer Mode → right-click server → Copy Server ID.)
 
 Then type `/tasks` in any channel the app can see.
+
+## iPhone glance widget
+iOS won't let third-party content sit in the status bar, but a **Lock Screen
+widget** (next to the clock) gets you the same at-a-glance check. Using the free
+**Scriptable** app: paste `scriptable-chores-widget.js`, set `KEY`/`USER`, then
+add it as a Lock Screen (inline/circular) or Home Screen widget. It shows ✅ when
+today's chores are done and ❗ with a count when some are still due (via
+`/status`). iOS refreshes Lock Screen widgets periodically, so it's near-real-time.
 
 ## Configuration reference
 Non-secret vars live in `wrangler.toml`; everything sensitive is a Wrangler

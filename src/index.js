@@ -26,6 +26,8 @@ import {
   fetchChoreHistory,
   getTeamId,
   markChoreDone,
+  getUsers,
+  fetchAssignedActiveIssues,
 } from "./linear.js";
 import { runWeek, forceReplace, localDate, annotateTemplates } from "./recurring.js";
 import { computeStats } from "./stats.js";
@@ -46,6 +48,30 @@ function parseMentions(spec) {
 // Guard for the manual toolkit endpoints: requires ?key=<CRON_KEY>.
 function authed(url, env) {
   return Boolean(env.CRON_KEY) && url.searchParams.get("key") === env.CRON_KEY;
+}
+
+// Today's chore status for a person (or the household if no user) — powers the
+// phone widget. `remaining` counts active, non-template chores due today/overdue.
+async function dayStatus(env, userName) {
+  const today = localDate(new Date()).ymd;
+  const recurring = env.RECURRING_PROJECT || "Recurring";
+  if (userName) {
+    const u = (await getUsers(env)).find((x) =>
+      [x.displayName, x.name].some(
+        (n) =>
+          (n || "").toLowerCase() === userName.toLowerCase() ||
+          (n || "").toLowerCase().includes(userName.toLowerCase()),
+      ),
+    );
+    if (!u) return { error: "user not found" };
+    const remaining = (await fetchAssignedActiveIssues(env, u.id)).filter(
+      (i) => i.project?.name !== recurring && i.dueDate && i.dueDate <= today,
+    ).length;
+    return { done: remaining === 0, remaining };
+  }
+  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const any = teamId ? await anyOpenDueByTeam(env, teamId, today) : false;
+  return { done: !any, remaining: any ? 1 : 0 };
 }
 
 
@@ -140,6 +166,13 @@ export default {
       if (!match) return new Response("missing ?match=<text>\n", { status: 400 });
       const { message } = await markChoreDone(env, match);
       return new Response(message + "\n", { status: 200 });
+    }
+    if (url.pathname === "/status") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const status = await dayStatus(env, url.searchParams.get("user") || "");
+      return new Response(JSON.stringify(status), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     if (request.method === "GET") {
