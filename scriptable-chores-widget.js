@@ -9,7 +9,8 @@
 
 const WORKER = "https://linear-discord-bridge.muffinfactory.workers.dev";
 const USER = "Alex"; // your Linear name (set "" for whole-household status)
-const TAP_URL = "https://linear.app/alex-kristal/my-issues"; // opens on tap
+// Tapping opens today's chore list, where each task links into Linear to mark done.
+const TAP_URL = `${WORKER}/widget?user=${encodeURIComponent(USER)}`;
 
 if (config.runsInWidget) {
   Script.setWidget(await buildWidget());
@@ -122,7 +123,8 @@ function symbol(ok, done) {
 function listLines(tasks, max, width) {
   const out = [];
   const shown = tasks.slice(0, max);
-  for (const title of shown) {
+  for (const item of shown) {
+    const title = typeof item === "string" ? item : item.title || "";
     const t = title.length > width ? title.slice(0, width - 1) + "…" : title;
     out.push("• " + t);
   }

@@ -57,31 +57,39 @@ export function renderWidgetPage(user, status) {
   .count { font-size: 30px; font-weight: 800; line-height: 1.1; }
   .who { font-size: 13px; opacity: .82; margin-top: 2px; }
   ul { list-style: none; margin: 22px 0 0; flex: 1; }
-  li {
+  li a {
     display: flex; align-items: center; gap: 11px;
-    padding: 13px 4px; font-size: 16px;
+    padding: 14px 4px; font-size: 16px; color: #fff; text-decoration: none;
     border-top: 1px solid rgba(255,255,255,.16);
+    -webkit-tap-highlight-color: rgba(255,255,255,.15);
   }
-  li:last-child { border-bottom: 1px solid rgba(255,255,255,.16); }
+  li:last-child a { border-bottom: 1px solid rgba(255,255,255,.16); }
+  li a:active { background: rgba(255,255,255,.12); }
   li .dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.9); flex: none; }
+  li .chev { margin-left: auto; opacity: .6; font-size: 18px; }
   .empty { margin-top: 28px; font-size: 18px; opacity: .92; }
   .foot { margin-top: 20px; font-size: 12px; opacity: .7; }
+  .foot a { color: #fff; opacity: .85; }
 </style>
 </head>
 <body>
-<a class="card" id="card" href="${LINEAR_URL}">
+<div class="card" id="card">
   <div class="head">
     <div class="badge" id="badge">📋</div>
     <div>
       <div class="count" id="count">…</div>
-      <div class="who">${title} · tap to open Linear</div>
+      <div class="who">${title} · tap a chore to mark it done in Linear</div>
     </div>
   </div>
   <ul id="list"></ul>
   <div class="foot" id="foot"></div>
-</a>
+</div>
 <script>
   const USER = ${JSON.stringify(user)};
+  const LINEAR_URL = ${JSON.stringify(LINEAR_URL)};
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
   function render(s) {
     const card = document.getElementById("card");
     const badge = document.getElementById("badge");
@@ -103,11 +111,14 @@ export function renderWidgetPage(user, status) {
       badge.textContent = "📋";
       count.textContent = s.remaining + (s.remaining === 1 ? " chore left" : " chores left");
       list.innerHTML = tasks.map(t =>
-        '<li><span class="dot"></span><span>' + t.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</span></li>'
+        '<li><a href="' + esc(t.url || LINEAR_URL) + '">' +
+        '<span class="dot"></span><span>' + esc(t.title) + '</span>' +
+        '<span class="chev">›</span></a></li>'
       ).join("");
     }
     const now = new Date();
-    foot.textContent = "updated " + now.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+    foot.innerHTML = 'updated ' + now.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"}) +
+      ' · <a href="' + esc(LINEAR_URL) + '">open in Linear</a>';
   }
   async function refresh() {
     try {

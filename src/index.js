@@ -70,7 +70,7 @@ async function dayStatus(env, userName) {
     );
     // Soonest-due first so the widget's short list shows the most pressing.
     items.sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
-    const tasks = items.map((i) => i.title);
+    const tasks = items.map((i) => ({ title: i.title, url: i.url }));
     return { done: items.length === 0, remaining: items.length, tasks };
   }
   const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
