@@ -80,6 +80,11 @@ export function renderWidgetPage(user, status) {
   li .done:disabled { opacity: .55; }
   li.completing .open { opacity: .5; text-decoration: line-through; }
   .empty { margin-top: 28px; font-size: 18px; opacity: .92; }
+  .donehdr { margin: 22px 0 2px; font-size: 12px; letter-spacing: .04em;
+    text-transform: uppercase; opacity: .75; }
+  ul.donelist li a { opacity: .7; }
+  ul.donelist li a .t { text-decoration: line-through; }
+  ul.donelist li .check { color: #fff; opacity: .85; flex: none; }
   .foot { margin-top: 20px; font-size: 12px; opacity: .7; }
   .foot a { color: #fff; opacity: .85; }
 </style>
@@ -94,6 +99,7 @@ export function renderWidgetPage(user, status) {
     </div>
   </div>
   <ul id="list"></ul>
+  <div id="donewrap"></div>
   <div class="foot" id="foot"></div>
 </div>
 <script>
@@ -112,11 +118,12 @@ export function renderWidgetPage(user, status) {
     const list = document.getElementById("list");
     const foot = document.getElementById("foot");
     const who = document.getElementById("who");
+    const donewrap = document.getElementById("donewrap");
     card.classList.remove("done", "err");
     if (!s || s.error) {
       card.classList.add("err"); badge.textContent = "❔";
       count.textContent = "Unavailable"; list.innerHTML = "";
-      foot.textContent = ""; return;
+      donewrap.innerHTML = ""; foot.textContent = ""; return;
     }
     const tasks = s.tasks || [];
     if (s.done) {
@@ -138,6 +145,17 @@ export function renderWidgetPage(user, status) {
           '<span class="t">' + t2 + '</span>' + (KEY ? '' : '<span class="chev">›</span>') +
           '</a>' + right + '</li>';
       }).join("");
+    }
+    // "Done today" section (tap an item to reopen it in Linear if mistaken).
+    const completed = s.completed || [];
+    if (completed.length) {
+      donewrap.innerHTML = '<div class="donehdr">Done today · ' + completed.length + '</div>' +
+        '<ul class="donelist">' + completed.map(t =>
+          '<li><a class="open" href="' + esc(t.url || LINEAR_URL) + '">' +
+          '<span class="check">✓</span><span class="t">' + esc(t.title) + '</span></a></li>'
+        ).join("") + '</ul>';
+    } else {
+      donewrap.innerHTML = "";
     }
     const now = new Date();
     foot.innerHTML = 'updated ' + now.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"}) +

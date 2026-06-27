@@ -335,6 +335,26 @@ export async function fetchAssignedActiveIssues(env, assigneeId) {
   return data.issues?.nodes || [];
 }
 
+// Issues assigned to a user completed in the last ~2 days (caller filters to the
+// exact Eastern "today"). Used for the widget's "done today" list.
+export async function fetchRecentCompletedAssigned(env, assigneeId) {
+  const query = `
+    query Completed($id: ID!) {
+      issues(
+        first: 50
+        filter: {
+          assignee: { id: { eq: $id } }
+          state: { type: { eq: "completed" } }
+          completedAt: { gte: "-P2D" }
+        }
+      ) {
+        nodes { identifier title dueDate url completedAt project { name } }
+      }
+    }`;
+  const data = await linearQuery(env, query, { id: assigneeId });
+  return data.issues?.nodes || [];
+}
+
 // Project names (for the /project command's autocomplete).
 export async function fetchProjectNames(env) {
   const query = `query { projects(first: 50) { nodes { name } } }`;

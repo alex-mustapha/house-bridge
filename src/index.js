@@ -28,6 +28,7 @@ import {
   markChoreDone,
   getUsers,
   fetchAssignedActiveIssues,
+  fetchRecentCompletedAssigned,
 } from "./linear.js";
 import { runWeek, forceReplace, localDate, annotateTemplates } from "./recurring.js";
 import { computeStats } from "./stats.js";
@@ -71,11 +72,21 @@ async function dayStatus(env, userName) {
     // Soonest-due first so the widget's short list shows the most pressing.
     items.sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
     const tasks = items.map((i) => ({ title: i.title, url: i.url }));
-    return { done: items.length === 0, remaining: items.length, tasks };
+    // What they finished today (Eastern completion date), most recent first.
+    const completed = (await fetchRecentCompletedAssigned(env, u.id))
+      .filter(
+        (i) =>
+          i.project?.name !== recurring &&
+          i.completedAt &&
+          localDate(new Date(i.completedAt)).ymd === today,
+      )
+      .sort((a, b) => (b.completedAt || "").localeCompare(a.completedAt || ""))
+      .map((i) => ({ title: i.title, url: i.url }));
+    return { done: items.length === 0, remaining: items.length, tasks, completed };
   }
   const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
   const any = teamId ? await anyOpenDueByTeam(env, teamId, today) : false;
-  return { done: !any, remaining: any ? 1 : 0, tasks: [] };
+  return { done: !any, remaining: any ? 1 : 0, tasks: [], completed: [] };
 }
 
 

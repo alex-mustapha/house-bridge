@@ -25,6 +25,7 @@ async function buildWidget() {
   let done = false;
   let remaining = 0;
   let tasks = [];
+  let completed = [];
   let ok = true;
   try {
     // Cache-bust + no-cache so a refresh always reflects chores just marked done.
@@ -37,6 +38,7 @@ async function buildWidget() {
       done = r.done;
       remaining = r.remaining;
       tasks = r.tasks || [];
+      completed = r.completed || [];
     }
   } catch (e) {
     ok = false;
@@ -106,6 +108,12 @@ async function buildWidget() {
       const s = w.addText(done && ok ? "Nice work — nothing left today." : "today's chores");
       s.textColor = new Color("#ffffff", 0.9);
       s.font = Font.systemFont(12);
+    }
+    if (ok && completed.length) {
+      w.addSpacer(6);
+      const d = w.addText(`✓ ${completed.length} done today`);
+      d.textColor = new Color("#ffffff", 0.8);
+      d.font = Font.mediumSystemFont(11);
     }
     w.addSpacer();
   }
