@@ -49,36 +49,69 @@ async function buildWidget() {
     t.font = Font.boldSystemFont(20);
     t.centerAlignText();
   } else if (fam === "accessoryRectangular") {
-    // Rectangular Lock Screen: header + up to 3 chore titles.
-    const head = w.addText(!ok ? "Chores: ?" : done ? "✅ All done today" : `❗ ${remaining} chore${remaining === 1 ? "" : "s"} left`);
+    // Rectangular Lock Screen: iOS forces a flat monochrome render here, so
+    // we just add an icon + a couple of titles. Background/colors are ignored.
+    const row = w.addStack();
+    row.centerAlignContent();
+    const img = row.addImage(symbol(ok, done).image);
+    img.imageSize = new Size(14, 14);
+    row.addSpacer(5);
+    const head = row.addText(!ok ? "Chores: ?" : done ? "All done today" : `${remaining} chore${remaining === 1 ? "" : "s"} left`);
     head.font = Font.semiboldSystemFont(13);
-    for (const line of listLines(tasks, 3, 24)) {
+    for (const line of listLines(tasks, 2, 26)) {
       const t = w.addText(line);
       t.font = Font.systemFont(11);
     }
   } else {
-    // Home Screen (small/medium/large): colored card, header + chore list.
-    w.backgroundColor = !ok ? new Color("#3a3a3a") : done ? new Color("#1f6f3f") : new Color("#7a1f1f");
-    const head = w.addText(!ok ? "Chores: ?" : done ? "✅ All done" : `❗ ${remaining} left`);
+    // Home Screen: gradient "glass" card with an icon header + chore list.
+    const grad = new LinearGradient();
+    grad.startPoint = new Point(0, 0);
+    grad.endPoint = new Point(1, 1);
+    grad.colors = !ok
+      ? [new Color("#475569"), new Color("#1e293b")]
+      : done
+        ? [new Color("#34d399"), new Color("#047857")]
+        : [new Color("#fb7185"), new Color("#9d174d")];
+    w.backgroundGradient = grad;
+    w.cornerRadius = 24;
+    w.setPadding(14, 16, 14, 16);
+
+    const row = w.addStack();
+    row.centerAlignContent();
+    const img = row.addImage(symbol(ok, done).image);
+    img.imageSize = new Size(20, 20);
+    img.tintColor = Color.white();
+    row.addSpacer(7);
+    const head = row.addText(!ok ? "Chores" : done ? "All done" : `${remaining} left`);
     head.textColor = Color.white();
     head.font = Font.boldSystemFont(18);
-    w.addSpacer(4);
+
+    w.addSpacer(8);
     if (!done && ok && tasks.length) {
       const max = fam === "systemSmall" ? 3 : 6;
       for (const line of listLines(tasks, max, 34)) {
         const t = w.addText(line);
-        t.textColor = Color.white();
-        t.font = Font.systemFont(12);
+        t.textColor = new Color("#ffffff", 0.92);
+        t.font = Font.mediumSystemFont(12);
+        t.lineLimit = 1;
       }
     } else {
-      const s = w.addText("today's chores");
-      s.textColor = Color.white();
-      s.font = Font.systemFont(11);
+      const s = w.addText(done && ok ? "Nice work — nothing left today." : "today's chores");
+      s.textColor = new Color("#ffffff", 0.9);
+      s.font = Font.systemFont(12);
     }
+    w.addSpacer();
   }
 
   w.url = TAP_URL; // Home Screen taps open directly
   return w;
+}
+
+// Pick an SF Symbol for the current state.
+function symbol(ok, done) {
+  const s = SFSymbol.named(!ok ? "questionmark.circle" : done ? "checkmark.seal.fill" : "checklist");
+  s.applyFont(Font.semiboldSystemFont(18));
+  return s;
 }
 
 // Format up to `max` task titles as "• title" lines (truncated to `width`),
