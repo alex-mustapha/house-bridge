@@ -13,6 +13,7 @@
 
 const WORKER = "https://linear-discord-bridge.muffinfactory.workers.dev";
 const USER = "Alex"; // your Linear name (set "" for whole-household status)
+const TAP_URL = "https://linear.app/alex-kristal/my-issues"; // opens on tap
 
 let done = false;
 let remaining = 0;
@@ -52,5 +53,6 @@ if (fam === "accessoryInline") {
   s.font = Font.systemFont(11);
 }
 
+w.url = TAP_URL; // tap the widget -> open my open tasks in Linear
 Script.setWidget(w);
 Script.complete();
