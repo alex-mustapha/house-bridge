@@ -64,14 +64,17 @@ async function dayStatus(env, userName) {
       ),
     );
     if (!u) return { error: "user not found" };
-    const remaining = (await fetchAssignedActiveIssues(env, u.id)).filter(
+    const items = (await fetchAssignedActiveIssues(env, u.id)).filter(
       (i) => i.project?.name !== recurring && i.dueDate && i.dueDate <= today,
-    ).length;
-    return { done: remaining === 0, remaining };
+    );
+    // Soonest-due first so the widget's short list shows the most pressing.
+    items.sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
+    const tasks = items.map((i) => i.title);
+    return { done: items.length === 0, remaining: items.length, tasks };
   }
   const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
   const any = teamId ? await anyOpenDueByTeam(env, teamId, today) : false;
-  return { done: !any, remaining: any ? 1 : 0 };
+  return { done: !any, remaining: any ? 1 : 0, tasks: [] };
 }
 
 
