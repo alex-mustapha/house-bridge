@@ -153,9 +153,31 @@ async function unassignedResponse(interaction, env) {
   );
   if (!issues.length) return reply("🎉 Nothing unassigned.");
   const today = localDate(new Date()).ymd;
-  const sections = dayGroupedSections(issues, today, (i) =>
-    `• [${i.title}](${i.url})${i.project?.name ? ` · ${i.project.name}` : ""}`,
-  );
+
+  // Group by due day, then sub-group by project within each day.
+  const byDay = new Map();
+  for (const i of issues) {
+    const key = i.dueDate || "";
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(i);
+  }
+  const sections = [...byDay.keys()]
+    .sort((a, b) => (a || "9999-99-99").localeCompare(b || "9999-99-99"))
+    .map((dayKey) => {
+      const header = dayKey ? dayHeader(dayKey, today) : "No due date";
+      const byProject = new Map();
+      for (const i of byDay.get(dayKey)) {
+        const p = i.project?.name || "No project";
+        if (!byProject.has(p)) byProject.set(p, []);
+        byProject.get(p).push(i);
+      }
+      const blocks = [...byProject.keys()].sort().map((p) => {
+        const lines = byProject.get(p).map((i) => `• [${i.title}](${i.url})`).join("\n");
+        return `__${p}__\n${lines}`;
+      });
+      return `**${header}**\n${blocks.join("\n")}`;
+    });
+
   return embedReply(`🙋 Unassigned — ${issues.length}`, sections);
 }
 
