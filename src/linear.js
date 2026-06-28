@@ -526,6 +526,13 @@ export async function getViewerId(env) {
   return data.viewer?.id || null;
 }
 
+// Delete a comment (bot can delete its own; used to clean up stray notes).
+export async function deleteComment(env, id) {
+  const mutation = `mutation Del($id: String!) { commentDelete(id: $id) { success } }`;
+  const data = await linearQuery(env, mutation, { id });
+  return data.commentDelete;
+}
+
 // Create or update a comment on an issue.
 export async function upsertComment(env, issueId, commentId, body) {
   if (commentId) {

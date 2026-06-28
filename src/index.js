@@ -36,6 +36,7 @@ import {
   fetchCompletedBefore,
   archiveIssue,
   fetchUnassignedActive,
+  deleteComment,
 } from "./linear.js";
 import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate } from "./recurring.js";
 import { computeStats } from "./stats.js";
@@ -243,6 +244,17 @@ export default {
       return new Response(JSON.stringify(await botCheck(env), null, 2), {
         headers: { "Content-Type": "application/json" },
       });
+    }
+    if (url.pathname === "/delcomment") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const id = url.searchParams.get("id");
+      if (!id) return new Response("missing ?id=<commentId>\n", { status: 400 });
+      try {
+        const r = await deleteComment(env, id);
+        return new Response(JSON.stringify(r) + "\n", { status: 200 });
+      } catch (e) {
+        return new Response(`delete error: ${e?.message || e}\n`, { status: 500 });
+      }
     }
     if (url.pathname === "/describe") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
