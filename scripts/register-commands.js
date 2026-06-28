@@ -1,12 +1,12 @@
-// Registers the /tasks slash command for your Discord server (guild commands
-// appear instantly). Run once after creating the Discord application:
+// Registers the slash commands for your Discord server (guild commands appear
+// instantly). Usually easier: hit the worker's /register-commands?key=<CRON_KEY>
+// endpoint, which uses the bot token already in Cloudflare. This script is the
+// local fallback:
 //
-//   DISCORD_APP_ID=... DISCORD_BOT_TOKEN=... DISCORD_GUILD_ID=... \
-//     node scripts/register-commands.js
-//
-// (On Windows PowerShell:
 //   $env:DISCORD_APP_ID="..."; $env:DISCORD_BOT_TOKEN="..."; $env:DISCORD_GUILD_ID="...";
-//   node scripts/register-commands.js )
+//   node scripts/register-commands.js
+
+import { COMMANDS } from "../src/commands.js";
 
 const appId = process.env.DISCORD_APP_ID;
 const token = process.env.DISCORD_BOT_TOKEN;
@@ -17,126 +17,12 @@ if (!appId || !token || !guildId) {
   process.exit(1);
 }
 
-const commands = [
-  {
-    name: "tasks",
-    description: "List active Linear tasks assigned to a person",
-    options: [
-      {
-        type: 6, // USER
-        name: "user",
-        description: "Whose tasks to show (defaults to you)",
-        required: false,
-      },
-    ],
-  },
-  {
-    name: "project",
-    description: "List open issues in a project",
-    options: [
-      {
-        type: 3, // STRING
-        name: "project",
-        description: "Which project",
-        required: true,
-        autocomplete: true,
-      },
-    ],
-  },
-  {
-    name: "unassigned",
-    description: "List open issues with no assignee (excludes recurring templates)",
-    options: [],
-  },
-  {
-    name: "chores",
-    description: "One-off chore changes (pause, snooze, skip, add, done)",
-    options: [
-      {
-        type: 1, // SUB_COMMAND
-        name: "pause",
-        description: "Pause chores (no scope = everyone; no dates = until you resume)",
-        options: [
-          { type: 3, name: "user", description: "Pause just this person (sick/away)", required: false, autocomplete: true },
-          { type: 3, name: "chore", description: "Pause just this chore", required: false, autocomplete: true },
-          { type: 3, name: "from", description: "Start date YYYY-MM-DD (default today)", required: false },
-          { type: 3, name: "to", description: "End date YYYY-MM-DD (default: indefinite)", required: false },
-        ],
-      },
-      {
-        type: 1,
-        name: "resume",
-        description: "Clear pauses (no scope = all; or pass user/chore)",
-        options: [
-          { type: 3, name: "user", description: "Resume just this person", required: false, autocomplete: true },
-          { type: 3, name: "chore", description: "Resume just this paused chore", required: false, autocomplete: true },
-        ],
-      },
-      {
-        type: 1,
-        name: "pauses",
-        description: "Show what's currently paused (holds + paused chores)",
-      },
-      {
-        type: 1,
-        name: "weight",
-        description: "View or adjust rotation load skew between people",
-        options: [
-          { type: 3, name: "user", description: "Whose weight", required: false, autocomplete: true },
-          { type: 4, name: "value", description: "New weight (higher = more chores)", required: false },
-          { type: 5, name: "reset", description: "Reset this person to the default weight", required: false },
-        ],
-      },
-      {
-        type: 1,
-        name: "help",
-        description: "How to use the /chore commands",
-      },
-      {
-        type: 1,
-        name: "snooze",
-        description: "Push a chore's due date out",
-        options: [
-          { type: 3, name: "chore", description: "Which chore", required: true, autocomplete: true },
-          { type: 4, name: "days", description: "Days to push (default 1)", required: false },
-        ],
-      },
-      {
-        type: 1,
-        name: "skip",
-        description: "Skip a chore this time (archives the current copy)",
-        options: [
-          { type: 3, name: "chore", description: "Which chore", required: true, autocomplete: true },
-        ],
-      },
-      {
-        type: 1,
-        name: "done",
-        description: "Mark a chore done",
-        options: [
-          { type: 3, name: "chore", description: "Which chore", required: true, autocomplete: true },
-        ],
-      },
-      {
-        type: 1,
-        name: "add",
-        description: "Add a one-off chore",
-        options: [
-          { type: 3, name: "title", description: "Chore title", required: true },
-          { type: 3, name: "due", description: "Due date YYYY-MM-DD (default today)", required: false },
-          { type: 3, name: "assignee", description: "Who to assign; default unassigned", required: false, autocomplete: true },
-        ],
-      },
-    ],
-  },
-];
-
 const res = await fetch(
   `https://discord.com/api/v10/applications/${appId}/guilds/${guildId}/commands`,
   {
     method: "PUT",
     headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(commands),
+    body: JSON.stringify(COMMANDS),
   },
 );
 

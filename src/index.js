@@ -42,6 +42,7 @@ import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate }
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
+import { COMMANDS } from "./commands.js";
 import { verifyAlexaRequest, handleAlexa } from "./alexa.js";
 
 // Parse DISCORD_MENTIONS ("Alex:123,Kristal:456") into { alex: "123", ... }.
@@ -244,6 +245,34 @@ export default {
       return new Response(JSON.stringify(await botCheck(env), null, 2), {
         headers: { "Content-Type": "application/json" },
       });
+    }
+    if (url.pathname === "/register-commands") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      if (!env.DISCORD_BOT_TOKEN) return new Response("DISCORD_BOT_TOKEN not set\n", { status: 400 });
+      const auth = { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` };
+      try {
+        const me = await fetch("https://discord.com/api/v10/users/@me", { headers: auth });
+        if (!me.ok) return new Response(`bot token rejected: ${me.status}\n`, { status: 401 });
+        const appId = (await me.json()).id;
+        // Guild: ?guild=, else env, else auto-detect if the bot is in exactly one.
+        let guild = url.searchParams.get("guild") || env.DISCORD_GUILD_ID;
+        if (!guild) {
+          const g = await fetch("https://discord.com/api/v10/users/@me/guilds", { headers: auth });
+          const guilds = g.ok ? await g.json() : [];
+          if (guilds.length === 1) guild = guilds[0].id;
+          else return new Response(`Pass ?guild=<serverId> — bot is in ${guilds.length} servers.\n`, { status: 400 });
+        }
+        const res = await fetch(
+          `https://discord.com/api/v10/applications/${appId}/guilds/${guild}/commands`,
+          { method: "PUT", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(COMMANDS) },
+        );
+        const txt = await res.text();
+        return new Response(`status ${res.status} (guild ${guild})\n${txt.slice(0, 1500)}\n`, {
+          status: res.ok ? 200 : res.status,
+        });
+      } catch (e) {
+        return new Response(`register error: ${e?.message || e}\n`, { status: 500 });
+      }
     }
     if (url.pathname === "/delcomment") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
