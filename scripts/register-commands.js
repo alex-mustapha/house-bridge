@@ -57,8 +57,8 @@ const commands = [
         name: "pause",
         description: "Pause chores (no scope = everyone; no dates = until you resume)",
         options: [
-          { type: 3, name: "user", description: "Pause just this person (sick/away)", required: false },
-          { type: 3, name: "chore", description: "Pause just this chore (title or part)", required: false },
+          { type: 3, name: "user", description: "Pause just this person (sick/away)", required: false, autocomplete: true },
+          { type: 3, name: "chore", description: "Pause just this chore", required: false, autocomplete: true },
           { type: 3, name: "from", description: "Start date YYYY-MM-DD (default today)", required: false },
           { type: 3, name: "to", description: "End date YYYY-MM-DD (default: indefinite)", required: false },
         ],
@@ -68,8 +68,8 @@ const commands = [
         name: "resume",
         description: "Clear pauses (no scope = all; or pass user/chore)",
         options: [
-          { type: 3, name: "user", description: "Resume just this person", required: false },
-          { type: 3, name: "chore", description: "Resume just this chore (title or part)", required: false },
+          { type: 3, name: "user", description: "Resume just this person", required: false, autocomplete: true },
+          { type: 3, name: "chore", description: "Resume just this paused chore", required: false, autocomplete: true },
         ],
       },
       {
@@ -87,7 +87,7 @@ const commands = [
         name: "snooze",
         description: "Push a chore's due date out",
         options: [
-          { type: 3, name: "chore", description: "Chore title (or part of it)", required: true },
+          { type: 3, name: "chore", description: "Which chore", required: true, autocomplete: true },
           { type: 4, name: "days", description: "Days to push (default 1)", required: false },
         ],
       },
@@ -96,7 +96,7 @@ const commands = [
         name: "skip",
         description: "Skip a chore this time (archives the current copy)",
         options: [
-          { type: 3, name: "chore", description: "Chore title (or part of it)", required: true },
+          { type: 3, name: "chore", description: "Which chore", required: true, autocomplete: true },
         ],
       },
       {
@@ -104,7 +104,7 @@ const commands = [
         name: "done",
         description: "Mark a chore done",
         options: [
-          { type: 3, name: "chore", description: "Chore title (or part of it)", required: true },
+          { type: 3, name: "chore", description: "Which chore", required: true, autocomplete: true },
         ],
       },
       {
@@ -114,7 +114,7 @@ const commands = [
         options: [
           { type: 3, name: "title", description: "Chore title", required: true },
           { type: 3, name: "due", description: "Due date YYYY-MM-DD (default today)", required: false },
-          { type: 3, name: "assignee", description: "Who to assign (name); default unassigned", required: false },
+          { type: 3, name: "assignee", description: "Who to assign; default unassigned", required: false, autocomplete: true },
         ],
       },
     ],

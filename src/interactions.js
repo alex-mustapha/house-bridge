@@ -110,17 +110,60 @@ export async function handleInteraction(interaction, env, ctx) {
   return { type: 4, data: { content: "Unsupported command.", flags: EPHEMERAL } };
 }
 
-// Live project list for the /project command's autocomplete.
+// Autocomplete (type 8) responses.
 async function autocompleteResponse(interaction, env) {
-  if (interaction.data?.name !== "project") return { type: 8, data: { choices: [] } };
-  const focused = (interaction.data.options || []).find((o) => o.focused);
-  const typed = (focused?.value || "").toLowerCase();
-  const names = await fetchProjectNames(env);
-  const choices = names
-    .filter((n) => n.toLowerCase().includes(typed))
-    .slice(0, 25)
-    .map((n) => ({ name: n, value: n }));
+  if (interaction.data?.name === "project") {
+    const focused = (interaction.data.options || []).find((o) => o.focused);
+    const typed = (focused?.value || "").toLowerCase();
+    return acChoices((await fetchProjectNames(env)).filter((n) => n.toLowerCase().includes(typed)));
+  }
+  if (interaction.data?.name === "chores") return choreAutocomplete(interaction, env);
+  return { type: 8, data: { choices: [] } };
+}
+
+// Turn a list of strings into an autocomplete response (deduped, max 25).
+function acChoices(values) {
+  const seen = new Set();
+  const choices = [];
+  for (const v of values) {
+    const key = (v || "").toLowerCase();
+    if (!v || seen.has(key)) continue;
+    seen.add(key);
+    choices.push({ name: v.slice(0, 100), value: v.slice(0, 100) });
+    if (choices.length >= 25) break;
+  }
   return { type: 8, data: { choices } };
+}
+
+// Suggestions for /chores options: chore titles (scoped per subcommand) and people.
+async function choreAutocomplete(interaction, env) {
+  const sub = (interaction.data.options || [])[0];
+  const opt = (sub?.options || []).find((o) => o.focused);
+  if (!opt) return acChoices([]);
+  const typed = (opt.value || "").toLowerCase();
+  const match = (s) => (s || "").toLowerCase().includes(typed);
+
+  if (opt.name === "user" || opt.name === "assignee") {
+    return acChoices((await getUsers(env)).map((u) => u.displayName || u.name).filter(match));
+  }
+  if (opt.name === "chore") {
+    const recurring = env.RECURRING_PROJECT || "Recurring";
+    if (sub.name === "pause") {
+      // any recurring template
+      return acChoices((await fetchRecurringTemplates(env, recurring)).map((t) => t.title).filter(match));
+    }
+    if (sub.name === "resume") {
+      // only templates currently carrying the `paused` label
+      const paused = (await fetchRecurringTemplates(env, recurring))
+        .filter((t) => (t.labels?.nodes || []).some((l) => (l.name || "").toLowerCase() === "paused"))
+        .map((t) => t.title);
+      return acChoices(paused.filter(match));
+    }
+    // snooze / skip / done -> active chores in House Chores
+    const project = env.CHORES_PROJECT || "House Chores";
+    return acChoices((await fetchActiveByProject(env, project)).map((i) => i.title).filter(match));
+  }
+  return acChoices([]);
 }
 
 // Group issues by due day (soonest first; undated last) into embed sections,
