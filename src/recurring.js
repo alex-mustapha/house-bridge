@@ -8,7 +8,11 @@
 //                               semi-monthly | monthly | bimonthly |
 //                               semi-annually | annually
 //   weekday labels (weekly/biweekly/triweekly; pick any): monday .. sunday
-//   month labels (annually/semi-annually/bimonthly; pick any): january .. december
+//   month labels (any cadence; pick any): january .. december
+//                               -> limits recurrence to those months, every year
+//                                  (e.g. a weekly chore only May–Sep). For
+//                                  monthly-family cadences they also pick which
+//                                  month(s) the cycle lands on.
 //   day-of-month label (monthly/bimonthly/semi-annually/annually): first | middle | last
 //                               -> 1st / 15th / last day of month
 //   skip | replace (| always)   (optional collision policy; default replace)
@@ -237,6 +241,9 @@ function isDueToday(chore, now) {
   const L = localDate(now);
   if (chore.start && L.ymd < chore.start) return false; // hasn't started yet
   if (chore.end && L.ymd > chore.end) return false; // past its end date
+  // Month labels gate every cadence (seasonal, repeats yearly). For monthly-family
+  // cadences monthlyDue also reads months to pick the landing month.
+  if (chore.months?.length && !chore.months.includes(L.month)) return false;
   const onWeekday = (chore.days || []).map((d) => WEEKDAYS[d]).includes(L.weekday);
   const onTargetDay = L.dom === targetDayOfMonth(chore, L);
   // A start date anchors the every-N-weeks cycle; otherwise use the week: phase.
