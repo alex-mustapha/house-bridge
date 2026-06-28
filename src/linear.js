@@ -171,6 +171,34 @@ export async function updateIssueDueDate(env, id, dueDate) {
   return data.issueUpdate;
 }
 
+// Recurring templates whose title contains `text` (for /chore pause chore:).
+export async function findTemplatesByTitle(env, text, projectName) {
+  const query = `
+    query FindTpl($text: String!, $name: String!) {
+      issues(
+        first: 25
+        filter: {
+          project: { name: { eq: $name } }
+          title: { containsIgnoreCase: $text }
+        }
+      ) {
+        nodes { id title labels { nodes { id name } } }
+      }
+    }`;
+  const data = await linearQuery(env, query, { text, name: projectName });
+  return data.issues?.nodes || [];
+}
+
+// Replace an issue's label set (used to add/remove the `paused` label).
+export async function updateIssueLabels(env, id, labelIds) {
+  const mutation = `
+    mutation SetLabels($id: String!, $labelIds: [String!]!) {
+      issueUpdate(id: $id, input: { labelIds: $labelIds }) { success }
+    }`;
+  const data = await linearQuery(env, mutation, { id, labelIds });
+  return data.issueUpdate;
+}
+
 export async function setIssueState(env, id, stateId) {
   const mutation = `
     mutation SetState($id: String!, $stateId: String!) {

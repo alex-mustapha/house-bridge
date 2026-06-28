@@ -74,6 +74,16 @@ const commands = [
       },
       {
         type: 1,
+        name: "pauses",
+        description: "Show what's currently paused (holds + paused chores)",
+      },
+      {
+        type: 1,
+        name: "help",
+        description: "How to use the /chore commands",
+      },
+      {
+        type: 1,
         name: "snooze",
         description: "Push a chore's due date out",
         options: [

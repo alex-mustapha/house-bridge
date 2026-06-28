@@ -52,7 +52,7 @@ import {
   fetchTemplatesForAnnotation,
   upsertComment,
 } from "./linear.js";
-import { getPauses, pausesOn } from "./pauses.js";
+import { getActivePauses, pausesOn } from "./pauses.js";
 
 const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const SCHEDULE_MARKER = "🔁 **Schedule**";
@@ -445,7 +445,7 @@ export async function runWeek(env) {
 
   // Pauses: global (skip all), chore (skip that title), user (drop from rotation
   // + skip their fixed chores) — each only on dates within its window.
-  const pauses = await getPauses(env);
+  const pauses = await getActivePauses(env);
   const nameToId = (name) => {
     const want = (name || "").toLowerCase();
     const u = users.find((x) => [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(want)));
@@ -502,9 +502,10 @@ export async function runWeek(env) {
             .toISOString()
             .slice(0, 10)
         : L.ymd;
-      const active = pausesOn(pauses, dueDate);
-      if (active.some((p) => p.scope === "global")) continue; // whole household paused
-      if (active.some((p) => p.scope === "chore" && p.target && c.title.toLowerCase().includes(p.target.toLowerCase()))) continue;
+      // Global pause skips everything in-window; chore-level pausing is the
+      // `paused` label (already filtered out in buildDefs); user pauses are
+      // handled at assignment time.
+      if (pausesOn(pauses, dueDate).some((p) => p.scope === "global")) continue;
       const key = `${c.teamId}::${c.title}@${dueDate}`;
       if (existing.has(key)) continue;
       existing.add(key);
