@@ -55,10 +55,10 @@ const commands = [
       {
         type: 1, // SUB_COMMAND
         name: "hold",
-        description: "Pause all chore generation for a date range (vacation)",
+        description: "Pause chore generation (no dates = until you resume)",
         options: [
-          { type: 3, name: "from", description: "Start date YYYY-MM-DD", required: true },
-          { type: 3, name: "to", description: "End date YYYY-MM-DD", required: true },
+          { type: 3, name: "from", description: "Start date YYYY-MM-DD (default today)", required: false },
+          { type: 3, name: "to", description: "End date YYYY-MM-DD (default: indefinite)", required: false },
         ],
       },
       {

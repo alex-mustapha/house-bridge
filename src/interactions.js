@@ -256,11 +256,18 @@ async function choreCommand(interaction, env) {
 
   switch (sub?.name) {
     case "hold": {
-      if (!isYmd(o.from) || !isYmd(o.to)) return reply("Dates must be `YYYY-MM-DD`.");
-      if (o.to < o.from) return reply("`to` must be on or after `from`.");
       if (!env.DB) return reply("Hold storage unavailable (no DB).");
-      await addHold(env, o.from, o.to, new Date().toISOString());
-      return say(`🏝️ Chores paused **${o.from} → ${o.to}** (inclusive). Nothing will be generated for those days. Use \`/chore resume\` to cancel.`);
+      if (o.from && !isYmd(o.from)) return reply("`from` must be `YYYY-MM-DD`.");
+      if (o.to && !isYmd(o.to)) return reply("`to` must be `YYYY-MM-DD`.");
+      const from = o.from || localDate(new Date()).ymd; // default: starting today
+      const to = o.to || "9999-12-31"; // no end -> indefinite (until /chore resume)
+      if (to < from) return reply("`to` must be on or after `from`.");
+      await addHold(env, from, to, new Date().toISOString());
+      return say(
+        to === "9999-12-31"
+          ? `🏝️ Chores paused **indefinitely** (from ${from}). They stay off until you run \`/chore resume\`.`
+          : `🏝️ Chores paused **${from} → ${to}** (inclusive). Nothing generates for those days. Use \`/chore resume\` to cancel.`,
+      );
     }
     case "resume": {
       if (!env.DB) return reply("Hold storage unavailable (no DB).");
