@@ -103,7 +103,7 @@ export async function handleInteraction(interaction, env, ctx) {
         return projectResponse(interaction, env);
       case "unassigned":
         return unassignedResponse(interaction, env);
-      case "chore":
+      case "chores":
         return choreCommand(interaction, env, ctx);
     }
   }
@@ -251,7 +251,7 @@ function addDays(ymd, n) {
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
-// /chore — the one-off control surface for scheduling changes (vacation holds,
+// /chores — the one-off control surface for scheduling changes (vacation holds,
 // snooze, skip, add, done). Templates remain the source for permanent chores.
 async function choreCommand(interaction, env, ctx) {
   const sub = (interaction.data.options || [])[0];
@@ -295,7 +295,7 @@ async function choreCommand(interaction, env, ctx) {
       refresh();
       const window = to === "9999-12-31" ? `**indefinitely** (from ${from})` : `**${from} → ${to}**`;
       const undo = scope === "user" ? ` user:${target}` : "";
-      return say(`⏸️ Paused ${label} ${window}. Use \`/chore resume${undo}\` to clear.`);
+      return say(`⏸️ Paused ${label} ${window}. Use \`/chores resume${undo}\` to clear.`);
     }
     case "resume": {
       const today = localDate(new Date()).ymd;
@@ -361,7 +361,7 @@ async function choreCommand(interaction, env, ctx) {
       return say(`➕ Added **${o.title}** (due ${dueDate})${assigneeId ? ` for ${o.assignee}` : ""}.`);
     }
   }
-  return reply("Unknown `/chore` subcommand.");
+  return reply("Unknown `/chores` subcommand.");
 }
 
 // Best active chore matching `text` (soonest-due first).
@@ -386,11 +386,11 @@ async function setPausedLabel(env, text, add, today) {
     const has = ids.includes(pausedId);
     if (add && !has) {
       await updateIssueLabels(env, t.id, [...ids, pausedId]);
-      await upsertComment(env, t.id, null, `⏸️ **Paused** ${today} via /chore — off-radar until resumed.`);
+      await upsertComment(env, t.id, null, `⏸️ **Paused** ${today} via /chores — off-radar until resumed.`);
       done.push(t.title);
     } else if (!add && has) {
       await updateIssueLabels(env, t.id, ids.filter((id) => id !== pausedId));
-      await upsertComment(env, t.id, null, `▶️ **Resumed** ${today} via /chore.`);
+      await upsertComment(env, t.id, null, `▶️ **Resumed** ${today} via /chores.`);
       done.push(t.title);
     }
   }
@@ -399,7 +399,7 @@ async function setPausedLabel(env, text, add, today) {
   }
   return say(
     add
-      ? `⏸️ Paused **${done.join(", ")}** (added the \`paused\` label). \`/chore resume chore:${text}\` brings it back.`
+      ? `⏸️ Paused **${done.join(", ")}** (added the \`paused\` label). \`/chores resume chore:${text}\` brings it back.`
       : `▶️ Resumed **${done.join(", ")}** (removed the \`paused\` label).`,
   );
 }
@@ -431,24 +431,24 @@ async function pausesList(env) {
 
 function choreHelp() {
   return [
-    "**`/chore` — household chore controls**",
+    "**`/chores` — household chore controls**",
     "",
     "__Pause / resume__",
-    "• `/chore pause` — pause **everyone** (vacation). Add `from:`/`to:` (YYYY-MM-DD) for a window; omit = until you resume.",
-    "• `/chore pause user:<name>` — opt one person out (sick/away); their chores shift to the other.",
-    "• `/chore pause chore:<name>` — take a chore off-radar (adds the `paused` label; best for variable seasons like mowing).",
-    "• `/chore resume` — clear all everyone/person holds.",
-    "• `/chore resume user:<name>` — clear that person's hold.  `/chore resume chore:<name>` — un-pause that chore.",
+    "• `/chores pause` — pause **everyone** (vacation). Add `from:`/`to:` (YYYY-MM-DD) for a window; omit = until you resume.",
+    "• `/chores pause user:<name>` — opt one person out (sick/away); their chores shift to the other.",
+    "• `/chores pause chore:<name>` — take a chore off-radar (adds the `paused` label; best for variable seasons like mowing).",
+    "• `/chores resume` — clear all everyone/person holds.",
+    "• `/chores resume user:<name>` — clear that person's hold.  `/chores resume chore:<name>` — un-pause that chore.",
     "",
     "__Day-to-day__",
-    "• `/chore snooze chore:<name> [days:N]` — push a chore's due date out (default 1).",
-    "• `/chore skip chore:<name>` — skip the current copy; it returns next cycle.",
-    "• `/chore add title:<…> [due:YYYY-MM-DD] [assignee:<name>]` — add a one-off chore.",
-    "• `/chore done chore:<name>` — mark a chore done.",
+    "• `/chores snooze chore:<name> [days:N]` — push a chore's due date out (default 1).",
+    "• `/chores skip chore:<name>` — skip the current copy; it returns next cycle.",
+    "• `/chores add title:<…> [due:YYYY-MM-DD] [assignee:<name>]` — add a one-off chore.",
+    "• `/chores done chore:<name>` — mark a chore done.",
     "",
     "__Info__",
-    "• `/chore pauses` — what's currently paused (+ recent).",
-    "• `/chore help` — this message.",
+    "• `/chores pauses` — what's currently paused (+ recent).",
+    "• `/chores help` — this message.",
     "",
     "Names match loosely (partial, case-insensitive). Permanent recurring chores are defined as **templates** in Linear's _Recurring_ project; `/tasks`, `/project`, `/unassigned` list issues.",
   ].join("\n");

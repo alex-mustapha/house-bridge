@@ -49,8 +49,8 @@ const commands = [
     options: [],
   },
   {
-    name: "chore",
-    description: "One-off chore changes (hold, snooze, skip, add, done)",
+    name: "chores",
+    description: "One-off chore changes (pause, snooze, skip, add, done)",
     options: [
       {
         type: 1, // SUB_COMMAND
