@@ -256,8 +256,17 @@ function isDueToday(chore, now) {
       return onWeekday && L.weekIndex % 2 === phase(2);
     case "triweekly":
       return onWeekday && L.weekIndex % 3 === phase(3);
-    case "semi-monthly":
-      return L.dom === 1 || L.dom === 15; // 1st and 15th
+    case "semi-monthly": {
+      // Twice a month: anchored to the start day (and ~15 days later) if a start
+      // date is given; otherwise the conventional 1st and 15th.
+      if (chore.start) {
+        const last = lastDayOfMonth(L);
+        const d0 = Math.min(Number(chore.start.slice(8, 10)), last);
+        const d1 = Math.min(d0 + 15, last);
+        return L.dom === d0 || L.dom === d1;
+      }
+      return L.dom === 1 || L.dom === 15;
+    }
     case "monthly":
       return onTargetDay;
     case "bimonthly":
