@@ -22,7 +22,7 @@ import {
   upsertComment,
   fetchRecurringTemplates,
 } from "./linear.js";
-import { localDate } from "./recurring.js";
+import { localDate, annotateTemplates } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 
 const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -92,7 +92,7 @@ function mentionMap(spec) {
   return map;
 }
 
-export async function handleInteraction(interaction, env) {
+export async function handleInteraction(interaction, env, ctx) {
   if (interaction.type === 1) return { type: 1 }; // PING -> PONG
   if (interaction.type === 4) return autocompleteResponse(interaction, env); // option autocomplete
   if (interaction.type === 2) {
@@ -104,7 +104,7 @@ export async function handleInteraction(interaction, env) {
       case "unassigned":
         return unassignedResponse(interaction, env);
       case "chore":
-        return choreCommand(interaction, env);
+        return choreCommand(interaction, env, ctx);
     }
   }
   return { type: 4, data: { content: "Unsupported command.", flags: EPHEMERAL } };
@@ -253,11 +253,14 @@ function addDays(ymd, n) {
 
 // /chore — the one-off control surface for scheduling changes (vacation holds,
 // snooze, skip, add, done). Templates remain the source for permanent chores.
-async function choreCommand(interaction, env) {
+async function choreCommand(interaction, env, ctx) {
   const sub = (interaction.data.options || [])[0];
   const o = {};
   for (const opt of sub?.options || []) o[opt.name] = opt.value;
   const project = env.CHORES_PROJECT || "House Chores";
+  // Refresh the templates' 🔁 schedule comments in the background so they reflect
+  // the new pause/resume state without blocking the Discord reply.
+  const refresh = () => ctx?.waitUntil?.(annotateTemplates(env));
 
   switch (sub?.name) {
     case "pause": {
@@ -265,7 +268,9 @@ async function choreCommand(interaction, env) {
       // chore scope -> the `paused` label on the template (the source of truth,
       // indefinite; great for variable seasons). Date options don't apply here.
       if (o.chore) {
-        return setPausedLabel(env, o.chore, true, today);
+        const r = await setPausedLabel(env, o.chore, true, today);
+        refresh();
+        return r;
       }
       // global / user -> a D1 pause window.
       if (!env.DB) return reply("Pause storage unavailable (no DB).");
@@ -287,18 +292,24 @@ async function choreCommand(interaction, env) {
         label = `**${target}**'s chores (the other person covers)`;
       }
       await addPause(env, { scope, target, start: from, end: to, nowIso: new Date().toISOString() });
+      refresh();
       const window = to === "9999-12-31" ? `**indefinitely** (from ${from})` : `**${from} → ${to}**`;
       const undo = scope === "user" ? ` user:${target}` : "";
       return say(`⏸️ Paused ${label} ${window}. Use \`/chore resume${undo}\` to clear.`);
     }
     case "resume": {
       const today = localDate(new Date()).ymd;
-      if (o.chore) return setPausedLabel(env, o.chore, false, today);
+      if (o.chore) {
+        const r = await setPausedLabel(env, o.chore, false, today);
+        refresh();
+        return r;
+      }
       if (!env.DB) return reply("Pause storage unavailable (no DB).");
       let filter;
       let label = "all pauses";
       if (o.user) { filter = { scope: "user", target: o.user }; label = `${o.user}'s pauses`; }
       const n = await clearPauses(env, today, filter);
+      refresh();
       return say(n ? `▶️ Resumed — cleared ${n} pause${n === 1 ? "" : "s"}.` : `No upcoming ${label} to clear.`);
     }
     case "pauses":

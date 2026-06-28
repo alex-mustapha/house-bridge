@@ -654,12 +654,15 @@ function describeBase(c) {
 }
 
 // The next `count` due dates for a chore (scans up to ~400 days; pure compute).
-function nextOccurrences(chore, count) {
+function nextOccurrences(chore, count, skip) {
   const out = [];
   const base = new Date();
   for (let d = 0; d < 400 && out.length < count; d++) {
     const day = new Date(base.getTime() + d * 86_400_000);
-    if (isDueToday(chore, day)) out.push(localDate(day).ymd);
+    if (!isDueToday(chore, day)) continue;
+    const ymd = localDate(day).ymd;
+    if (skip && skip(ymd)) continue; // e.g. a global hold window
+    out.push(ymd);
   }
   return out;
 }
@@ -670,6 +673,20 @@ function nextOccurrences(chore, count) {
 export async function annotateTemplates(env) {
   const projectName = env.RECURRING_PROJECT || "Recurring";
   const templates = await fetchTemplatesForAnnotation(env, projectName);
+
+  // Active global holds make the schedule comment hold-aware: note the pause and
+  // show the first dates that fall *after* it.
+  const todayYmd = localDate(new Date()).ymd;
+  const globalHolds = (await getActivePauses(env)).filter(
+    (p) => p.scope === "global" && p.end_date >= todayYmd,
+  );
+  const isHeld = (ymd) => globalHolds.some((h) => ymd >= h.start_date && ymd <= h.end_date);
+  const holdNote = globalHolds.length
+    ? "\n" +
+      globalHolds
+        .map((h) => `⏸️ _Household paused ${h.end_date === "9999-12-31" ? "until resumed" : `until ${formatDate(h.end_date)}`}_`)
+        .join("\n")
+    : "";
 
   for (const t of templates) {
     const { config } = parseLabelConfig(t.labels?.nodes || []);
@@ -700,12 +717,12 @@ export async function annotateTemplates(env) {
           : undefined,
         anchorMonth: descCfg.start ? monthIndexOf(descCfg.start) : undefined,
       };
-      const next = nextOccurrences(chore, 3).map(formatDate);
+      const next = nextOccurrences(chore, 3, isHeld).map(formatDate);
       const win = [];
       if (chore.start) win.push(`from ${formatDate(chore.start)}`);
       if (chore.end) win.push(`until ${formatDate(chore.end)}`);
       const winNote = win.length ? `\n_Active ${win.join(" ")}_` : "";
-      body = `${head}${describeSchedule(chore)}${winNote}\n**Next:** ${next.join(" · ") || "—"}`;
+      body = `${head}${describeSchedule(chore)}${winNote}${holdNote}\n**Next:** ${next.join(" · ") || "—"}`;
     }
 
     const existing = (t.comments?.nodes || []).find((c) =>

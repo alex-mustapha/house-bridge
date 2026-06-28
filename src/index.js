@@ -143,7 +143,7 @@ export default {
       } catch {
         return new Response("bad json", { status: 400 });
       }
-      const resp = await handleInteraction(interaction, env);
+      const resp = await handleInteraction(interaction, env, ctx);
       return new Response(JSON.stringify(resp), {
         headers: { "Content-Type": "application/json" },
       });
