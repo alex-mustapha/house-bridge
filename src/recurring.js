@@ -25,6 +25,7 @@
 //     week: 0 | 1 | 2       which week for triweekly (default 0)
 //     dueafter: 2           due date N days out (default today)
 //     count: 3              "anyday" chore: times/week on auto-spread days
+//     estimate: 30m         effort (e.g. 30m, 1h30m) — weekly balance is by total time
 //     opposite: <title>     assign the other person from that chore on the same day
 //     start: 2026-06-27     first eligible date; also anchors the every-N-weeks cycle
 //     end: 2026-10-31       last eligible date; stops recurring after it
@@ -84,6 +85,10 @@ const ONMISS = new Set(["always", "skip", "replace"]);
 // "anyday" chores (weekly-family cadence with no weekday label) get weekday(s)
 // synthesized by how many times per week they run (`count:`), spread across the
 // week so generation/assignment/annotation all work via the normal weekly path.
+// Default effort (minutes) for a chore with no `estimate:` — so unestimated
+// chores still balance ≈evenly by count.
+const DEFAULT_EST_MIN = 15;
+
 const ANYDAY_SPREAD = {
   1: ["sunday"], // once — due end of week
   2: ["wednesday", "sunday"],
@@ -133,9 +138,22 @@ function parseLabelConfig(labelNodes) {
   return { config, passthroughLabelIds };
 }
 
-// week/dueafter/opposite/start/end/count live in the description; parsed then
-// stripped. (Months come from labels only.)
-const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end|count)\s*:/i;
+// "30m" / "1h" / "1h30m" / "45" -> minutes. Used by `estimate:`.
+function parseDuration(s) {
+  const t = (s || "").trim().toLowerCase();
+  let min = 0;
+  let matched = false;
+  const h = t.match(/(\d+)\s*h/);
+  if (h) { min += parseInt(h[1], 10) * 60; matched = true; }
+  const m = t.match(/(\d+)\s*m/);
+  if (m) { min += parseInt(m[1], 10); matched = true; }
+  if (!matched) { const n = parseInt(t, 10); if (!Number.isNaN(n)) min = n; }
+  return min > 0 ? min : undefined;
+}
+
+// week/dueafter/opposite/start/end/count/estimate live in the description;
+// parsed then stripped. (Months come from labels only.)
+const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end|count|estimate)\s*:/i;
 function parseDescriptionConfig(description) {
   const cfg = {};
   if (!description) return cfg;
@@ -143,6 +161,9 @@ function parseDescriptionConfig(description) {
   // count: N -> times per week for an "anyday" chore (1..7).
   const cnt = description.match(/^\s*count\s*:\s*(\d+)\s*$/im);
   if (cnt) cfg.count = Math.max(1, Math.min(7, parseInt(cnt[1], 10)));
+  // estimate: 30m / 1h30m -> effort in minutes (weights the weekly balance).
+  const est = description.match(/^\s*estimate\s*:\s*(.+)$/im);
+  if (est) cfg.estimate = parseDuration(est[1]);
   // week phase for biweekly (even/odd) and triweekly (0/1/2).
   const weekLine = description.match(/^\s*week\s*:\s*(even|odd|\d+)\s*$/im);
   if (weekLine) {
@@ -332,6 +353,7 @@ async function buildDefs(env) {
         days,
         anyday,
         count,
+        estimate: descCfg.estimate,
         dom: config.dom,
         months: config.months,
         weekPhase: descCfg.weekPhase,
@@ -488,22 +510,25 @@ export async function runWeek(env) {
   // already assigned this week so mid-week re-runs stay balanced.
   if (rotation.length >= 2 && plan.length) {
     const [A, B] = rotation;
+    // Balance by total effort (minutes), so a 60-min chore counts more than a
+    // 5-min one. Unestimated chores use DEFAULT_EST_MIN -> ≈count-balancing.
     const counts = { [A]: 0, [B]: 0 };
+    const weightOf = (c) => (c && c.estimate) || DEFAULT_EST_MIN;
     for (const teamId of teamIds) {
       for (const n of ctx.spawned[teamId]) {
         if (!isOpen(n) || !n.dueDate || n.dueDate < todayYmd || n.dueDate > horizonEnd) continue;
         const id = n.assignee?.id;
-        if (id in counts) counts[id]++;
+        if (id in counts) counts[id] += weightOf(defs.find((x) => x.teamId === teamId && x.title === n.title));
       }
     }
     const seed = localDate(base).weekIndex % 2 === 0 ? A : B;
-    const bump = (id) => {
-      if (id in counts) counts[id]++;
+    const bump = (id, w) => {
+      if (id in counts) counts[id] += w;
     };
     for (const e of plan) {
       if (e.c.assigneeId) {
         e.assignee = e.c.assigneeId;
-        bump(e.assignee);
+        bump(e.assignee, weightOf(e.c));
       }
     }
     for (const e of plan) {
@@ -516,7 +541,7 @@ export async function runWeek(env) {
         cand = last === A ? B : last === B ? A : seed;
       }
       e.assignee = cand;
-      bump(cand);
+      bump(cand, weightOf(e.c));
     }
     for (const e of plan) {
       if (!e.c.opposite) continue;
@@ -528,7 +553,7 @@ export async function runWeek(env) {
           ? rotation.find((id) => id !== sib.assignee) ?? sib.assignee
           : counts[A] <= counts[B] ? A : B;
       e.assignee = cand;
-      bump(cand);
+      bump(cand, weightOf(e.c));
     }
   } else {
     for (const e of plan) e.assignee = e.c.assigneeId;
@@ -561,15 +586,20 @@ function formatDate(ymd) {
 
 // Human-readable cadence from a parsed chore config.
 function describeSchedule(c) {
+  const est = c.estimate ? ` · ~${c.estimate}m` : "";
+  if (c.anyday) {
+    const per = c.cadence === "biweekly" ? "every other week" : c.cadence === "triweekly" ? "every 3 weeks" : "week";
+    const n = c.count || 1;
+    return (n === 1 ? `Any day, once a ${per === "week" ? "week" : per}` : `${n}× per ${per}, flexible days`) + est;
+  }
+  return describeBase(c) + est;
+}
+
+function describeBase(c) {
   const days = (c.days || []).map((d) => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(", ");
   const dom = c.dom === "middle" ? "the 15th" : c.dom === "last" ? "the last day" : "the 1st";
   const months = (c.months || []).map((m) => MON_ABBR[m - 1]).join(", ");
   const inMonths = months ? ` (${months})` : "";
-  if (c.anyday) {
-    const per = c.cadence === "biweekly" ? "every other week" : c.cadence === "triweekly" ? "every 3 weeks" : "week";
-    const n = c.count || 1;
-    return n === 1 ? `Any day, once a ${per === "week" ? "week" : per}` : `${n}× per ${per}, flexible days`;
-  }
   switch (c.cadence) {
     case "daily": return "Every day";
     case "weekly": return `Weekly on ${days || "—"}`;
@@ -620,6 +650,7 @@ export async function annotateTemplates(env) {
         days: anyday ? ANYDAY_SPREAD[count] : config.days,
         anyday,
         count,
+        estimate: descCfg.estimate,
         dom: config.dom,
         months: config.months,
         weekPhase: descCfg.weekPhase,
