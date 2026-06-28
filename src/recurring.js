@@ -52,7 +52,7 @@ import {
   fetchTemplatesForAnnotation,
   upsertComment,
 } from "./linear.js";
-import { getHolds, ymdHeld } from "./holds.js";
+import { getPauses, pausesOn } from "./pauses.js";
 
 const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const SCHEDULE_MARKER = "🔁 **Schedule**";
@@ -433,14 +433,31 @@ export async function runWeek(env) {
   const defs = await buildDefs(env);
   if (!defs.length) return;
 
+  const users = await getUsers(env);
   let rotation = [];
   if (env.ROTATION_MEMBERS) {
-    rotation = matchMembers(env.ROTATION_MEMBERS, await getUsers(env));
+    rotation = matchMembers(env.ROTATION_MEMBERS, users);
     if (rotation.length < 2) {
       console.warn(`Rotation disabled: matched ${rotation.length} member(s), need 2.`);
       rotation = [];
     }
   }
+
+  // Pauses: global (skip all), chore (skip that title), user (drop from rotation
+  // + skip their fixed chores) — each only on dates within its window.
+  const pauses = await getPauses(env);
+  const nameToId = (name) => {
+    const want = (name || "").toLowerCase();
+    const u = users.find((x) => [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(want)));
+    return u?.id || null;
+  };
+  // Resolve user-pause targets to ids once; map kept with their windows.
+  const userPauses = pauses
+    .filter((p) => p.scope === "user")
+    .map((p) => ({ ...p, userId: nameToId(p.target) }))
+    .filter((p) => p.userId);
+  const pausedUserIdsOn = (ymd) =>
+    userPauses.filter((p) => ymd >= p.start_date && ymd <= p.end_date).map((p) => p.userId);
 
   // Prefetch per team (a few queries total) so planning needs no per-chore
   // lookups and the week stays under the Worker subrequest cap.
@@ -451,9 +468,6 @@ export async function runWeek(env) {
 
   const projectName = env.CHORES_PROJECT || "House Chores";
   const projectId = await getProjectId(env, projectName);
-
-  // Vacation/hold windows — skip generating any occurrence due within one.
-  const holds = await getHolds(env);
 
   const ctx = { todoStates: {}, spawned: {}, lastByTitle: {} };
   const teamIds = [...new Set(defs.map((c) => c.teamId).filter(Boolean))];
@@ -488,7 +502,9 @@ export async function runWeek(env) {
             .toISOString()
             .slice(0, 10)
         : L.ymd;
-      if (ymdHeld(holds, dueDate)) continue; // on hold (vacation) — skip
+      const active = pausesOn(pauses, dueDate);
+      if (active.some((p) => p.scope === "global")) continue; // whole household paused
+      if (active.some((p) => p.scope === "chore" && p.target && c.title.toLowerCase().includes(p.target.toLowerCase()))) continue;
       const key = `${c.teamId}::${c.title}@${dueDate}`;
       if (existing.has(key)) continue;
       existing.add(key);
@@ -506,6 +522,12 @@ export async function runWeek(env) {
       if (c && (c.onExisting || "replace") === "replace") toArchive.push(n.id);
     }
   }
+
+  // Rotation members available on a given day (paused users dropped).
+  const allowedOn = (ymd) => {
+    const out = pausedUserIdsOn(ymd);
+    return rotation.filter((id) => !out.includes(id));
+  };
 
   // ASSIGN per occurrence, balancing the week ≈50/50. Seed counts from chores
   // already assigned this week so mid-week re-runs stay balanced.
@@ -526,16 +548,21 @@ export async function runWeek(env) {
     const bump = (id, w) => {
       if (id in counts) counts[id] += w;
     };
+    // Fixed-owner chores: skip if that owner is paused that day, else assign.
     for (const e of plan) {
-      if (e.c.assigneeId) {
-        e.assignee = e.c.assigneeId;
-        bump(e.assignee, weightOf(e.c));
-      }
+      if (!e.c.assigneeId) continue;
+      if (pausedUserIdsOn(e.dueDate).includes(e.c.assigneeId)) { e.skip = true; continue; }
+      e.assignee = e.c.assigneeId;
+      bump(e.assignee, weightOf(e.c));
     }
+    // Rotating chores: assign among the members present that day, balancing.
     for (const e of plan) {
-      if (e.c.assigneeId || e.c.opposite) continue;
+      if (e.c.assigneeId || e.c.opposite || e.skip) continue;
+      const allowed = allowedOn(e.dueDate);
+      if (!allowed.length) { e.skip = true; continue; } // everyone paused — skip
       let cand;
-      if (counts[A] < counts[B]) cand = A;
+      if (allowed.length === 1) cand = allowed[0];
+      else if (counts[A] < counts[B]) cand = A;
       else if (counts[B] < counts[A]) cand = B;
       else {
         const last = ctx.lastByTitle[e.c.teamId]?.[e.c.title];
@@ -545,24 +572,34 @@ export async function runWeek(env) {
       bump(cand, weightOf(e.c));
     }
     for (const e of plan) {
-      if (!e.c.opposite) continue;
+      if (!e.c.opposite || e.skip) continue;
+      const allowed = allowedOn(e.dueDate);
+      if (!allowed.length) { e.skip = true; continue; }
       const sib = plan.find(
         (x) => x.c.teamId === e.c.teamId && x.c.title === e.c.opposite && x.dueDate === e.dueDate,
       );
-      const cand =
-        sib?.assignee != null
-          ? rotation.find((id) => id !== sib.assignee) ?? sib.assignee
-          : counts[A] <= counts[B] ? A : B;
+      let cand;
+      if (sib?.assignee != null) {
+        const other = rotation.find((id) => id !== sib.assignee);
+        cand = allowed.includes(other) ? other : allowed[0];
+      } else {
+        cand = allowed.length === 1 ? allowed[0] : counts[A] <= counts[B] ? A : B;
+      }
       e.assignee = cand;
       bump(cand, weightOf(e.c));
     }
   } else {
-    for (const e of plan) e.assignee = e.c.assigneeId;
+    // No rotation: keep fixed owners, but skip a fixed chore whose owner is paused.
+    for (const e of plan) {
+      if (e.c.assigneeId && pausedUserIdsOn(e.dueDate).includes(e.c.assigneeId)) { e.skip = true; continue; }
+      e.assignee = e.c.assigneeId;
+    }
   }
 
   // EXECUTE.
   for (const id of toArchive) await archiveIssue(env, id);
   for (const e of plan) {
+    if (e.skip) continue; // paused (user out / everyone out)
     const result = await createIssue(env, {
       teamId: e.c.teamId,
       title: e.c.title,

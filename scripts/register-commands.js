@@ -54,9 +54,11 @@ const commands = [
     options: [
       {
         type: 1, // SUB_COMMAND
-        name: "hold",
-        description: "Pause chore generation (no dates = until you resume)",
+        name: "pause",
+        description: "Pause chores (no scope = everyone; no dates = until you resume)",
         options: [
+          { type: 3, name: "user", description: "Pause just this person (sick/away)", required: false },
+          { type: 3, name: "chore", description: "Pause just this chore (title or part)", required: false },
           { type: 3, name: "from", description: "Start date YYYY-MM-DD (default today)", required: false },
           { type: 3, name: "to", description: "End date YYYY-MM-DD (default: indefinite)", required: false },
         ],
@@ -64,7 +66,11 @@ const commands = [
       {
         type: 1,
         name: "resume",
-        description: "Clear upcoming holds (cancel a vacation)",
+        description: "Clear pauses (no scope = all; or pass user/chore)",
+        options: [
+          { type: 3, name: "user", description: "Resume just this person", required: false },
+          { type: 3, name: "chore", description: "Resume just this chore (title or part)", required: false },
+        ],
       },
       {
         type: 1,

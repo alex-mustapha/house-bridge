@@ -18,7 +18,7 @@ import {
   getTeamId,
 } from "./linear.js";
 import { localDate } from "./recurring.js";
-import { addHold, clearUpcomingHolds } from "./holds.js";
+import { addPause, clearPauses } from "./pauses.js";
 
 const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -255,24 +255,44 @@ async function choreCommand(interaction, env) {
   const project = env.CHORES_PROJECT || "House Chores";
 
   switch (sub?.name) {
-    case "hold": {
-      if (!env.DB) return reply("Hold storage unavailable (no DB).");
+    case "pause": {
+      if (!env.DB) return reply("Pause storage unavailable (no DB).");
       if (o.from && !isYmd(o.from)) return reply("`from` must be `YYYY-MM-DD`.");
       if (o.to && !isYmd(o.to)) return reply("`to` must be `YYYY-MM-DD`.");
       const from = o.from || localDate(new Date()).ymd; // default: starting today
       const to = o.to || "9999-12-31"; // no end -> indefinite (until /chore resume)
       if (to < from) return reply("`to` must be on or after `from`.");
-      await addHold(env, from, to, new Date().toISOString());
-      return say(
-        to === "9999-12-31"
-          ? `🏝️ Chores paused **indefinitely** (from ${from}). They stay off until you run \`/chore resume\`.`
-          : `🏝️ Chores paused **${from} → ${to}** (inclusive). Nothing generates for those days. Use \`/chore resume\` to cancel.`,
-      );
+
+      // Scope: chore > user > global (whole household).
+      let scope = "global";
+      let target = null;
+      let label = "**all chores**";
+      if (o.chore) {
+        scope = "chore";
+        target = o.chore;
+        label = `chores matching **${o.chore}**`;
+      } else if (o.user) {
+        const u = (await getUsers(env)).find((x) =>
+          [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(o.user.toLowerCase())),
+        );
+        if (!u) return reply(`No Linear user matching "${o.user}".`);
+        scope = "user";
+        target = u.displayName || u.name;
+        label = `**${target}**'s chores`;
+      }
+      await addPause(env, { scope, target, start: from, end: to, nowIso: new Date().toISOString() });
+      const window = to === "9999-12-31" ? `**indefinitely** (from ${from})` : `**${from} → ${to}**`;
+      const undo = scope === "user" ? ` user:${target}` : scope === "chore" ? ` chore:${target}` : "";
+      return say(`⏸️ Paused ${label} ${window}. Use \`/chore resume${undo}\` to clear.`);
     }
     case "resume": {
-      if (!env.DB) return reply("Hold storage unavailable (no DB).");
-      const n = await clearUpcomingHolds(env, localDate(new Date()).ymd);
-      return say(n ? `▶️ Cleared ${n} upcoming hold${n === 1 ? "" : "s"}. Chores resume on schedule.` : "No upcoming holds to clear.");
+      if (!env.DB) return reply("Pause storage unavailable (no DB).");
+      let filter;
+      let label = "all pauses";
+      if (o.chore) { filter = { scope: "chore", target: o.chore }; label = `chores matching "${o.chore}"`; }
+      else if (o.user) { filter = { scope: "user", target: o.user }; label = `${o.user}'s pauses`; }
+      const n = await clearPauses(env, localDate(new Date()).ymd, filter);
+      return say(n ? `▶️ Resumed — cleared ${n} ${label === "all pauses" ? "pause" : "matching pause"}${n === 1 ? "" : "s"}.` : `No upcoming ${label} to clear.`);
     }
     case "snooze": {
       const issue = await pickChore(env, o.chore, project);
