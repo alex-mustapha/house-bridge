@@ -51,6 +51,7 @@ import {
   fetchRecentSpawned,
   fetchTemplatesForAnnotation,
   upsertComment,
+  getViewerId,
 } from "./linear.js";
 import { getActivePauses, pausesOn } from "./pauses.js";
 
@@ -653,6 +654,42 @@ function describeBase(c) {
   }
 }
 
+// Diagnostic: what the engine parses for the template matching `q` (by title).
+export async function describeTemplate(env, q) {
+  const project = env.RECURRING_PROJECT || "Recurring";
+  const tpls = await fetchRecurringTemplates(env, project);
+  const t = tpls.find((x) => x.title.toLowerCase().includes((q || "").toLowerCase()));
+  if (!t) return { error: `no template matching "${q}"` };
+  const { config } = parseLabelConfig(t.labels?.nodes || []);
+  const descCfg = parseDescriptionConfig(t.description);
+  const weeklyFamily = ["weekly", "biweekly", "triweekly"].includes(config.cadence);
+  const anyday = weeklyFamily && !(config.days && config.days.length);
+  const count = anyday ? descCfg.count || 1 : undefined;
+  const chore = {
+    cadence: config.cadence,
+    days: anyday ? ANYDAY_SPREAD[count] : config.days,
+    anyday,
+    count,
+    estimate: descCfg.estimate,
+    dom: config.dom,
+    months: config.months,
+    weekPhase: descCfg.weekPhase,
+    start: descCfg.start,
+    end: descCfg.end,
+    anchorWeek: descCfg.start ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex : undefined,
+    anchorMonth: descCfg.start ? monthIndexOf(descCfg.start) : undefined,
+  };
+  return {
+    title: t.title,
+    rawLabels: (t.labels?.nodes || []).map((l) => l.name),
+    parsedCadence: config.cadence || null,
+    dom: config.dom || null,
+    months: config.months || null,
+    schedule: describeSchedule(chore),
+    next: nextOccurrences(chore, 5),
+  };
+}
+
 // The next `count` due dates for a chore (scans up to ~400 days; pure compute).
 function nextOccurrences(chore, count, skip) {
   const out = [];
@@ -675,11 +712,17 @@ export async function annotateTemplates(env) {
   const templates = await fetchTemplatesForAnnotation(env, projectName);
 
   // Active global holds make the schedule comment hold-aware: note the pause and
-  // show the first dates that fall *after* it.
+  // show the first dates that fall *after* it. Never let a pauses/DB hiccup kill
+  // the whole annotation run.
   const todayYmd = localDate(new Date()).ymd;
-  const globalHolds = (await getActivePauses(env)).filter(
-    (p) => p.scope === "global" && p.end_date >= todayYmd,
-  );
+  let globalHolds = [];
+  try {
+    globalHolds = (await getActivePauses(env)).filter(
+      (p) => p.scope === "global" && p.end_date >= todayYmd,
+    );
+  } catch (err) {
+    console.error("annotate: getActivePauses failed, ignoring holds:", err);
+  }
   const isHeld = (ymd) => globalHolds.some((h) => ymd >= h.start_date && ymd <= h.end_date);
   const holdNote = globalHolds.length
     ? "\n" +
@@ -688,9 +731,21 @@ export async function annotateTemplates(env) {
         .join("\n")
     : "";
 
+  // Only edit comments we authored; otherwise create a fresh one (Linear blocks
+  // editing another user's comment — e.g. older comments authored by a person
+  // before the API key was switched to the bot).
+  let viewerId = null;
+  try {
+    viewerId = await getViewerId(env);
+  } catch (err) {
+    console.error("annotate: getViewerId failed:", err);
+  }
+
+  const report = [];
   for (const t of templates) {
+   try {
     const { config } = parseLabelConfig(t.labels?.nodes || []);
-    if (!config.cadence) continue;
+    if (!config.cadence) { report.push({ title: t.title, action: "no-cadence", labels: (t.labels?.nodes || []).map((l) => l.name) }); continue; }
     const descCfg = parseDescriptionConfig(t.description);
 
     const head = `${SCHEDULE_MARKER} _(auto-generated; not copied to spawned chores)_\n`;
@@ -725,10 +780,16 @@ export async function annotateTemplates(env) {
       body = `${head}${describeSchedule(chore)}${winNote}${holdNote}\n**Next:** ${next.join(" · ") || "—"}`;
     }
 
-    const existing = (t.comments?.nodes || []).find((c) =>
-      c.body?.startsWith(SCHEDULE_MARKER),
-    );
-    if (existing?.body === body) continue; // unchanged — skip to avoid noise
-    await upsertComment(env, t.id, existing?.id, body);
+    const sched = (t.comments?.nodes || []).filter((c) => c.body?.startsWith(SCHEDULE_MARKER));
+    // Prefer our own comment; if we don't own one, create a fresh one.
+    const existing = viewerId ? sched.find((c) => c.user?.id === viewerId) || null : sched[0] || null;
+    if (existing?.body === body) { report.push({ title: t.title, cadence: config.cadence, action: "unchanged" }); continue; }
+    const res = await upsertComment(env, t.id, existing?.id, body);
+    report.push({ title: t.title, cadence: config.cadence, action: existing ? "updated" : "created", ok: res?.success ?? null });
+   } catch (err) {
+     console.error(`annotate: failed for "${t.title}":`, err);
+     report.push({ title: t.title, action: "error", error: String(err?.message || err) });
+   }
   }
+  return report;
 }

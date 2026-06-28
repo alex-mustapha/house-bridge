@@ -15,7 +15,7 @@ async function linearQuery(env, query, variables = {}) {
   const json = await res.json();
   if (json.errors) {
     console.error("Linear API errors:", JSON.stringify(json.errors));
-    throw new Error("Linear API error");
+    throw new Error(json.errors?.[0]?.message || "Linear API error");
   }
   return json.data;
 }
@@ -511,12 +511,19 @@ export async function fetchTemplatesForAnnotation(env, projectName) {
           title
           description
           labels { nodes { name } }
-          comments { nodes { id body } }
+          comments { nodes { id body user { id } } }
         }
       }
     }`;
   const data = await linearQuery(env, query, { name: projectName });
   return data.issues?.nodes || [];
+}
+
+// The user the API key acts as (so we only edit comments we authored — Linear
+// forbids modifying another user's comment).
+export async function getViewerId(env) {
+  const data = await linearQuery(env, `query { viewer { id } }`);
+  return data.viewer?.id || null;
 }
 
 // Create or update a comment on an issue.

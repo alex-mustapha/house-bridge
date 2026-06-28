@@ -36,7 +36,7 @@ import {
   fetchCompletedBefore,
   archiveIssue,
 } from "./linear.js";
-import { runWeek, forceReplace, localDate, annotateTemplates } from "./recurring.js";
+import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate } from "./recurring.js";
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
@@ -210,8 +210,14 @@ export default {
     }
     if (url.pathname === "/annotate") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
-      ctx.waitUntil(annotateTemplates(env));
-      return new Response("annotation triggered\n", { status: 200 });
+      try {
+        const report = await annotateTemplates(env);
+        return new Response(JSON.stringify(report, null, 2), {
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (e) {
+        return new Response(`annotate error: ${e?.stack || e?.message || e}\n`, { status: 500 });
+      }
     }
     if (url.pathname === "/archive") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
@@ -221,6 +227,13 @@ export default {
     if (url.pathname === "/botcheck") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       return new Response(JSON.stringify(await botCheck(env), null, 2), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.pathname === "/describe") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const q = url.searchParams.get("q") || "";
+      return new Response(JSON.stringify(await describeTemplate(env, q), null, 2), {
         headers: { "Content-Type": "application/json" },
       });
     }
