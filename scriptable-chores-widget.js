@@ -27,6 +27,7 @@ async function buildWidget() {
   let tasks = [];
   let completed = [];
   let streak = 0;
+  let unassigned = [];
   let ok = true;
   try {
     // Cache-bust + no-cache so a refresh always reflects chores just marked done.
@@ -41,6 +42,7 @@ async function buildWidget() {
       tasks = r.tasks || [];
       completed = r.completed || [];
       streak = r.streak || 0;
+      unassigned = r.unassignedSoon || [];
     }
   } catch (e) {
     ok = false;
@@ -124,6 +126,12 @@ async function buildWidget() {
       const d = w.addText(`✓ ${completed.length} done today`);
       d.textColor = new Color("#ffffff", 0.8);
       d.font = Font.mediumSystemFont(11);
+    }
+    if (ok && unassigned.length) {
+      w.addSpacer(4);
+      const u = w.addText(`🙋 ${unassigned.length} unassigned this week`);
+      u.textColor = new Color("#ffffff", 0.8);
+      u.font = Font.mediumSystemFont(11);
     }
     w.addSpacer();
   }

@@ -35,6 +35,7 @@ import {
   getLabelNameMap,
   fetchCompletedBefore,
   archiveIssue,
+  fetchUnassignedActive,
 } from "./linear.js";
 import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate } from "./recurring.js";
 import { computeStats } from "./stats.js";
@@ -88,11 +89,24 @@ function computeStreak(issues, today, recurringName) {
   return streak;
 }
 
+// Unassigned, non-template chores due within UNASSIGNED_LOOKAHEAD_DAYS (default
+// 7) — surfaced to both people so they can claim things before they're due.
+async function unassignedDueSoon(env) {
+  const recurring = env.RECURRING_PROJECT || "Recurring";
+  const days = parseInt(env.UNASSIGNED_LOOKAHEAD_DAYS || "7", 10);
+  const until = localDate(new Date(Date.now() + days * 86_400_000)).ymd;
+  return (await fetchUnassignedActive(env))
+    .filter((i) => i.project?.name !== recurring && i.dueDate && i.dueDate <= until)
+    .sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""))
+    .map((i) => ({ title: i.title, url: i.url, dueDate: i.dueDate }));
+}
+
 // Today's chore status for a person (or the household if no user) — powers the
 // phone widget. `remaining` counts active, non-template chores due today/overdue.
 async function dayStatus(env, userName) {
   const today = localDate(new Date()).ymd;
   const recurring = env.RECURRING_PROJECT || "Recurring";
+  const unassignedSoon = await unassignedDueSoon(env);
   if (userName) {
     const u = (await getUsers(env)).find((x) =>
       [x.displayName, x.name].some(
@@ -120,11 +134,11 @@ async function dayStatus(env, userName) {
       .map((i) => ({ title: i.title, url: i.url }));
     const windowIssues = await fetchAssignedDueInWindow(env, u.id, ymdMinus(today, 59), today);
     const streak = computeStreak(windowIssues, today, recurring);
-    return { done: items.length === 0, remaining: items.length, tasks, completed, streak };
+    return { done: items.length === 0, remaining: items.length, tasks, completed, streak, unassignedSoon };
   }
   const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
   const any = teamId ? await anyOpenDueByTeam(env, teamId, today) : false;
-  return { done: !any, remaining: any ? 1 : 0, tasks: [], completed: [], streak: 0 };
+  return { done: !any, remaining: any ? 1 : 0, tasks: [], completed: [], streak: 0, unassignedSoon };
 }
 
 
@@ -390,11 +404,13 @@ async function handleCron(env) {
 
   // 2. Due-date digest, split by owner with @-mentions.
   try {
+    const today = localDate(new Date()).ymd;
     const issues = await fetchDueIssues(env);
-    if (issues.length) {
-      const today = localDate(new Date()).ymd;
+    // Unassigned due later this week (today/overdue ones already show above).
+    const soon = (await unassignedDueSoon(env)).filter((i) => i.dueDate > today);
+    if (issues.length || soon.length) {
       const mentions = parseMentions(env.DISCORD_MENTIONS);
-      const msg = buildDigestMessage(issues, mentions, today);
+      const msg = buildDigestMessage(issues, mentions, today, soon);
       // Bot-posted digest carries "✓ Done" buttons; falls back to the webhook
       // (no buttons) if the bot token / channel id aren't configured.
       if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {

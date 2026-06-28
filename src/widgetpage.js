@@ -105,6 +105,7 @@ export function renderWidgetPage(user, status) {
   </div>
   <div class="streak" id="streak"></div>
   <ul id="list"></ul>
+  <div id="unassignedwrap"></div>
   <div id="donewrap"></div>
   <div class="foot" id="foot"></div>
 </div>
@@ -116,6 +117,13 @@ export function renderWidgetPage(user, status) {
   const KEY = new URLSearchParams(location.search).get("key") || "";
   function esc(s) {
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function fmtDue(ymd) {
+    if (!ymd) return "";
+    const [y,m,d] = ymd.split("-").map(Number);
+    const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const MO = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return WD[new Date(Date.UTC(y,m-1,d)).getUTCDay()] + " " + MO[m-1] + " " + d;
   }
   function render(s) {
     const card = document.getElementById("card");
@@ -130,7 +138,9 @@ export function renderWidgetPage(user, status) {
     if (!s || s.error) {
       card.classList.add("err"); badge.textContent = "❔";
       count.textContent = "Unavailable"; list.innerHTML = "";
-      donewrap.innerHTML = ""; streak.className = "streak"; foot.textContent = ""; return;
+      donewrap.innerHTML = ""; streak.className = "streak"; foot.textContent = "";
+      const uwErr = document.getElementById("unassignedwrap"); if (uwErr) uwErr.innerHTML = "";
+      return;
     }
     const n = s.streak || 0;
     streak.textContent = n > 0 ? "🔥 " + n + "-day streak" : "";
@@ -156,6 +166,20 @@ export function renderWidgetPage(user, status) {
           '</a>' + right + '</li>';
       }).join("");
     }
+    // "Unassigned this week" — unclaimed work due soon; tap to open in Linear.
+    const unassigned = s.unassignedSoon || [];
+    const uw = document.getElementById("unassignedwrap");
+    if (uw) {
+      uw.innerHTML = unassigned.length
+        ? '<div class="donehdr">🙋 Unassigned this week · ' + unassigned.length + '</div>' +
+          '<ul class="donelist">' + unassigned.map((t) =>
+            '<li><a class="open" href="' + esc(t.url || LINEAR_URL) + '">' +
+            '<span class="dot"></span><span class="t">' + esc(t.title) + '</span>' +
+            '<span class="chev">' + esc(fmtDue(t.dueDate)) + '</span></a></li>'
+          ).join("") + '</ul>'
+        : "";
+    }
+
     // "Done today" section (tap an item to reopen it in Linear if mistaken).
     const completed = s.completed || [];
     if (completed.length) {

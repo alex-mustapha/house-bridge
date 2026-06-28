@@ -100,7 +100,7 @@ function mentionFor(name, mentionMap) {
 // Daily digest of today's + overdue chores, grouped by assignee. Owners are
 // @-pinged in `content` (mentions only notify from content, not the embed);
 // overdue lines get a 🔴 marker.
-export function buildDigestMessage(issues, mentionMap, today) {
+export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = []) {
   const groups = new Map(); // owner name | "Unassigned" -> issues[]
   for (const i of issues) {
     const key = i.assignee?.name || "Unassigned";
@@ -114,6 +114,14 @@ export function buildDigestMessage(issues, mentionMap, today) {
     ([name, items]) => `**${name}**\n${items.map(line).join("\n")}`,
   );
 
+  // Unclaimed work due later this week, so someone can grab it ahead of time.
+  if (unassignedSoon.length) {
+    const us = unassignedSoon
+      .map((i) => `• [${i.title}](${i.url}) — due ${fmtDue(i.dueDate)}`)
+      .join("\n");
+    sections.push(`🙋 **Unassigned — due this week**\n${us}`);
+  }
+
   const pings = [...groups.entries()]
     .filter(([name]) => name !== "Unassigned")
     .map(([name, items]) => `${mentionFor(name, mentionMap) || name} — ${items.length}`);
@@ -123,13 +131,21 @@ export function buildDigestMessage(issues, mentionMap, today) {
     embeds: [
       {
         title: "Today's chores",
-        description: sections.join("\n\n").slice(0, 4000),
+        description: sections.join("\n\n").slice(0, 4000) || "Nothing due today.",
         color: COLORS.dueToday,
         timestamp: new Date().toISOString(),
       },
     ],
     allowed_mentions: { parse: ["users"] },
   };
+}
+
+// "2026-07-06" -> "Mon Jul 6"
+function fmtDue(ymd) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MO = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${MO[m - 1]} ${d}`;
 }
 
 // "✓ Done" buttons (one per chore) for the daily digest — action rows of 5, max
