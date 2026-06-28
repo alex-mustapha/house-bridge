@@ -19,10 +19,10 @@
 //   paused                       (optional) -> stop generating until removed
 //
 //   Description directives (optional; parsed then stripped from the copy):
-//     month: june          alternative to month labels (which month(s))
 //     week: even | odd      which week for biweekly (default even/0)
 //     week: 0 | 1 | 2       which week for triweekly (default 0)
 //     dueafter: 2           due date N days out (default today)
+//     opposite: <title>     assign the other person from that chore on the same day
 //     start: 2026-06-27     first eligible date; also anchors the every-N-weeks cycle
 //     end: 2026-10-31       last eligible date; stops recurring after it
 //
@@ -116,26 +116,13 @@ function parseLabelConfig(labelNodes) {
   return { config, passthroughLabelIds };
 }
 
-// Combine month labels and any `month:` description directive into a deduped list.
-function mergeMonths(a, b) {
-  const set = [...new Set([...(a || []), ...(b || [])])];
-  return set.length ? set : undefined;
-}
-
-// month/week/dueafter/opposite/start live in the description; parsed then stripped.
-const DESC_DIRECTIVE_RE = /^\s*(month|week|dueafter|opposite|start|end)\s*:/i;
+// week/dueafter/opposite/start/end live in the description; parsed then stripped.
+// (Months come from labels only.)
+const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end)\s*:/i;
 function parseDescriptionConfig(description) {
   const cfg = {};
   if (!description) return cfg;
 
-  const monthLine = description.match(/^\s*month\s*:\s*(.+)$/im);
-  if (monthLine) {
-    const months = monthLine[1]
-      .split(/[,\s]+/)
-      .map((s) => MONTHS[s.toLowerCase()] || parseInt(s, 10))
-      .filter((n) => n >= 1 && n <= 12);
-    if (months.length) cfg.months = months;
-  }
   // week phase for biweekly (even/odd) and triweekly (0/1/2).
   const weekLine = description.match(/^\s*week\s*:\s*(even|odd|\d+)\s*$/im);
   if (weekLine) {
@@ -318,7 +305,7 @@ async function buildDefs(env) {
         cadence: config.cadence,
         days: config.days,
         dom: config.dom,
-        months: mergeMonths(config.months, descCfg.months),
+        months: config.months,
         weekPhase: descCfg.weekPhase,
         dueAfterDays: descCfg.dueAfterDays,
         opposite: descCfg.opposite, // assign opposite of this chore's owner
@@ -592,7 +579,7 @@ export async function annotateTemplates(env) {
         cadence: config.cadence,
         days: config.days,
         dom: config.dom,
-        months: mergeMonths(config.months, descCfg.months),
+        months: config.months,
         weekPhase: descCfg.weekPhase,
         start: descCfg.start,
         end: descCfg.end,
