@@ -233,15 +233,6 @@ export function buildCapWarningEmbed(count, cap = 250) {
   };
 }
 
-export function buildAllDoneEmbed(teamName) {
-  return {
-    title: "🎉 All done for today!",
-    description: `Every chore due today${teamName ? ` in ${teamName}` : ""} is complete. Nice work! 🧹✨`,
-    color: 0x2ecc71, // green
-    timestamp: new Date().toISOString(),
-  };
-}
-
 // Long-term stats report from D1 aggregates (see db.queryStats).
 export function buildStatsEmbed(stats) {
   const { days, byPerson, missed } = stats;

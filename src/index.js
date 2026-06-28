@@ -13,7 +13,6 @@ import {
   formatCommentEmbed,
   buildDigestMessage,
   buildCapWarningEmbed,
-  buildAllDoneEmbed,
   buildScoreboardMessage,
   buildStatsEmbed,
   buildDigestMenu,
@@ -398,29 +397,10 @@ async function handleEvent(payload, env) {
   }
 
   // `silent`-labeled chores are generated/updated without echoing to Discord
-  // (still counted everywhere; the daily digest and celebration are unaffected).
-  if (type === "Issue" && (await hasLabel(env, data, "silent"))) {
-    if (action === "update" && data?.state?.type === "completed") await maybeCelebrate(data, env);
-    return;
-  }
+  // (still counted everywhere).
+  if (type === "Issue" && (await hasLabel(env, data, "silent"))) return;
 
   await postToDiscord(webhookUrl, { embeds: [embed] });
-
-  // Celebrate when completing a due chore clears the team's plate for today.
-  if (type === "Issue" && action === "update" && data?.state?.type === "completed") {
-    await maybeCelebrate(data, env);
-  }
-}
-
-async function maybeCelebrate(data, env) {
-  const today = localDate(new Date()).ymd;
-  // Only relevant when the thing just completed was actually due today/earlier.
-  if (!data.dueDate || data.dueDate > today || !data.team?.id) return;
-  if (await anyOpenDueByTeam(env, data.team.id, today)) return; // still chores left
-
-  const url =
-    env.DISCORD_WEBHOOK_DONE || env.DISCORD_WEBHOOK_DUE || env.DISCORD_WEBHOOK_DEFAULT;
-  if (url) await postToDiscord(url, { embeds: [buildAllDoneEmbed(data.team?.name)] });
 }
 
 function resolveWebhook(teamKey, env) {
