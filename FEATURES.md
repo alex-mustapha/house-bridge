@@ -15,6 +15,42 @@ Discord).
 
 ---
 
+## How it runs
+
+Two entry points in one Worker:
+
+- **`fetch()`** — receives Linear webhooks (real-time events), Discord
+  interactions (slash commands + buttons), and the toolkit/status endpoints.
+- **`scheduled()`** — the daily cron (`0 12 * * *` UTC = 8am EDT / 7am EST).
+  Every day: digest + cap check + auto-archive. **Mondays** add the weekly recap
+  (generate the week + scoreboard + D1 snapshot). **Sundays** refresh template
+  schedule comments.
+
+All dates — "today", weekday, day-of-month, due dates, streaks — are computed in
+**America/New_York** via `Intl.DateTimeFormat`, so they reflect the household's
+real calendar day regardless of the UTC cron, and it's DST-safe. (The cron *hour*
+is UTC and doesn't shift for DST — see the note in `wrangler.toml`.)
+
+---
+
+## Real-time activity mirror
+
+Beyond the daily digest, the Worker mirrors Linear activity to Discord as it
+happens (via Linear webhooks):
+
+- **Issue events** — created / updated / completed / canceled / removed — post an
+  embed with status, assignee, and priority, color- and emoji-coded by action
+  (🆕 created · ✏️ updated · ✅ completed · 🚫 canceled · 🗑️ removed).
+- **New comments** on issues post an embed too.
+- **Recurring templates are excluded** (they live in the Recurring project), and
+  any chore labeled **`silent`** is skipped — so routine generation doesn't spam
+  the channel.
+- **Per-team routing:** events post to `DISCORD_WEBHOOK_<TEAMKEY>` (e.g.
+  `DISCORD_WEBHOOK_CHO`, `DISCORD_WEBHOOK_PRJ`) if set, otherwise
+  `DISCORD_WEBHOOK_DEFAULT` — so different teams can go to different channels.
+
+---
+
 ## Recurring chores (templates)
 
 Recurring chores are defined as **template tickets** in the **Recurring** Linear
@@ -189,16 +225,42 @@ needed. Run `/chores help` in Discord for the in-channel version.
 
 ---
 
+## Security & verification
+
+- **Linear webhooks** are verified with HMAC-SHA256 against
+  `LINEAR_WEBHOOK_SECRET`; a bad/absent signature is rejected (401).
+- **Discord interactions** (slash commands + buttons) are verified with the app's
+  Ed25519 public key (`DISCORD_PUBLIC_KEY`) and are inherently gated to your
+  guild — so they need no shared secret.
+- **Toolkit endpoints** that mutate or read sensitive data require
+  `?key=<CRON_KEY>`. Read-only, non-sensitive status (`/status`, `/widget`) is
+  intentionally **keyless** so the phone widget needs no secret. (`/widget` only
+  exposes the ✓ Done buttons when opened with `&key=`.)
+
+---
+
 ## Configuration
 
 **Vars** (`wrangler.toml`): `DUE_LOOKAHEAD_DAYS`, `CAP_WARN_AT`,
 `RECURRING_PROJECT`, `CHORES_TEAM`, `CHORES_PROJECT`, `DISCORD_DUE_CHANNEL_ID`,
-`CHORE_RETENTION_DAYS`, `ARCHIVE_MAX`.
+`CHORE_RETENTION_DAYS`, `ARCHIVE_MAX`. `ROTATION_MEMBERS` and `DISCORD_MENTIONS`
+map your two people for rotation and @-pings.
 
 **Secrets** (`wrangler secret put`): `LINEAR_API_KEY` (the `Chore Bot` user's
 key), `LINEAR_WEBHOOK_SECRET`, `DISCORD_PUBLIC_KEY`, `DISCORD_BOT_TOKEN`,
-`CRON_KEY`, and the `DISCORD_WEBHOOK_*` URLs. `ROTATION_MEMBERS` and
-`DISCORD_MENTIONS` map your two people for rotation and @-pings.
+`CRON_KEY`.
+
+**Discord channels** (webhook URLs, set as secrets):
+
+| Var | Used for |
+|---|---|
+| `DISCORD_WEBHOOK_DUE` | Daily digest (fallback when not bot-posting) |
+| `DISCORD_DUE_CHANNEL_ID` + `DISCORD_BOT_TOKEN` | Bot-posted digest with ✓ Done buttons |
+| `DISCORD_WEBHOOK_<TEAMKEY>` (e.g. `_CHO`) | Real-time events for that team |
+| `DISCORD_WEBHOOK_DEFAULT` | Real-time events fallback |
+| `DISCORD_WEBHOOK_DONE` | "All done" celebration (falls back to DUE/DEFAULT) |
+| `DISCORD_WEBHOOK_ADMIN` | Free-tier cap warning |
+| `DISCORD_WEBHOOK_STATS` | Stats posts (falls back to DUE/DEFAULT) |
 
 > **After changing slash commands**, re-run `scripts/register-commands.js` so
 > Discord picks them up. **After deploying**, commit and push.
