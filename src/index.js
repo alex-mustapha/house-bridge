@@ -218,6 +218,12 @@ export default {
       ctx.waitUntil(archiveOldChores(env));
       return new Response("archive triggered (run repeatedly to clear a backlog)\n", { status: 200 });
     }
+    if (url.pathname === "/botcheck") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      return new Response(JSON.stringify(await botCheck(env), null, 2), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (url.pathname === "/done") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       const match = url.searchParams.get("match");
@@ -445,6 +451,46 @@ async function handleCron(env) {
 // Archive chores completed more than CHORE_RETENTION_DAYS ago (default 30), up
 // to ARCHIVE_MAX per run (default 30) to respect the subrequest cap. Archived
 // issues no longer count toward the free-tier active-issue limit.
+// Diagnostic for the digest-buttons setup: is the bot token valid, and can the
+// bot post to the configured channel? Posts a small test message on success.
+async function botCheck(env) {
+  const out = {
+    hasToken: !!env.DISCORD_BOT_TOKEN,
+    channelId: env.DISCORD_DUE_CHANNEL_ID || null,
+  };
+  if (!env.DISCORD_BOT_TOKEN) {
+    out.error = "DISCORD_BOT_TOKEN is not set";
+    return out;
+  }
+  const me = await fetch("https://discord.com/api/v10/users/@me", {
+    headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
+  });
+  out.tokenValid = me.ok;
+  if (me.ok) {
+    const u = await me.json();
+    out.botUser = u.username;
+    out.botId = u.id;
+  } else {
+    out.tokenError = `${me.status} ${(await me.text()).slice(0, 200)}`;
+    return out;
+  }
+  if (!env.DISCORD_DUE_CHANNEL_ID) {
+    out.note = "Token is valid, but DISCORD_DUE_CHANNEL_ID isn't set — no channel to post to yet.";
+    return out;
+  }
+  const post = await fetch(
+    `https://discord.com/api/v10/channels/${env.DISCORD_DUE_CHANNEL_ID}/messages`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "✅ chore-bot connectivity check — safe to ignore." }),
+    },
+  );
+  out.canPostToChannel = post.ok;
+  if (!post.ok) out.postError = `${post.status} ${(await post.text()).slice(0, 200)}`;
+  return out;
+}
+
 async function archiveOldChores(env) {
   const days = parseInt(env.CHORE_RETENTION_DAYS || "30", 10);
   const max = parseInt(env.ARCHIVE_MAX || "30", 10);
