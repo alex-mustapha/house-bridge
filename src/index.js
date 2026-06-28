@@ -30,6 +30,7 @@ import {
   fetchAssignedActiveIssues,
   fetchRecentCompletedAssigned,
   fetchAssignedDueInWindow,
+  getLabelNameMap,
 } from "./linear.js";
 import { runWeek, forceReplace, localDate, annotateTemplates } from "./recurring.js";
 import { computeStats } from "./stats.js";
@@ -276,6 +277,20 @@ export default {
   },
 };
 
+// Does the webhook issue carry a label named `name`? Prefer the payload's label
+// objects; fall back to resolving labelIds against the workspace label map.
+async function hasLabel(env, data, name) {
+  const want = name.toLowerCase();
+  if (Array.isArray(data?.labels) && data.labels.length) {
+    return data.labels.some((l) => (l?.name || "").toLowerCase() === want);
+  }
+  if (Array.isArray(data?.labelIds) && data.labelIds.length) {
+    const map = await getLabelNameMap(env);
+    return data.labelIds.some((id) => (map[id] || "").toLowerCase() === want);
+  }
+  return false;
+}
+
 async function handleEvent(payload, env) {
   const { type, action, data } = payload;
 
@@ -296,6 +311,13 @@ async function handleEvent(payload, env) {
   const webhookUrl = resolveWebhook(teamKey, env);
   if (!webhookUrl) {
     console.warn(`No Discord webhook for team "${teamKey}" and no default set.`);
+    return;
+  }
+
+  // `silent`-labeled chores are generated/updated without echoing to Discord
+  // (still counted everywhere; the daily digest and celebration are unaffected).
+  if (type === "Issue" && (await hasLabel(env, data, "silent"))) {
+    if (action === "update" && data?.state?.type === "completed") await maybeCelebrate(data, env);
     return;
   }
 

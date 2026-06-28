@@ -19,6 +19,7 @@
 //                               -> 1st / 15th / last day of month
 //   skip | replace (| always)   (optional collision policy; default replace)
 //   paused                       (optional) -> stop generating until removed
+//   silent                       (optional) -> generate without a Discord post
 //
 //   Description directives (optional; parsed then stripped from the copy):
 //     week: even | odd      which week for biweekly (default even/0)

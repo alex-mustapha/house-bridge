@@ -528,6 +528,15 @@ export async function archiveIssue(env, id) {
   return data.issueArchive;
 }
 
+// Map of label id -> name across the workspace (for resolving webhook labelIds).
+export async function getLabelNameMap(env) {
+  const query = `query { issueLabels(first: 250) { nodes { id name } } }`;
+  const data = await linearQuery(env, query);
+  const map = {};
+  for (const l of data.issueLabels?.nodes || []) map[l.id] = l.name;
+  return map;
+}
+
 // Resolves label names (case-insensitive) to their IDs across the workspace.
 export async function getLabelIds(env, names) {
   if (!names?.length) return [];
