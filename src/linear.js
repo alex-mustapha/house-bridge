@@ -40,12 +40,13 @@ export async function fetchDueIssues(env) {
         }
       ) {
         nodes {
+          id
           identifier
           title
           dueDate
           url
           assignee { name }
-          team { key }
+          team { id key }
           labels { nodes { name } }
         }
       }

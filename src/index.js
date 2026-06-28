@@ -16,6 +16,8 @@ import {
   buildAllDoneEmbed,
   buildScoreboardMessage,
   buildStatsEmbed,
+  buildDigestButtons,
+  postViaBot,
   postToDiscord,
 } from "./discord.js";
 import { logChores, queryStats } from "./db.js";
@@ -370,13 +372,20 @@ async function handleCron(env) {
   // 2. Due-date digest, split by owner with @-mentions.
   try {
     const issues = await fetchDueIssues(env);
-    if (issues.length && env.DISCORD_WEBHOOK_DUE) {
+    if (issues.length) {
       const today = localDate(new Date()).ymd;
       const mentions = parseMentions(env.DISCORD_MENTIONS);
-      await postToDiscord(
-        env.DISCORD_WEBHOOK_DUE,
-        buildDigestMessage(issues, mentions, today),
-      );
+      const msg = buildDigestMessage(issues, mentions, today);
+      // Bot-posted digest carries "✓ Done" buttons; falls back to the webhook
+      // (no buttons) if the bot token / channel id aren't configured.
+      if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
+        await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, {
+          ...msg,
+          components: buildDigestButtons(issues),
+        });
+      } else if (env.DISCORD_WEBHOOK_DUE) {
+        await postToDiscord(env.DISCORD_WEBHOOK_DUE, msg);
+      }
     }
   } catch (err) {
     console.error("Digest failed:", err);

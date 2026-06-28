@@ -21,6 +21,8 @@ import {
   getLabelIds,
   upsertComment,
   fetchRecurringTemplates,
+  getDoneStateId,
+  setIssueState,
 } from "./linear.js";
 import { localDate, annotateTemplates } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
@@ -94,6 +96,7 @@ function mentionMap(spec) {
 
 export async function handleInteraction(interaction, env, ctx) {
   if (interaction.type === 1) return { type: 1 }; // PING -> PONG
+  if (interaction.type === 3) return handleComponent(interaction, env); // button click
   if (interaction.type === 4) return autocompleteResponse(interaction, env); // option autocomplete
   if (interaction.type === 2) {
     switch (interaction.data?.name) {
@@ -108,6 +111,41 @@ export async function handleInteraction(interaction, env, ctx) {
     }
   }
   return { type: 4, data: { content: "Unsupported command.", flags: EPHEMERAL } };
+}
+
+// Button clicks (message components). The daily digest's "✓ Done" buttons carry
+// custom_id "done:<issueId>:<teamId>". Marking done removes that button from the
+// message so it can't be clicked twice.
+async function handleComponent(interaction, env) {
+  const cid = interaction.data?.custom_id || "";
+  if (cid.startsWith("done:")) {
+    const [, issueId, teamId] = cid.split(":");
+    let ok = false;
+    try {
+      const stateId = teamId ? await getDoneStateId(env, teamId) : null;
+      if (stateId && issueId) ok = !!(await setIssueState(env, issueId, stateId))?.success;
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      return { type: 4, data: { content: "⚠️ Couldn't mark that done — try `/chores done`.", flags: EPHEMERAL } };
+    }
+    // Update the source message: drop the clicked button (and any now-empty rows).
+    const msg = interaction.message || {};
+    const components = (msg.components || [])
+      .map((row) => ({ ...row, components: (row.components || []).filter((c) => c.custom_id !== cid) }))
+      .filter((row) => (row.components || []).length);
+    return {
+      type: 7, // UPDATE_MESSAGE
+      data: {
+        content: msg.content || "",
+        embeds: msg.embeds || [],
+        components,
+        allowed_mentions: { parse: [] }, // don't re-ping on edit
+      },
+    };
+  }
+  return { type: 6 }; // unknown component — ack with no change
 }
 
 // Autocomplete (type 8) responses.

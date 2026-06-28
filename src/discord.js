@@ -132,6 +132,37 @@ export function buildDigestMessage(issues, mentionMap, today) {
   };
 }
 
+// "✓ Done" buttons (one per chore) for the daily digest — action rows of 5, max
+// 25 (Discord's limit). custom_id encodes the issue + team so the click handler
+// can mark it done. Requires the digest to be posted by the bot (not a webhook).
+export function buildDigestButtons(issues) {
+  const buttons = issues.slice(0, 25).map((i) => ({
+    type: 2, // button
+    style: 3, // success (green)
+    label: `✓ ${i.title}`.slice(0, 80),
+    custom_id: `done:${i.id}:${i.team?.id || ""}`,
+  }));
+  const rows = [];
+  for (let k = 0; k < buttons.length; k += 5) {
+    rows.push({ type: 1, components: buttons.slice(k, k + 5) });
+  }
+  return rows;
+}
+
+// Post a message as the bot (Bot token) so it can carry interactive buttons.
+export async function postViaBot(env, channelId, payload) {
+  const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) console.error("Bot message post failed:", res.status, await res.text());
+  return res.ok;
+}
+
 // One embed per person, so each gets their own weekly scoreboard.
 export function buildScoreboardMessage(stats) {
   const embeds = stats.people.map((p) => ({
