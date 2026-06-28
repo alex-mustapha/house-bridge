@@ -158,6 +158,19 @@ export async function findActiveByTitle(env, text, projectName) {
   return data.issues?.nodes || [];
 }
 
+// Push/set an issue's due date (YYYY-MM-DD). Used by the /chore snooze command.
+export async function updateIssueDueDate(env, id, dueDate) {
+  const mutation = `
+    mutation SetDue($id: String!, $dueDate: TimelessDate!) {
+      issueUpdate(id: $id, input: { dueDate: $dueDate }) {
+        success
+        issue { identifier title dueDate }
+      }
+    }`;
+  const data = await linearQuery(env, mutation, { id, dueDate });
+  return data.issueUpdate;
+}
+
 export async function setIssueState(env, id, stateId) {
   const mutation = `
     mutation SetState($id: String!, $stateId: String!) {

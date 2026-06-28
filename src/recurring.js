@@ -50,6 +50,7 @@ import {
   fetchTemplatesForAnnotation,
   upsertComment,
 } from "./linear.js";
+import { getHolds, ymdHeld } from "./holds.js";
 
 const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const SCHEDULE_MARKER = "🔁 **Schedule**";
@@ -428,6 +429,9 @@ export async function runWeek(env) {
   const projectName = env.CHORES_PROJECT || "House Chores";
   const projectId = await getProjectId(env, projectName);
 
+  // Vacation/hold windows — skip generating any occurrence due within one.
+  const holds = await getHolds(env);
+
   const ctx = { todoStates: {}, spawned: {}, lastByTitle: {} };
   const teamIds = [...new Set(defs.map((c) => c.teamId).filter(Boolean))];
   for (const teamId of teamIds) {
@@ -461,6 +465,7 @@ export async function runWeek(env) {
             .toISOString()
             .slice(0, 10)
         : L.ymd;
+      if (ymdHeld(holds, dueDate)) continue; // on hold (vacation) — skip
       const key = `${c.teamId}::${c.title}@${dueDate}`;
       if (existing.has(key)) continue;
       existing.add(key);

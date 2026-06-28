@@ -8,8 +8,17 @@ import {
   fetchProjectNames,
   fetchActiveByProject,
   fetchUnassignedActive,
+  markChoreDone,
+  findActiveByTitle,
+  archiveIssue,
+  updateIssueDueDate,
+  createIssue,
+  getProjectId,
+  getTodoStateId,
+  getTeamId,
 } from "./linear.js";
 import { localDate } from "./recurring.js";
+import { addHold, clearUpcomingHolds } from "./holds.js";
 
 const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -89,6 +98,8 @@ export async function handleInteraction(interaction, env) {
         return projectResponse(interaction, env);
       case "unassigned":
         return unassignedResponse(interaction, env);
+      case "chore":
+        return choreCommand(interaction, env);
     }
   }
   return { type: 4, data: { content: "Unsupported command.", flags: EPHEMERAL } };
@@ -222,4 +233,92 @@ async function tasksResponse(interaction, env) {
 
 function reply(content) {
   return { type: 4, data: { content, flags: EPHEMERAL } };
+}
+
+// Public (non-ephemeral) reply — used for mutations so both partners see them.
+function say(content) {
+  return { type: 4, data: { content } };
+}
+
+const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
+function addDays(ymd, n) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+// /chore — the one-off control surface for scheduling changes (vacation holds,
+// snooze, skip, add, done). Templates remain the source for permanent chores.
+async function choreCommand(interaction, env) {
+  const sub = (interaction.data.options || [])[0];
+  const o = {};
+  for (const opt of sub?.options || []) o[opt.name] = opt.value;
+  const project = env.CHORES_PROJECT || "House Chores";
+
+  switch (sub?.name) {
+    case "hold": {
+      if (!isYmd(o.from) || !isYmd(o.to)) return reply("Dates must be `YYYY-MM-DD`.");
+      if (o.to < o.from) return reply("`to` must be on or after `from`.");
+      if (!env.DB) return reply("Hold storage unavailable (no DB).");
+      await addHold(env, o.from, o.to, new Date().toISOString());
+      return say(`🏝️ Chores paused **${o.from} → ${o.to}** (inclusive). Nothing will be generated for those days. Use \`/chore resume\` to cancel.`);
+    }
+    case "resume": {
+      if (!env.DB) return reply("Hold storage unavailable (no DB).");
+      const n = await clearUpcomingHolds(env, localDate(new Date()).ymd);
+      return say(n ? `▶️ Cleared ${n} upcoming hold${n === 1 ? "" : "s"}. Chores resume on schedule.` : "No upcoming holds to clear.");
+    }
+    case "snooze": {
+      const issue = await pickChore(env, o.chore, project);
+      if (!issue) return reply(`No active chore matching "${o.chore}".`);
+      const days = Math.max(1, Math.min(60, parseInt(o.days, 10) || 1));
+      const newDue = addDays(issue.dueDate || localDate(new Date()).ymd, days);
+      const res = await updateIssueDueDate(env, issue.id, newDue);
+      if (!res?.success) return reply("Couldn't update the due date.");
+      return say(`😴 Snoozed **${issue.title}** ${days} day${days === 1 ? "" : "s"} → due ${newDue}.`);
+    }
+    case "skip": {
+      const issue = await pickChore(env, o.chore, project);
+      if (!issue) return reply(`No active chore matching "${o.chore}".`);
+      const res = await archiveIssue(env, issue.id);
+      if (!res?.success) return reply("Couldn't skip that chore.");
+      return say(`⏭️ Skipped **${issue.title}** for now — it'll return on its next scheduled date.`);
+    }
+    case "done": {
+      const r = await markChoreDone(env, o.chore);
+      return r.ok ? say(`✅ ${r.message}.`) : reply(r.message);
+    }
+    case "add": {
+      const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+      if (!teamId) return reply("Chores team not found.");
+      if (o.due && !isYmd(o.due)) return reply("`due` must be `YYYY-MM-DD`.");
+      const dueDate = o.due || localDate(new Date()).ymd;
+      let assigneeId;
+      if (o.assignee) {
+        const u = (await getUsers(env)).find((x) =>
+          [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(o.assignee.toLowerCase())),
+        );
+        if (!u) return reply(`No Linear user matching "${o.assignee}".`);
+        assigneeId = u.id;
+      }
+      const res = await createIssue(env, {
+        teamId,
+        title: o.title,
+        dueDate,
+        assigneeId,
+        stateId: await getTodoStateId(env, teamId),
+        projectId: await getProjectId(env, project),
+      });
+      if (!res?.success) return reply("Couldn't create the chore.");
+      return say(`➕ Added **${o.title}** (due ${dueDate})${assigneeId ? ` for ${o.assignee}` : ""}.`);
+    }
+  }
+  return reply("Unknown `/chore` subcommand.");
+}
+
+// Best active chore matching `text` (soonest-due first).
+async function pickChore(env, text, project) {
+  const matches = await findActiveByTitle(env, text, project);
+  if (!matches.length) return null;
+  matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
+  return matches[0];
 }

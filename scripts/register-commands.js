@@ -48,6 +48,61 @@ const commands = [
     description: "List open issues with no assignee (excludes recurring templates)",
     options: [],
   },
+  {
+    name: "chore",
+    description: "One-off chore changes (hold, snooze, skip, add, done)",
+    options: [
+      {
+        type: 1, // SUB_COMMAND
+        name: "hold",
+        description: "Pause all chore generation for a date range (vacation)",
+        options: [
+          { type: 3, name: "from", description: "Start date YYYY-MM-DD", required: true },
+          { type: 3, name: "to", description: "End date YYYY-MM-DD", required: true },
+        ],
+      },
+      {
+        type: 1,
+        name: "resume",
+        description: "Clear upcoming holds (cancel a vacation)",
+      },
+      {
+        type: 1,
+        name: "snooze",
+        description: "Push a chore's due date out",
+        options: [
+          { type: 3, name: "chore", description: "Chore title (or part of it)", required: true },
+          { type: 4, name: "days", description: "Days to push (default 1)", required: false },
+        ],
+      },
+      {
+        type: 1,
+        name: "skip",
+        description: "Skip a chore this time (archives the current copy)",
+        options: [
+          { type: 3, name: "chore", description: "Chore title (or part of it)", required: true },
+        ],
+      },
+      {
+        type: 1,
+        name: "done",
+        description: "Mark a chore done",
+        options: [
+          { type: 3, name: "chore", description: "Chore title (or part of it)", required: true },
+        ],
+      },
+      {
+        type: 1,
+        name: "add",
+        description: "Add a one-off chore",
+        options: [
+          { type: 3, name: "title", description: "Chore title", required: true },
+          { type: 3, name: "due", description: "Due date YYYY-MM-DD (default today)", required: false },
+          { type: 3, name: "assignee", description: "Who to assign (name); default unassigned", required: false },
+        ],
+      },
+    ],
+  },
 ];
 
 const res = await fetch(
