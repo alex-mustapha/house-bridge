@@ -386,11 +386,21 @@ async function setPausedLabel(env, text, add, today) {
     const has = ids.includes(pausedId);
     if (add && !has) {
       await updateIssueLabels(env, t.id, [...ids, pausedId]);
-      await upsertComment(env, t.id, null, `⏸️ **Paused** ${today} via /chores — off-radar until resumed.`);
+      // Start a fresh pause-cycle comment; resume edits this same comment.
+      await upsertComment(env, t.id, null, `⏸️ **Paused** ${today}`);
       done.push(t.title);
     } else if (!add && has) {
       await updateIssueLabels(env, t.id, ids.filter((id) => id !== pausedId));
-      await upsertComment(env, t.id, null, `▶️ **Resumed** ${today} via /chores.`);
+      // Close the cycle: edit the most recent open pause comment (paused, not yet
+      // resumed) so one comment captures the whole pause -> resume span.
+      const open = (t.comments?.nodes || [])
+        .filter((c) => (c.body || "").includes("**Paused**") && !(c.body || "").includes("**Resumed**"))
+        .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))[0];
+      if (open) {
+        await upsertComment(env, t.id, open.id, `${open.body} → ▶️ **Resumed** ${today}`);
+      } else {
+        await upsertComment(env, t.id, null, `▶️ **Resumed** ${today}`);
+      }
       done.push(t.title);
     }
   }

@@ -182,7 +182,12 @@ export async function findTemplatesByTitle(env, text, projectName) {
           title: { containsIgnoreCase: $text }
         }
       ) {
-        nodes { id title labels { nodes { id name } } }
+        nodes {
+          id
+          title
+          labels { nodes { id name } }
+          comments { nodes { id body createdAt } }
+        }
       }
     }`;
   const data = await linearQuery(env, query, { text, name: projectName });
