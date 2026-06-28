@@ -31,6 +31,8 @@ import {
   fetchRecentCompletedAssigned,
   fetchAssignedDueInWindow,
   getLabelNameMap,
+  fetchCompletedBefore,
+  archiveIssue,
 } from "./linear.js";
 import { runWeek, forceReplace, localDate, annotateTemplates } from "./recurring.js";
 import { computeStats } from "./stats.js";
@@ -208,6 +210,11 @@ export default {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       ctx.waitUntil(annotateTemplates(env));
       return new Response("annotation triggered\n", { status: 200 });
+    }
+    if (url.pathname === "/archive") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      ctx.waitUntil(archiveOldChores(env));
+      return new Response("archive triggered (run repeatedly to clear a backlog)\n", { status: 200 });
     }
     if (url.pathname === "/done") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
@@ -413,6 +420,35 @@ async function handleCron(env) {
       console.error("Annotate failed:", err);
     }
   }
+
+  // 7. Auto-archive long-completed chores so the active-issue count stays under
+  //    Linear's free-tier cap. Skip Mondays (Monday's run is already heavy) to
+  //    stay under the per-invocation subrequest limit; runs the other 6 days.
+  if (!isMonday) {
+    try {
+      await archiveOldChores(env);
+    } catch (err) {
+      console.error("Auto-archive failed:", err);
+    }
+  }
+}
+
+// Archive chores completed more than CHORE_RETENTION_DAYS ago (default 30), up
+// to ARCHIVE_MAX per run (default 30) to respect the subrequest cap. Archived
+// issues no longer count toward the free-tier active-issue limit.
+async function archiveOldChores(env) {
+  const days = parseInt(env.CHORE_RETENTION_DAYS || "30", 10);
+  const max = parseInt(env.ARCHIVE_MAX || "30", 10);
+  const before = new Date(Date.now() - days * 86_400_000).toISOString();
+  const project = env.CHORES_PROJECT || "House Chores";
+  const old = await fetchCompletedBefore(env, project, before, max);
+  let n = 0;
+  for (const i of old) {
+    const r = await archiveIssue(env, i.id);
+    if (r?.success) n++;
+  }
+  if (n) console.log(`Auto-archived ${n} chore(s) completed >${days}d ago.`);
+  return n;
 }
 
 // Posts the weekly scoreboard. On the cron it only runs Mondays; `force` (the

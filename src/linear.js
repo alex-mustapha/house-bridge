@@ -552,6 +552,27 @@ export async function fetchRecurringTemplates(env, projectName) {
   return data.issues?.nodes || [];
 }
 
+// Completed chores in `projectName` finished before `beforeIso` (auto-archive,
+// to keep the active-issue count under Linear's free-tier cap).
+export async function fetchCompletedBefore(env, projectName, beforeIso, limit) {
+  const n = Math.max(1, Math.min(100, limit || 50));
+  const query = `
+    query Old($name: String!) {
+      issues(
+        first: ${n}
+        filter: {
+          project: { name: { eq: $name } }
+          state: { type: { eq: "completed" } }
+          completedAt: { lt: "${beforeIso}" }
+        }
+      ) {
+        nodes { id identifier }
+      }
+    }`;
+  const data = await linearQuery(env, query, { name: projectName });
+  return data.issues?.nodes || [];
+}
+
 export async function archiveIssue(env, id) {
   const mutation = `
     mutation Archive($id: String!) {
