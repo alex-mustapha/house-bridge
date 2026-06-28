@@ -8,6 +8,8 @@
 //                               semi-monthly | monthly | bimonthly |
 //                               semi-annually | annually
 //   weekday labels (weekly/biweekly/triweekly; pick any): monday .. sunday
+//                               -> omit on a weekly-family chore for "any day":
+//                                  due Sunday (or N spread days via `count:`)
 //   month labels (any cadence; pick any): january .. december
 //                               -> limits recurrence to those months, every year
 //                                  (e.g. a weekly chore only May–Sep). For
@@ -22,6 +24,7 @@
 //     week: even | odd      which week for biweekly (default even/0)
 //     week: 0 | 1 | 2       which week for triweekly (default 0)
 //     dueafter: 2           due date N days out (default today)
+//     count: 3              "anyday" chore: times/week on auto-spread days
 //     opposite: <title>     assign the other person from that chore on the same day
 //     start: 2026-06-27     first eligible date; also anchors the every-N-weeks cycle
 //     end: 2026-10-31       last eligible date; stops recurring after it
@@ -77,6 +80,19 @@ const DAY_OF_MONTH = new Set(["first", "middle", "last"]);
 
 const ONMISS = new Set(["always", "skip", "replace"]);
 
+// "anyday" chores (weekly-family cadence with no weekday label) get weekday(s)
+// synthesized by how many times per week they run (`count:`), spread across the
+// week so generation/assignment/annotation all work via the normal weekly path.
+const ANYDAY_SPREAD = {
+  1: ["sunday"], // once — due end of week
+  2: ["wednesday", "sunday"],
+  3: ["monday", "wednesday", "friday"],
+  4: ["monday", "wednesday", "friday", "sunday"],
+  5: ["monday", "tuesday", "wednesday", "thursday", "friday"],
+  6: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"],
+  7: ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"],
+};
+
 const MONTHS = {
   january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
   july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
@@ -116,13 +132,16 @@ function parseLabelConfig(labelNodes) {
   return { config, passthroughLabelIds };
 }
 
-// week/dueafter/opposite/start/end live in the description; parsed then stripped.
-// (Months come from labels only.)
-const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end)\s*:/i;
+// week/dueafter/opposite/start/end/count live in the description; parsed then
+// stripped. (Months come from labels only.)
+const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end|count)\s*:/i;
 function parseDescriptionConfig(description) {
   const cfg = {};
   if (!description) return cfg;
 
+  // count: N -> times per week for an "anyday" chore (1..7).
+  const cnt = description.match(/^\s*count\s*:\s*(\d+)\s*$/im);
+  if (cnt) cfg.count = Math.max(1, Math.min(7, parseInt(cnt[1], 10)));
   // week phase for biweekly (even/odd) and triweekly (0/1/2).
   const weekLine = description.match(/^\s*week\s*:\s*(even|odd|\d+)\s*$/im);
   if (weekLine) {
@@ -296,6 +315,12 @@ async function buildDefs(env) {
       }
       if (config.paused) continue; // `paused` label -> don't generate
       const descCfg = parseDescriptionConfig(t.description);
+      // "anyday": a weekly-family chore with no weekday label runs `count` times
+      // per week on auto-spread days (default once, due Sunday).
+      const weeklyFamily = ["weekly", "biweekly", "triweekly"].includes(config.cadence);
+      const anyday = weeklyFamily && !(config.days && config.days.length);
+      const count = anyday ? descCfg.count || 1 : undefined;
+      const days = anyday ? ANYDAY_SPREAD[count] : config.days;
       defs.push({
         title: t.title,
         teamId: t.team?.id,
@@ -303,7 +328,9 @@ async function buildDefs(env) {
         description: stripDescription(t.description),
         onExisting: config.onExisting || "replace",
         cadence: config.cadence,
-        days: config.days,
+        days,
+        anyday,
+        count,
         dom: config.dom,
         months: config.months,
         weekPhase: descCfg.weekPhase,
@@ -533,6 +560,11 @@ function describeSchedule(c) {
   const dom = c.dom === "middle" ? "the 15th" : c.dom === "last" ? "the last day" : "the 1st";
   const months = (c.months || []).map((m) => MON_ABBR[m - 1]).join(", ");
   const inMonths = months ? ` (${months})` : "";
+  if (c.anyday) {
+    const per = c.cadence === "biweekly" ? "every other week" : c.cadence === "triweekly" ? "every 3 weeks" : "week";
+    const n = c.count || 1;
+    return n === 1 ? `Any day, once a ${per === "week" ? "week" : per}` : `${n}× per ${per}, flexible days`;
+  }
   switch (c.cadence) {
     case "daily": return "Every day";
     case "weekly": return `Weekly on ${days || "—"}`;
@@ -575,9 +607,14 @@ export async function annotateTemplates(env) {
     if (config.paused) {
       body = `${head}⏸️ Paused — scheduling disabled. Remove the \`paused\` label to resume.`;
     } else {
+      const weeklyFamily = ["weekly", "biweekly", "triweekly"].includes(config.cadence);
+      const anyday = weeklyFamily && !(config.days && config.days.length);
+      const count = anyday ? descCfg.count || 1 : undefined;
       const chore = {
         cadence: config.cadence,
-        days: config.days,
+        days: anyday ? ANYDAY_SPREAD[count] : config.days,
+        anyday,
+        count,
         dom: config.dom,
         months: config.months,
         weekPhase: descCfg.weekPhase,
