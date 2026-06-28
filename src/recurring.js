@@ -54,6 +54,7 @@ import {
   getViewerId,
 } from "./linear.js";
 import { getActivePauses, pausesOn } from "./pauses.js";
+import { getWeightResolver } from "./weights.js";
 
 const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const SCHEDULE_MARKER = "🔁 **Schedule**";
@@ -531,14 +532,25 @@ export async function runWeek(env) {
     return rotation.filter((id) => !out.includes(id));
   };
 
-  // ASSIGN per occurrence, balancing the week ≈50/50. Seed counts from chores
-  // already assigned this week so mid-week re-runs stay balanced.
+  // Per-member weights (e.g. Alex 60 / Kristal 40) — the balancer compares
+  // weighted load (minutes / weight) so the higher-weight member carries more.
+  const resolveWeight = await getWeightResolver(env);
+  const nameOf = (id) => {
+    const u = users.find((x) => x.id === id);
+    return u?.displayName || u?.name || "";
+  };
+
+  // ASSIGN per occurrence, balancing the week by weighted effort. Seed counts
+  // from chores already assigned this week so mid-week re-runs stay balanced.
   if (rotation.length >= 2 && plan.length) {
     const [A, B] = rotation;
+    const wt = { [A]: resolveWeight(nameOf(A)), [B]: resolveWeight(nameOf(B)) };
     // Balance by total effort (minutes), so a 60-min chore counts more than a
     // 5-min one. Unestimated chores use DEFAULT_EST_MIN -> ≈count-balancing.
     const counts = { [A]: 0, [B]: 0 };
     const weightOf = (c) => (c && c.estimate) || DEFAULT_EST_MIN;
+    // Whoever has the lower weighted load (minutes / member-weight) goes next.
+    const lower = () => (counts[A] / wt[A] <= counts[B] / wt[B] ? A : B);
     for (const teamId of teamIds) {
       for (const n of ctx.spawned[teamId]) {
         if (!isOpen(n) || !n.dueDate || n.dueDate < todayYmd || n.dueDate > horizonEnd) continue;
@@ -557,15 +569,15 @@ export async function runWeek(env) {
       e.assignee = e.c.assigneeId;
       bump(e.assignee, weightOf(e.c));
     }
-    // Rotating chores: assign among the members present that day, balancing.
+    // Rotating chores: assign among the members present that day, weighted.
     for (const e of plan) {
       if (e.c.assigneeId || e.c.opposite || e.skip) continue;
       const allowed = allowedOn(e.dueDate);
       if (!allowed.length) { e.skip = true; continue; } // everyone paused — skip
       let cand;
       if (allowed.length === 1) cand = allowed[0];
-      else if (counts[A] < counts[B]) cand = A;
-      else if (counts[B] < counts[A]) cand = B;
+      else if (counts[A] / wt[A] < counts[B] / wt[B]) cand = A;
+      else if (counts[B] / wt[B] < counts[A] / wt[A]) cand = B;
       else {
         const last = ctx.lastByTitle[e.c.teamId]?.[e.c.title];
         cand = last === A ? B : last === B ? A : seed;
@@ -585,7 +597,7 @@ export async function runWeek(env) {
         const other = rotation.find((id) => id !== sib.assignee);
         cand = allowed.includes(other) ? other : allowed[0];
       } else {
-        cand = allowed.length === 1 ? allowed[0] : counts[A] <= counts[B] ? A : B;
+        cand = allowed.length === 1 ? allowed[0] : lower();
       }
       e.assignee = cand;
       bump(cand, weightOf(e.c));

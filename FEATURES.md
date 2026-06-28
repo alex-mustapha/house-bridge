@@ -100,9 +100,11 @@ spawned chore.
 
 - Runs the **Monday** cron: generates the coming week's chores (today + 6 days),
   each on its real due day.
-- **Assignment** is balanced ≈50/50 across the week (weighted by `estimate:`
-  time), accounting for fixed owners and `opposite:` pairs — not per-chore
-  alternation, so weeks aren't lopsided.
+- **Assignment** balances the week by **weighted effort**: each chore's
+  `estimate:` minutes are distributed so each member's `minutes / weight` ratio
+  stays even. Member weights come from `ROTATION_WEIGHTS` (default
+  `Alex:60,Kristal:40` → a 60/40 split) with per-person overrides via
+  `/chores weight`. Accounts for fixed owners and `opposite:` pairs.
 - Put an explicit **assignee** on a template to fix that chore to one person
   (skips rotation).
 - **Replace policy:** overdue copies of `replace` chores are archived so misses
@@ -157,10 +159,11 @@ needed. Run `/chores help` in Discord for the in-channel version.
 /chores add title:<…> [due:YYYY-MM-DD] [assignee:<name>]
 ```
 
-**Info**
+**Info & tuning**
 ```
-/chores pauses                  what's currently paused (+ recent history)
-/chores help                    the command reference
+/chores pauses                              what's currently paused (+ history)
+/chores weight [user: value: reset:]        view/skew the rotation load (e.g. 60/40)
+/chores help                                the command reference
 ```
 
 ---
@@ -169,6 +172,9 @@ needed. Run `/chores help` in Discord for the in-channel version.
 
 - The daily cron posts **today's + overdue** chores to `#due-today`, grouped by
   assignee, with @-mentions.
+- It also lists **unassigned tasks due later this week** (within
+  `UNASSIGNED_LOOKAHEAD_DAYS`, default 7) under a "🙋 Unassigned — due this week"
+  section, so either person can claim them before they're due.
 - When `DISCORD_BOT_TOKEN` + `DISCORD_DUE_CHANNEL_ID` are set, the digest is
   posted **by the bot** with a green **✓ Done button per chore** (up to 25).
   Tapping a button marks that chore done in Linear and removes the button.

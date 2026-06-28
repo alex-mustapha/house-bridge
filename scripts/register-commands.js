@@ -79,6 +79,16 @@ const commands = [
       },
       {
         type: 1,
+        name: "weight",
+        description: "View or adjust rotation load skew between people",
+        options: [
+          { type: 3, name: "user", description: "Whose weight", required: false, autocomplete: true },
+          { type: 4, name: "value", description: "New weight (higher = more chores)", required: false },
+          { type: 5, name: "reset", description: "Reset this person to the default weight", required: false },
+        ],
+      },
+      {
+        type: 1,
         name: "help",
         description: "How to use the /chore commands",
       },

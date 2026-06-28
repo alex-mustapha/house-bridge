@@ -26,6 +26,7 @@ import {
 } from "./linear.js";
 import { localDate, annotateTemplates } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
+import { setWeight, clearWeight, listWeights } from "./weights.js";
 
 const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -395,6 +396,28 @@ async function choreCommand(interaction, env, ctx) {
     }
     case "pauses":
       return pausesList(env);
+    case "weight": {
+      if (o.user && o.reset) {
+        if (!env.DB) return reply("Weight storage unavailable (no DB).");
+        await clearWeight(env, o.user);
+        return say(`↩️ Reset **${o.user}**'s rotation weight to the default.`);
+      }
+      if (o.user && o.value != null) {
+        if (!env.DB) return reply("Weight storage unavailable (no DB).");
+        const v = Math.max(1, Math.min(1000, parseInt(o.value, 10)));
+        await setWeight(env, o.user, v);
+        return say(`⚖️ **${o.user}**'s rotation weight is now ${v}. Takes effect at the next weekly generation.`);
+      }
+      const rows = await listWeights(env);
+      const total = rows.reduce((s, r) => s + r.weight, 0) || 1;
+      const lines = rows.map(
+        (r) => `• **${r.name}**: ${r.weight}${r.overridden ? " (override)" : ""} — ~${Math.round((r.weight / total) * 100)}% of the load`,
+      );
+      return reply(
+        `⚖️ **Rotation weights** (higher = more chores)\n${lines.join("\n") || "_none configured_"}\n` +
+          "Change with `/chores weight user:<name> value:<n>`, or `reset:true` to revert.",
+      );
+    }
     case "help":
       return reply(choreHelp());
     case "snooze": {
@@ -537,8 +560,9 @@ function choreHelp() {
     "• `/chores add title:<…> [due:YYYY-MM-DD] [assignee:<name>]` — add a one-off chore.",
     "• `/chores done chore:<name>` — mark a chore done.",
     "",
-    "__Info__",
+    "__Info & tuning__",
     "• `/chores pauses` — what's currently paused (+ recent).",
+    "• `/chores weight [user:<name>] [value:<n>] [reset:true]` — view or skew the rotation load (e.g. 60/40).",
     "• `/chores help` — this message.",
     "",
     "Names match loosely (partial, case-insensitive). Permanent recurring chores are defined as **templates** in Linear's _Recurring_ project; `/tasks`, `/project`, `/unassigned` list issues.",

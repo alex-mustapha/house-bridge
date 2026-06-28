@@ -24,6 +24,9 @@ RECURRING_PROJECT = "Recurring"
 CHORES_TEAM = "CHO"
 # Project that spawned chores are created in (and tracked under).
 CHORES_PROJECT = "House Chores"
+# Rotation load skew: higher weight = bigger share of the week's chore minutes.
+# Per-person overrides set via `/chores weight` (D1) take precedence.
+ROTATION_WEIGHTS = "Alex:60,Kristal:40"
 # Channel the daily digest is posted to BY THE BOT (so it can carry "Done"
 # buttons). #due-today. Requires the DISCORD_BOT_TOKEN secret + the bot having
 # Send Messages here. If unset, the digest falls back to the DUE webhook.
