@@ -24,6 +24,10 @@ RECURRING_PROJECT = "Recurring"
 CHORES_TEAM = "CHO"
 # Project that spawned chores are created in (and tracked under).
 CHORES_PROJECT = "House Chores"
+# Channel the daily digest is posted to BY THE BOT (so it can carry "Done"
+# buttons). #due-today. Requires the DISCORD_BOT_TOKEN secret + the bot having
+# Send Messages here. If unset, the digest falls back to the DUE webhook.
+DISCORD_DUE_CHANNEL_ID = "1519809360170324069"
 
 # D1 database for long-term chore analytics (free tier).
 [[d1_databases]]
