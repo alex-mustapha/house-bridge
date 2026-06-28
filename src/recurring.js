@@ -20,6 +20,7 @@
 //     week: 0 | 1 | 2       which week for triweekly (default 0)
 //     dueafter: 2           due date N days out (default today)
 //     start: 2026-06-27     first eligible date; also anchors the every-N-weeks cycle
+//     end: 2026-10-31       last eligible date; stops recurring after it
 //
 //   Every other label (e.g. "kitchen") is copied onto the spawned chore.
 //
@@ -118,7 +119,7 @@ function mergeMonths(a, b) {
 }
 
 // month/week/dueafter/opposite/start live in the description; parsed then stripped.
-const DESC_DIRECTIVE_RE = /^\s*(month|week|dueafter|opposite|start)\s*:/i;
+const DESC_DIRECTIVE_RE = /^\s*(month|week|dueafter|opposite|start|end)\s*:/i;
 function parseDescriptionConfig(description) {
   const cfg = {};
   if (!description) return cfg;
@@ -145,6 +146,9 @@ function parseDescriptionConfig(description) {
   // start: YYYY-MM-DD -> first eligible date; also anchors the biweekly/triweekly cycle
   const st = description.match(/^\s*start\s*:\s*(\d{4}-\d{2}-\d{2})\s*$/im);
   if (st) cfg.start = st[1];
+  // end: YYYY-MM-DD -> last eligible date; stops recurring after it
+  const en = description.match(/^\s*end\s*:\s*(\d{4}-\d{2}-\d{2})\s*$/im);
+  if (en) cfg.end = en[1];
   return cfg;
 }
 function stripDescription(description) {
@@ -232,6 +236,7 @@ function monthIndexOf(ymd) {
 function isDueToday(chore, now) {
   const L = localDate(now);
   if (chore.start && L.ymd < chore.start) return false; // hasn't started yet
+  if (chore.end && L.ymd > chore.end) return false; // past its end date
   const onWeekday = (chore.days || []).map((d) => WEEKDAYS[d]).includes(L.weekday);
   const onTargetDay = L.dom === targetDayOfMonth(chore, L);
   // A start date anchors the every-N-weeks cycle; otherwise use the week: phase.
@@ -312,6 +317,7 @@ async function buildDefs(env) {
         opposite: descCfg.opposite, // assign opposite of this chore's owner
         assigneeId: t.assignee?.id, // explicit owner on the template = fixed
         start: descCfg.start, // first eligible date
+        end: descCfg.end, // last eligible date
         anchorWeek: descCfg.start
           ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex
           : undefined,
@@ -582,13 +588,18 @@ export async function annotateTemplates(env) {
         months: mergeMonths(config.months, descCfg.months),
         weekPhase: descCfg.weekPhase,
         start: descCfg.start,
+        end: descCfg.end,
         anchorWeek: descCfg.start
           ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex
           : undefined,
         anchorMonth: descCfg.start ? monthIndexOf(descCfg.start) : undefined,
       };
       const next = nextOccurrences(chore, 3).map(formatDate);
-      body = `${head}${describeSchedule(chore)}\n**Next:** ${next.join(" · ") || "—"}`;
+      const win = [];
+      if (chore.start) win.push(`from ${formatDate(chore.start)}`);
+      if (chore.end) win.push(`until ${formatDate(chore.end)}`);
+      const winNote = win.length ? `\n_Active ${win.join(" ")}_` : "";
+      body = `${head}${describeSchedule(chore)}${winNote}\n**Next:** ${next.join(" · ") || "—"}`;
     }
 
     const existing = (t.comments?.nodes || []).find((c) =>
