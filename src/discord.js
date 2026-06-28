@@ -152,21 +152,32 @@ function fmtDue(ymd) {
   return `${WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${MO[m - 1]} ${d}`;
 }
 
-// "✓ Done" buttons (one per chore) for the daily digest — action rows of 5, max
-// 25 (Discord's limit). custom_id encodes the issue + team so the click handler
-// can mark it done. Requires the digest to be posted by the bot (not a webhook).
-export function buildDigestButtons(issues) {
-  const buttons = issues.slice(0, 25).map((i) => ({
-    type: 2, // button
-    style: 3, // success (green)
-    label: `✓ ${i.title}`.slice(0, 80),
-    custom_id: `done:${i.id}:${i.team?.id || ""}`,
+// A single "Mark a chore done…" dropdown for the daily digest (cleaner than a
+// wall of buttons; multi-select so you can tick several at once). Each option's
+// value encodes the issue + team. Max 25 options (Discord's limit). Requires the
+// digest to be posted by the bot (not a webhook).
+export function buildDigestMenu(issues) {
+  const options = issues.slice(0, 25).map((i) => ({
+    label: `${i.title}`.slice(0, 100),
+    value: `${i.id}:${i.team?.id || ""}`,
+    description: `${i.assignee?.name || "Unassigned"}${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
   }));
-  const rows = [];
-  for (let k = 0; k < buttons.length; k += 5) {
-    rows.push({ type: 1, components: buttons.slice(k, k + 5) });
-  }
-  return rows;
+  if (!options.length) return [];
+  return [
+    {
+      type: 1, // action row
+      components: [
+        {
+          type: 3, // string select
+          custom_id: "done-menu",
+          placeholder: "Mark a chore done…",
+          min_values: 1,
+          max_values: Math.min(options.length, 25),
+          options,
+        },
+      ],
+    },
+  ];
 }
 
 // Post a message as the bot (Bot token) so it can carry interactive buttons.

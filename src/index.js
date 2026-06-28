@@ -16,7 +16,7 @@ import {
   buildAllDoneEmbed,
   buildScoreboardMessage,
   buildStatsEmbed,
-  buildDigestButtons,
+  buildDigestMenu,
   postViaBot,
   postToDiscord,
 } from "./discord.js";
@@ -457,7 +457,7 @@ async function handleCron(env) {
       if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
         await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, {
           ...msg,
-          components: buildDigestButtons(issues),
+          components: buildDigestMenu(issues),
         });
       } else if (env.DISCORD_WEBHOOK_DUE) {
         await postToDiscord(env.DISCORD_WEBHOOK_DUE, msg);

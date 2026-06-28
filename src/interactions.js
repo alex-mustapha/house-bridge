@@ -119,6 +119,43 @@ export async function handleInteraction(interaction, env, ctx) {
 // message so it can't be clicked twice.
 async function handleComponent(interaction, env) {
   const cid = interaction.data?.custom_id || "";
+
+  // Digest "Mark a chore done…" dropdown — values are "<issueId>:<teamId>".
+  if (cid === "done-menu") {
+    const vals = interaction.data?.values || [];
+    for (const v of vals) {
+      const [issueId, teamId] = v.split(":");
+      try {
+        const stateId = teamId ? await getDoneStateId(env, teamId) : null;
+        if (stateId && issueId) await setIssueState(env, issueId, stateId);
+      } catch {
+        /* skip this one */
+      }
+    }
+    // Rebuild the message dropping the chores we just completed.
+    const msg = interaction.message || {};
+    const components = (msg.components || [])
+      .map((row) => ({
+        ...row,
+        components: (row.components || [])
+          .map((c) => {
+            if (c.type === 3 && c.custom_id === "done-menu") {
+              const remaining = (c.options || []).filter((o) => !vals.includes(o.value));
+              return remaining.length
+                ? { ...c, options: remaining, max_values: Math.min(remaining.length, 25) }
+                : null;
+            }
+            return c;
+          })
+          .filter(Boolean),
+      }))
+      .filter((row) => (row.components || []).length);
+    return {
+      type: 7,
+      data: { content: msg.content || "", embeds: msg.embeds || [], components, allowed_mentions: { parse: [] } },
+    };
+  }
+
   if (cid.startsWith("done:")) {
     const [, issueId, teamId] = cid.split(":");
     let ok = false;
