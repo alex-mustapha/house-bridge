@@ -129,9 +129,8 @@ async function buildWidget() {
   }
 
   w.url = TAP_URL; // Home Screen taps open directly
-  // Ask iOS to refresh ~5 min out — as fresh as it reliably allows. iOS still
-  // throttles against a daily budget, so it's a hint, not a guarantee.
-  w.refreshAfterDate = new Date(Date.now() + 5 * 60 * 1000);
+  // Hint iOS to refresh ~10 min out (it still throttles; not instant).
+  w.refreshAfterDate = new Date(Date.now() + 10 * 60 * 1000);
   return w;
 }
 
