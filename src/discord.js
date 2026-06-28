@@ -126,13 +126,17 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
     .filter(([name]) => name !== "Unassigned")
     .map(([name, items]) => `${mentionFor(name, mentionMap) || name} — ${items.length}`);
 
+  // Bar color carries meaning: red if anything's overdue, green if nothing's
+  // due, otherwise a calm blue.
+  const hasOverdue = issues.some((i) => i.dueDate && i.dueDate < today);
+  const color = !issues.length ? COLORS.done : hasOverdue ? COLORS.overdue : COLORS.dueSoon;
+
   return {
     content: `🔔 **Today's chores**${pings.length ? `\n${pings.join(" · ")}` : ""}`,
     embeds: [
       {
-        title: "Today's chores",
         description: sections.join("\n\n").slice(0, 4000) || "Nothing due today.",
-        color: COLORS.dueToday,
+        color,
         timestamp: new Date().toISOString(),
       },
     ],
