@@ -222,16 +222,30 @@ function targetDayOfMonth(chore, L) {
   return 1;
 }
 
+// Absolute month index (year*12 + month) of a YYYY-MM-DD date, for anchoring
+// every-N-months cadences to a template's start month.
+function monthIndexOf(ymd) {
+  const [y, m] = ymd.split("-").map(Number);
+  return y * 12 + (m - 1);
+}
+
 function isDueToday(chore, now) {
   const L = localDate(now);
   if (chore.start && L.ymd < chore.start) return false; // hasn't started yet
   const onWeekday = (chore.days || []).map((d) => WEEKDAYS[d]).includes(L.weekday);
   const onTargetDay = L.dom === targetDayOfMonth(chore, L);
-  const inMonths = (fallback) =>
-    (chore.months?.length ? chore.months : fallback).includes(L.month);
   // A start date anchors the every-N-weeks cycle; otherwise use the week: phase.
   const phase = (n) =>
     chore.anchorWeek != null ? ((chore.anchorWeek % n) + n) % n : (chore.weekPhase ?? 0);
+  // Every-N-months cadence on the target day. Explicit month labels win; else a
+  // start date anchors the cycle to its own month; else a fixed fallback set.
+  const Lmi = L.year * 12 + (L.month - 1);
+  const monthlyDue = (n, fallback) => {
+    if (!onTargetDay) return false;
+    if (chore.months?.length) return chore.months.includes(L.month);
+    if (chore.anchorMonth != null) return (((Lmi - chore.anchorMonth) % n) + n) % n === 0;
+    return fallback.includes(L.month);
+  };
 
   switch (chore.cadence) {
     case "daily":
@@ -247,11 +261,11 @@ function isDueToday(chore, now) {
     case "monthly":
       return onTargetDay;
     case "bimonthly":
-      return inMonths([1, 3, 5, 7, 9, 11]) && onTargetDay;
+      return monthlyDue(2, [1, 3, 5, 7, 9, 11]);
     case "semi-annually":
-      return inMonths([1, 7]) && onTargetDay;
+      return monthlyDue(6, [1, 7]);
     case "annually":
-      return inMonths([1]) && onTargetDay;
+      return monthlyDue(12, [1]);
     default:
       console.error(`Unknown/absent cadence for "${chore.title}"`);
       return false;
@@ -292,6 +306,7 @@ async function buildDefs(env) {
         anchorWeek: descCfg.start
           ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex
           : undefined,
+        anchorMonth: descCfg.start ? monthIndexOf(descCfg.start) : undefined,
       });
     }
   } catch (err) {
@@ -561,6 +576,7 @@ export async function annotateTemplates(env) {
         anchorWeek: descCfg.start
           ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex
           : undefined,
+        anchorMonth: descCfg.start ? monthIndexOf(descCfg.start) : undefined,
       };
       const next = nextOccurrences(chore, 3).map(formatDate);
       body = `${head}${describeSchedule(chore)}\n**Next:** ${next.join(" · ") || "—"}`;
