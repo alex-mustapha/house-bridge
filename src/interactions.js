@@ -521,7 +521,7 @@ async function choreCommand(interaction, env, ctx) {
       const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
       if (!teamId) return reply("Chores team not found.");
       if (o.due && !isYmd(o.due)) return reply("`due` must be `YYYY-MM-DD`.");
-      const dueDate = o.due || localDate(new Date()).ymd;
+      const dueDate = o.due || null; // no due date unless one is given
       let assigneeId;
       if (o.assignee) {
         const u = (await getUsers(env)).find((x) =>
@@ -539,7 +539,7 @@ async function choreCommand(interaction, env, ctx) {
         projectId: await getProjectId(env, env.ADHOC_PROJECT || "Ad Hoc"),
       });
       if (!res?.success) return reply("Couldn't create the chore.");
-      return say(`➕ Added **${o.title}** (due ${dueDate}) to Ad Hoc${assigneeId ? ` for ${o.assignee}` : ""}.`);
+      return say(`➕ Added **${o.title}**${dueDate ? ` (due ${dueDate})` : ""} to Ad Hoc${assigneeId ? ` for ${o.assignee}` : ""}.`);
     }
   }
   return reply("Unknown `/chores` subcommand.");
