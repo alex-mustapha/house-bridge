@@ -23,6 +23,7 @@ import {
   fetchRecurringTemplates,
   getDoneStateId,
   setIssueState,
+  fetchSpawned,
 } from "./linear.js";
 import { localDate, annotateTemplates } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
@@ -401,6 +402,7 @@ async function choreCommand(interaction, env, ctx) {
       let scope = "global";
       let target = null;
       let label = "**all chores**";
+      let pausedUserId = null;
       if (o.user) {
         const u = (await getUsers(env)).find((x) =>
           [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(o.user.toLowerCase())),
@@ -408,13 +410,19 @@ async function choreCommand(interaction, env, ctx) {
         if (!u) return reply(`No Linear user matching "${o.user}".`);
         scope = "user";
         target = u.displayName || u.name;
+        pausedUserId = u.id;
         label = `**${target}**'s chores (the other person covers)`;
       }
       await addPause(env, { scope, target, start: from, end: to, nowIso: new Date().toISOString() });
+      // Also archive already-generated recurring chores in the window.
+      const cleared = await clearGeneratedInWindow(env, { from, to, userId: pausedUserId });
       refresh();
       const window = to === "9999-12-31" ? `**indefinitely** (from ${from})` : `**${from} → ${to}**`;
       const undo = scope === "user" ? ` user:${target}` : "";
-      return say(`⏸️ Paused ${label} ${window}. Use \`/chores resume${undo}\` to clear.`);
+      const clearedNote = cleared
+        ? ` Archived **${cleared}** generated chore${cleared === 1 ? "" : "s"} already on the list for those days.`
+        : "";
+      return say(`⏸️ Paused ${label} ${window}.${clearedNote} Use \`/chores resume${undo}\` to lift it.`);
     }
     case "resume": {
       const today = localDate(new Date()).ymd;
@@ -503,6 +511,33 @@ async function choreCommand(interaction, env, ctx) {
     }
   }
   return reply("Unknown `/chores` subcommand.");
+}
+
+// Archive already-generated recurring chores whose due date falls in a pause
+// window, so a pause clears the days now (not just future generation). STRICTLY
+// limited to: House Chores project + title matches a Recurring template (i.e.
+// engine-generated, never ad-hoc) + open + in-window + (assignee for user scope).
+// Returns the count archived.
+async function clearGeneratedInWindow(env, { from, to, userId }) {
+  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  if (!teamId) return 0;
+  const templateTitles = new Set(
+    (await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring")).map((t) =>
+      (t.title || "").toLowerCase(),
+    ),
+  );
+  const spawned = await fetchSpawned(env, teamId, env.CHORES_PROJECT || "House Chores");
+  const open = (n) => !["completed", "canceled"].includes(n.state?.type);
+  let cleared = 0;
+  for (const n of spawned) {
+    if (!open(n) || !n.dueDate) continue;
+    if (n.dueDate < from || n.dueDate > to) continue; // outside the pause window
+    if (!templateTitles.has((n.title || "").toLowerCase())) continue; // generated recurring only
+    if (userId && n.assignee?.id !== userId) continue; // user pause: only their chores
+    const r = await archiveIssue(env, n.id);
+    if (r?.success) cleared++;
+  }
+  return cleared;
 }
 
 // Best active chore matching `text` (soonest-due first).
