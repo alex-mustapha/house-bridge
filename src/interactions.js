@@ -27,7 +27,7 @@ import {
   assignIssue,
   unassignIssue,
 } from "./linear.js";
-import { localDate, annotateTemplates, withTemplateLink } from "./recurring.js";
+import { localDate, annotateTemplates, withTemplateLink, runWeek } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
 
@@ -407,6 +407,18 @@ function say(content) {
   return { type: 4, data: { content } };
 }
 
+// Edit the original (deferred) interaction reply once background work finishes.
+// Uses the interaction token (self-authorizing) — no bot auth needed.
+async function editInteractionReply(interaction, content) {
+  const url = `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) console.error("Interaction follow-up failed:", res.status, await res.text());
+}
+
 const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
 function addDays(ymd, n) {
   const [y, m, d] = ymd.split("-").map(Number);
@@ -512,6 +524,27 @@ async function choreCommand(interaction, env, ctx) {
     }
     case "help":
       return reply(choreHelp());
+    case "sync": {
+      // Generation can outrun Discord's 3s window — defer, then edit the reply
+      // with the summary. Idempotent: existing occurrences are skipped.
+      ctx?.waitUntil?.(
+        (async () => {
+          try {
+            const r = await runWeek(env);
+            await editInteractionReply(
+              interaction,
+              `♻️ Reschedule complete — **${r.created}** new chore${r.created === 1 ? "" : "s"} created` +
+                `${r.archived ? `, ${r.archived} past-due copy(ies) cleared` : ""}. ` +
+                "Existing chores were left untouched.",
+            );
+          } catch (e) {
+            console.error("sync runWeek failed:", e);
+            await editInteractionReply(interaction, "⚠️ Reschedule hit an error — check the logs.");
+          }
+        })(),
+      );
+      return { type: 5, data: { flags: EPHEMERAL } }; // deferred ephemeral reply
+    }
     case "calendar": {
       const base = (env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
       return reply(

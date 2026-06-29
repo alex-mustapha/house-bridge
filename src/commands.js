@@ -115,6 +115,11 @@ export const COMMANDS = [
       },
       {
         type: 1,
+        name: "sync",
+        description: "Re-run the weekly generation now (idempotent — picks up new/changed templates)",
+      },
+      {
+        type: 1,
         name: "add",
         description: "Add a one-off chore",
         options: [

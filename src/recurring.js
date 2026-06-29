@@ -441,7 +441,7 @@ export async function forceReplace(env, identifier) {
 // aren't lopsided. Run weekly (during the Monday recap), not daily.
 export async function runWeek(env) {
   const defs = await buildDefs(env);
-  if (!defs.length) return;
+  if (!defs.length) return { created: 0, archived: 0 };
 
   const users = await getUsers(env);
   let rotation = [];
@@ -620,6 +620,7 @@ export async function runWeek(env) {
 
   // EXECUTE.
   for (const id of toArchive) await archiveIssue(env, id);
+  let created = 0;
   for (const e of plan) {
     if (e.skip) continue; // paused (user out / everyone out)
     const result = await createIssue(env, {
@@ -633,9 +634,12 @@ export async function runWeek(env) {
       projectId,
     });
     if (result?.success) {
+      created++;
       console.log(`Created recurring chore: ${e.c.title} (${result.issue?.identifier}) due ${e.dueDate}`);
     }
   }
+  // Idempotent: existing occurrences are skipped, so re-runs only fill in gaps.
+  return { created, archived: toArchive.length };
 }
 
 // "2026-09-01" -> "Sep 1, 2026"
