@@ -533,11 +533,12 @@ async function choreCommand(interaction, env, ctx) {
       } else {
         userId = await resolveCaller(env, interaction);
         if (!userId) return reply("Couldn't match you to a Linear user — pass `assignee:` to claim for a named person.");
-        who = "you";
+        const u = (await getUsers(env)).find((x) => x.id === userId);
+        who = u?.displayName || u?.name || "you";
       }
       const res = await assignIssue(env, issue.id, userId);
       if (!res?.success) return reply("Couldn't assign that chore.");
-      return say(`🙋 **${issue.title}** is now ${who === "you" ? "yours" : `assigned to ${who}`}.`);
+      return say(`🙋 **${who}** claimed **${issue.title}**.`);
     }
     case "add": {
       const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
