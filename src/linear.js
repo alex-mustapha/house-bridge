@@ -153,7 +153,7 @@ export async function findActiveByTitle(env, text, projects) {
           title: { containsIgnoreCase: $text }
         }
       ) {
-        nodes { id title dueDate assignee { name } team { id } }
+        nodes { id title dueDate assignee { id name } team { id } }
       }
     }`;
   const data = await linearQuery(env, query, { text: text || "", projects: list });

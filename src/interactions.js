@@ -130,23 +130,6 @@ async function resolveCaller(env, interaction) {
   return u?.id || null;
 }
 
-// The caller's Linear display name (or null), for filtering "my" chores.
-async function callerName(env, interaction) {
-  const id = await resolveCaller(env, interaction);
-  if (!id) return null;
-  const u = (await getUsers(env)).find((x) => x.id === id);
-  return u?.displayName || u?.name || null;
-}
-
-// Loose name match (the digest uses Linear's assignee.name; users have both
-// name + displayName), tolerant of one being a substring of the other.
-function nameMatches(a, b) {
-  if (!a || !b) return false;
-  const x = a.toLowerCase();
-  const y = b.toLowerCase();
-  return x === y || x.includes(y) || y.includes(x);
-}
-
 // Button/menu clicks (message components). The digest's actions dropdown carries
 // values "done:<id>:<team>" (mark done) or "claim:<id>:<team>" (assign to me).
 async function handleComponent(interaction, env) {
@@ -559,23 +542,23 @@ async function choreCommand(interaction, env, ctx) {
         );
         if (!u) return reply(`No Linear user matching "${o.assignee}".`);
         userId = u.id;
-        who = u.displayName || u.name;
+        who = u.name || u.displayName;
       } else {
         userId = await resolveCaller(env, interaction);
         if (!userId) return reply("Couldn't match you to a Linear user — pass `assignee:` to claim for a named person.");
         const u = (await getUsers(env)).find((x) => x.id === userId);
-        who = u?.displayName || u?.name || "you";
+        who = u?.name || u?.displayName || "you";
       }
       const res = await assignIssue(env, issue.id, userId);
       if (!res?.success) return reply("Couldn't assign that chore.");
       return say(`🙋 **${who}** claimed **${issue.title}**.`);
     }
     case "unclaim": {
-      const mine = await callerName(env, interaction);
-      if (!mine) return reply("Couldn't match you to a Linear user.");
+      const meId = await resolveCaller(env, interaction);
+      if (!meId) return reply("Couldn't match you to a Linear user.");
       const issue = await pickChore(env, o.chore);
       if (!issue) return reply(`No active chore matching "${o.chore}".`);
-      if (!nameMatches(issue.assignee?.name, mine))
+      if (issue.assignee?.id !== meId)
         return reply(
           issue.assignee?.name
             ? `**${issue.title}** is assigned to ${issue.assignee.name}, not you.`
@@ -583,7 +566,7 @@ async function choreCommand(interaction, env, ctx) {
         );
       const res = await unassignIssue(env, issue.id);
       if (!res?.success) return reply("Couldn't unassign that chore.");
-      return say(`🤚 **${mine}** dropped **${issue.title}** back to the unassigned pool.`);
+      return say(`🤚 Dropped **${issue.title}** back to the unassigned pool.`);
     }
     case "add": {
       const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
