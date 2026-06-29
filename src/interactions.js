@@ -262,10 +262,12 @@ async function choreAutocomplete(interaction, env) {
         .map((t) => t.title);
       return acChoices(paused.filter(match));
     }
-    // snooze / skip / done -> active chores in House Chores + Ad Hoc
-    return acChoices(
-      (await findActiveByTitle(env, typed, choreProjects(env))).map((i) => i.title).filter(match),
-    );
+    const active = await findActiveByTitle(env, typed, choreProjects(env));
+    // claim is for grabbing work nobody owns yet -> only suggest unassigned
+    // chores, which keeps the list short (assigned recurring chores are hidden).
+    const pool = sub.name === "claim" ? active.filter((i) => !i.assignee?.name) : active;
+    // snooze / skip / done / claim -> active chores in House Chores + Ad Hoc
+    return acChoices(pool.map((i) => i.title).filter(match));
   }
   return acChoices([]);
 }
