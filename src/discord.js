@@ -152,28 +152,47 @@ function fmtDue(ymd) {
   return `${WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${MO[m - 1]} ${d}`;
 }
 
-// A single "Mark a chore done…" dropdown for the daily digest (cleaner than a
-// wall of buttons; multi-select so you can tick several at once). Each option's
-// value encodes the issue + team. Max 25 options (Discord's limit). Requires the
-// digest to be posted by the bot (not a webhook).
-export function buildDigestMenu(issues) {
-  const options = issues.slice(0, 25).map((i) => ({
-    label: `${i.title}`.slice(0, 100),
-    value: `${i.id}:${i.team?.id || ""}`,
-    description: `${i.assignee?.name || "Unassigned"}${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
-  }));
-  if (!options.length) return [];
+// A single "Actions" dropdown for the daily digest (multi-select, up to 25):
+// "✓ <chore>" marks an assigned chore done; "🙋 <chore>" claims an unassigned
+// one (assigns it to whoever picked it). Option values encode action:id:team.
+// Requires the digest to be posted by the bot (not a webhook).
+export function buildDigestMenu(issues, soon = []) {
+  const options = [];
+  for (const i of issues) {
+    if (i.assignee?.name) {
+      options.push({
+        label: `✓ ${i.title}`.slice(0, 100),
+        value: `done:${i.id}:${i.team?.id || ""}`,
+        description: `${i.assignee.name}${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
+      });
+    } else {
+      options.push({
+        label: `🙋 ${i.title}`.slice(0, 100),
+        value: `claim:${i.id}:${i.team?.id || ""}`,
+        description: `unassigned${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
+      });
+    }
+  }
+  for (const i of soon) {
+    options.push({
+      label: `🙋 ${i.title}`.slice(0, 100),
+      value: `claim:${i.id}:${i.teamId || ""}`,
+      description: `unassigned${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
+    });
+  }
+  const opts = options.slice(0, 25);
+  if (!opts.length) return [];
   return [
     {
-      type: 1, // action row
+      type: 1,
       components: [
         {
-          type: 3, // string select
-          custom_id: "done-menu",
-          placeholder: "Mark a chore done…",
+          type: 3,
+          custom_id: "actions-menu",
+          placeholder: "Mark done · claim a chore…",
           min_values: 1,
-          max_values: Math.min(options.length, 25),
-          options,
+          max_values: Math.min(opts.length, 25),
+          options: opts,
         },
       ],
     },

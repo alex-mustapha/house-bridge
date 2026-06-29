@@ -101,7 +101,7 @@ async function unassignedDueSoon(env) {
   return (await fetchUnassignedActive(env))
     .filter((i) => i.project?.name !== recurring && i.dueDate && i.dueDate <= until)
     .sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""))
-    .map((i) => ({ title: i.title, url: i.url, dueDate: i.dueDate }));
+    .map((i) => ({ title: i.title, url: i.url, dueDate: i.dueDate, id: i.id, teamId: i.team?.id }));
 }
 
 // Today's chore status for a person (or the household if no user) — powers the
@@ -499,7 +499,7 @@ async function handleCron(env) {
       if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
         await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, {
           ...msg,
-          components: buildDigestMenu(issues),
+          components: buildDigestMenu(issues, soon),
         });
       } else if (env.DISCORD_WEBHOOK_DUE) {
         await postToDiscord(env.DISCORD_WEBHOOK_DUE, msg);

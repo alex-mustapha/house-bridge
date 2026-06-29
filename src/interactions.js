@@ -24,6 +24,7 @@ import {
   getDoneStateId,
   setIssueState,
   fetchSpawned,
+  assignIssue,
 } from "./linear.js";
 import { localDate, annotateTemplates, withTemplateLink } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
@@ -115,35 +116,60 @@ export async function handleInteraction(interaction, env, ctx) {
   return { type: 4, data: { content: "Unsupported command.", flags: EPHEMERAL } };
 }
 
-// Button clicks (message components). The daily digest's "✓ Done" buttons carry
-// custom_id "done:<issueId>:<teamId>". Marking done removes that button from the
-// message so it can't be clicked twice.
+// The Linear user the clicker maps to (via DISCORD_MENTIONS), for "claim".
+async function resolveCaller(env, interaction) {
+  const discordId = interaction.member?.user?.id || interaction.user?.id;
+  if (!discordId) return null;
+  const byName = mentionMap(env.DISCORD_MENTIONS); // name(lower) -> discordId
+  const name = Object.entries(byName).find(([, id]) => id === discordId)?.[0];
+  if (!name) return null;
+  const u = (await getUsers(env)).find((x) =>
+    [x.displayName, x.name].some((n) => (n || "").toLowerCase() === name || (n || "").toLowerCase().includes(name)),
+  );
+  return u?.id || null;
+}
+
+// Button/menu clicks (message components). The digest's actions dropdown carries
+// values "done:<id>:<team>" (mark done) or "claim:<id>:<team>" (assign to me).
 async function handleComponent(interaction, env) {
   const cid = interaction.data?.custom_id || "";
 
-  // Digest "Mark a chore done…" dropdown — values are "<issueId>:<teamId>".
-  if (cid === "done-menu") {
+  if (cid === "actions-menu" || cid === "done-menu") {
+    const legacy = cid === "done-menu"; // old menu: values were "<id>:<team>"
     const vals = interaction.data?.values || [];
+    const clicker = vals.some((v) => v.startsWith("claim:")) ? await resolveCaller(env, interaction) : null;
+    const done = new Set();
+    const claimed = new Set();
     for (const v of vals) {
-      const [issueId, teamId] = v.split(":");
+      const [action, id, team] = legacy ? ["done", ...v.split(":")] : v.split(":");
       try {
-        const stateId = teamId ? await getDoneStateId(env, teamId) : null;
-        if (stateId && issueId) await setIssueState(env, issueId, stateId);
+        if (action === "done") {
+          const stateId = team ? await getDoneStateId(env, team) : null;
+          if (stateId && id && (await setIssueState(env, id, stateId))?.success) done.add(v);
+        } else if (action === "claim" && clicker && id) {
+          if ((await assignIssue(env, id, clicker))?.success) claimed.add(v);
+        }
       } catch {
         /* skip this one */
       }
     }
-    // Rebuild the message dropping the chores we just completed.
+    // Rebuild: drop completed options; turn claimed ones into "done" options.
     const msg = interaction.message || {};
     const components = (msg.components || [])
       .map((row) => ({
         ...row,
         components: (row.components || [])
           .map((c) => {
-            if (c.type === 3 && c.custom_id === "done-menu") {
-              const remaining = (c.options || []).filter((o) => !vals.includes(o.value));
-              return remaining.length
-                ? { ...c, options: remaining, max_values: Math.min(remaining.length, 25) }
+            if (c.type === 3 && (c.custom_id === "actions-menu" || c.custom_id === "done-menu")) {
+              const opts = (c.options || [])
+                .filter((o) => !done.has(o.value))
+                .map((o) => {
+                  if (!claimed.has(o.value)) return o;
+                  const [, id, team] = o.value.split(":");
+                  return { label: o.label.replace(/^🙋\s*/, "✓ "), value: `done:${id}:${team || ""}`, description: o.description };
+                });
+              return opts.length
+                ? { ...c, custom_id: "actions-menu", options: opts, max_values: Math.min(opts.length, 25) }
                 : null;
             }
             return c;

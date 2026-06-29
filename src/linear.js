@@ -205,6 +205,19 @@ export async function updateIssueLabels(env, id, labelIds) {
   return data.issueUpdate;
 }
 
+// Assign (or reassign) an issue — used by the digest "claim" action.
+export async function assignIssue(env, id, assigneeId) {
+  const mutation = `
+    mutation Assign($id: String!, $a: String!) {
+      issueUpdate(id: $id, input: { assigneeId: $a }) {
+        success
+        issue { identifier assignee { name } }
+      }
+    }`;
+  const data = await linearQuery(env, mutation, { id, a: assigneeId });
+  return data.issueUpdate;
+}
+
 export async function setIssueState(env, id, stateId) {
   const mutation = `
     mutation SetState($id: String!, $stateId: String!) {
@@ -460,7 +473,7 @@ export async function fetchUnassignedActive(env) {
           state: { type: { nin: ["completed", "canceled"] } }
         }
       ) {
-        nodes { title dueDate url project { name } }
+        nodes { id title dueDate url project { name } team { id } }
       }
     }`;
   const data = await linearQuery(env, query);
