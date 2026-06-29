@@ -22,8 +22,10 @@ CAP_WARN_AT = "220"
 RECURRING_PROJECT = "Recurring"
 # Team key used for the weekly scoreboard.
 CHORES_TEAM = "CHO"
-# Project that spawned chores are created in (and tracked under).
+# Project that spawned recurring chores are created in (and tracked under).
 CHORES_PROJECT = "House Chores"
+# Project for one-off chores added via `/chores add` (no cadence, won't recur).
+ADHOC_PROJECT = "Ad Hoc"
 # Rotation load skew: higher weight = bigger share of the week's chore minutes.
 # Per-person overrides set via `/chores weight` (D1) take precedence.
 ROTATION_WEIGHTS = "Alex:60,Kristal:40"

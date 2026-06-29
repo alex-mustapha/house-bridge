@@ -262,9 +262,10 @@ async function choreAutocomplete(interaction, env) {
         .map((t) => t.title);
       return acChoices(paused.filter(match));
     }
-    // snooze / skip / done -> active chores in House Chores
-    const project = env.CHORES_PROJECT || "House Chores";
-    return acChoices((await fetchActiveByProject(env, project)).map((i) => i.title).filter(match));
+    // snooze / skip / done -> active chores in House Chores + Ad Hoc
+    return acChoices(
+      (await findActiveByTitle(env, typed, choreProjects(env))).map((i) => i.title).filter(match),
+    );
   }
   return acChoices([]);
 }
@@ -397,13 +398,16 @@ function addDays(ymd, n) {
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
+// The projects that hold do-able chores (recurring-generated + ad-hoc), searched
+// by done/snooze/skip so ad-hoc chores stay actionable.
+const choreProjects = (env) => [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
+
 // /chores — the one-off control surface for scheduling changes (vacation holds,
 // snooze, skip, add, done). Templates remain the source for permanent chores.
 async function choreCommand(interaction, env, ctx) {
   const sub = (interaction.data.options || [])[0];
   const o = {};
   for (const opt of sub?.options || []) o[opt.name] = opt.value;
-  const project = env.CHORES_PROJECT || "House Chores";
   // Refresh the templates' 🔁 schedule comments in the background so they reflect
   // the new pause/resume state without blocking the Discord reply.
   const refresh = () => ctx?.waitUntil?.(annotateTemplates(env));
@@ -494,7 +498,7 @@ async function choreCommand(interaction, env, ctx) {
     case "help":
       return reply(choreHelp());
     case "snooze": {
-      const issue = await pickChore(env, o.chore, project);
+      const issue = await pickChore(env, o.chore);
       if (!issue) return reply(`No active chore matching "${o.chore}".`);
       const days = Math.max(1, Math.min(60, parseInt(o.days, 10) || 1));
       const newDue = addDays(issue.dueDate || localDate(new Date()).ymd, days);
@@ -503,7 +507,7 @@ async function choreCommand(interaction, env, ctx) {
       return say(`😴 Snoozed **${issue.title}** ${days} day${days === 1 ? "" : "s"} → due ${newDue}.`);
     }
     case "skip": {
-      const issue = await pickChore(env, o.chore, project);
+      const issue = await pickChore(env, o.chore);
       if (!issue) return reply(`No active chore matching "${o.chore}".`);
       const res = await archiveIssue(env, issue.id);
       if (!res?.success) return reply("Couldn't skip that chore.");
@@ -532,10 +536,10 @@ async function choreCommand(interaction, env, ctx) {
         dueDate,
         assigneeId,
         stateId: await getTodoStateId(env, teamId),
-        projectId: await getProjectId(env, project),
+        projectId: await getProjectId(env, env.ADHOC_PROJECT || "Ad Hoc"),
       });
       if (!res?.success) return reply("Couldn't create the chore.");
-      return say(`➕ Added **${o.title}** (due ${dueDate})${assigneeId ? ` for ${o.assignee}` : ""}.`);
+      return say(`➕ Added **${o.title}** (due ${dueDate}) to Ad Hoc${assigneeId ? ` for ${o.assignee}` : ""}.`);
     }
   }
   return reply("Unknown `/chores` subcommand.");
@@ -591,9 +595,9 @@ async function spawnPrepChecklist(env, dueDate) {
   return res?.success ? ` 📋 Added **${tpl.title}** (due ${dueDate}).` : "";
 }
 
-// Best active chore matching `text` (soonest-due first).
-async function pickChore(env, text, project) {
-  const matches = await findActiveByTitle(env, text, project);
+// Best active chore matching `text` (soonest-due first) across the chore projects.
+async function pickChore(env, text) {
+  const matches = await findActiveByTitle(env, text, choreProjects(env));
   if (!matches.length) return null;
   matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
   return matches[0];

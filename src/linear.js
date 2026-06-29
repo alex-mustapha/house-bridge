@@ -139,15 +139,16 @@ export async function getDoneStateId(env, teamId) {
   return (byName || byType)?.id || null;
 }
 
-// Active (non-done) chores in the chores project whose title contains `text`
-// (case-insensitive). Used to mark a chore done by spoken/typed name.
-export async function findActiveByTitle(env, text, projectName) {
+// Active (non-done) chores across the given project(s) whose title contains
+// `text` (case-insensitive; empty matches all). Accepts a name or an array.
+export async function findActiveByTitle(env, text, projects) {
+  const list = Array.isArray(projects) ? projects : [projects];
   const query = `
-    query Match($text: String!, $project: String!) {
+    query Match($text: String!, $projects: [String!]!) {
       issues(
         first: 25
         filter: {
-          project: { name: { eq: $project } }
+          project: { name: { in: $projects } }
           state: { type: { nin: ["completed", "canceled"] } }
           title: { containsIgnoreCase: $text }
         }
@@ -155,7 +156,7 @@ export async function findActiveByTitle(env, text, projectName) {
         nodes { id title dueDate assignee { name } team { id } }
       }
     }`;
-  const data = await linearQuery(env, query, { text, project: projectName });
+  const data = await linearQuery(env, query, { text: text || "", projects: list });
   return data.issues?.nodes || [];
 }
 
@@ -233,7 +234,10 @@ export async function setIssueState(env, id, stateId) {
 // Mark the best-matching active chore done by (fuzzy) title — soonest-due wins.
 // Shared by the /done endpoint and the Alexa skill.
 export async function markChoreDone(env, match) {
-  const matches = await findActiveByTitle(env, match, env.CHORES_PROJECT || "House Chores");
+  const matches = await findActiveByTitle(env, match, [
+    env.CHORES_PROJECT || "House Chores",
+    env.ADHOC_PROJECT || "Ad Hoc",
+  ]);
   if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };
   matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
   const issue = matches[0];
