@@ -439,7 +439,7 @@ export async function forceReplace(env, identifier) {
 // day. Assignment is balanced across the whole week (≈50/50, accounting for
 // fixed owners and "opposite" pairs) instead of per-chore alternation, so weeks
 // aren't lopsided. Run weekly (during the Monday recap), not daily.
-export async function runWeek(env) {
+export async function runWeek(env, opts = {}) {
   const defs = await buildDefs(env);
   if (!defs.length) return { created: 0, archived: 0 };
 
@@ -524,13 +524,16 @@ export async function runWeek(env) {
   }
 
   // CLEANUP (replace policy): archive open copies whose due date is past, so
-  // missed occurrences don't pile up.
+  // missed occurrences don't pile up. Skipped on an on-demand mid-week sync so
+  // a not-yet-done chore from earlier in the week isn't swept away.
   const toArchive = [];
-  for (const teamId of teamIds) {
-    for (const n of ctx.spawned[teamId]) {
-      if (!n.dueDate || n.dueDate >= todayYmd || !isOpen(n)) continue;
-      const c = defs.find((x) => x.teamId === teamId && x.title === n.title);
-      if (c && (c.onExisting || "replace") === "replace") toArchive.push(n.id);
+  if (!opts.skipCleanup) {
+    for (const teamId of teamIds) {
+      for (const n of ctx.spawned[teamId]) {
+        if (!n.dueDate || n.dueDate >= todayYmd || !isOpen(n)) continue;
+        const c = defs.find((x) => x.teamId === teamId && x.title === n.title);
+        if (c && (c.onExisting || "replace") === "replace") toArchive.push(n.id);
+      }
     }
   }
 

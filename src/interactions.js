@@ -530,12 +530,11 @@ async function choreCommand(interaction, env, ctx) {
       ctx?.waitUntil?.(
         (async () => {
           try {
-            const r = await runWeek(env);
+            const r = await runWeek(env, { skipCleanup: true });
             await editInteractionReply(
               interaction,
-              `♻️ Reschedule complete — **${r.created}** new chore${r.created === 1 ? "" : "s"} created` +
-                `${r.archived ? `, ${r.archived} past-due copy(ies) cleared` : ""}. ` +
-                "Existing chores were left untouched.",
+              `♻️ Reschedule complete — **${r.created}** new chore${r.created === 1 ? "" : "s"} created. ` +
+                "Existing chores were left untouched (past-due ones are only cleared by the Monday run).",
             );
           } catch (e) {
             console.error("sync runWeek failed:", e);
