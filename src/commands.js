@@ -102,6 +102,14 @@ export const COMMANDS = [
       },
       {
         type: 1,
+        name: "unclaim",
+        description: "Drop one of your chores back to the unassigned pool",
+        options: [
+          { type: 3, name: "chore", description: "Which of your chores", required: true, autocomplete: true },
+        ],
+      },
+      {
+        type: 1,
         name: "add",
         description: "Add a one-off chore",
         options: [

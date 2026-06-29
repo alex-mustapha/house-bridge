@@ -25,6 +25,7 @@ import {
   setIssueState,
   fetchSpawned,
   assignIssue,
+  unassignIssue,
 } from "./linear.js";
 import { localDate, annotateTemplates, withTemplateLink } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
@@ -127,6 +128,23 @@ async function resolveCaller(env, interaction) {
     [x.displayName, x.name].some((n) => (n || "").toLowerCase() === name || (n || "").toLowerCase().includes(name)),
   );
   return u?.id || null;
+}
+
+// The caller's Linear display name (or null), for filtering "my" chores.
+async function callerName(env, interaction) {
+  const id = await resolveCaller(env, interaction);
+  if (!id) return null;
+  const u = (await getUsers(env)).find((x) => x.id === id);
+  return u?.displayName || u?.name || null;
+}
+
+// Loose name match (the digest uses Linear's assignee.name; users have both
+// name + displayName), tolerant of one being a substring of the other.
+function nameMatches(a, b) {
+  if (!a || !b) return false;
+  const x = a.toLowerCase();
+  const y = b.toLowerCase();
+  return x === y || x.includes(y) || y.includes(x);
 }
 
 // Button/menu clicks (message components). The digest's actions dropdown carries
@@ -263,10 +281,17 @@ async function choreAutocomplete(interaction, env) {
       return acChoices(paused.filter(match));
     }
     const active = await findActiveByTitle(env, typed, choreProjects(env));
-    // claim is for grabbing work nobody owns yet -> only suggest unassigned
-    // chores, which keeps the list short (assigned recurring chores are hidden).
-    const pool = sub.name === "claim" ? active.filter((i) => !i.assignee?.name) : active;
-    // snooze / skip / done / claim -> active chores in House Chores + Ad Hoc
+    let pool = active;
+    if (sub.name === "claim") {
+      // claim grabs work nobody owns yet -> only suggest unassigned chores,
+      // which keeps the list short (assigned recurring chores are hidden).
+      pool = active.filter((i) => !i.assignee?.name);
+    } else if (sub.name === "unclaim") {
+      // unclaim drops one of *your* chores -> only suggest chores you own.
+      const mine = await callerName(env, interaction);
+      pool = mine ? active.filter((i) => nameMatches(i.assignee?.name, mine)) : [];
+    }
+    // snooze / skip / done / claim / unclaim -> active chores in House Chores + Ad Hoc
     return acChoices(pool.map((i) => i.title).filter(match));
   }
   return acChoices([]);
@@ -539,6 +564,21 @@ async function choreCommand(interaction, env, ctx) {
       const res = await assignIssue(env, issue.id, userId);
       if (!res?.success) return reply("Couldn't assign that chore.");
       return say(`🙋 **${who}** claimed **${issue.title}**.`);
+    }
+    case "unclaim": {
+      const mine = await callerName(env, interaction);
+      if (!mine) return reply("Couldn't match you to a Linear user.");
+      const issue = await pickChore(env, o.chore);
+      if (!issue) return reply(`No active chore matching "${o.chore}".`);
+      if (!nameMatches(issue.assignee?.name, mine))
+        return reply(
+          issue.assignee?.name
+            ? `**${issue.title}** is assigned to ${issue.assignee.name}, not you.`
+            : `**${issue.title}** is already unassigned.`,
+        );
+      const res = await unassignIssue(env, issue.id);
+      if (!res?.success) return reply("Couldn't unassign that chore.");
+      return say(`🤚 **${mine}** dropped **${issue.title}** back to the unassigned pool.`);
     }
     case "add": {
       const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");

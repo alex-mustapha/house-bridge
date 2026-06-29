@@ -219,6 +219,19 @@ export async function assignIssue(env, id, assigneeId) {
   return data.issueUpdate;
 }
 
+// Clear an issue's assignee (send it back to the unassigned pool).
+export async function unassignIssue(env, id) {
+  const mutation = `
+    mutation Unassign($id: String!) {
+      issueUpdate(id: $id, input: { assigneeId: null }) {
+        success
+        issue { identifier }
+      }
+    }`;
+  const data = await linearQuery(env, mutation, { id });
+  return data.issueUpdate;
+}
+
 export async function setIssueState(env, id, stateId) {
   const mutation = `
     mutation SetState($id: String!, $stateId: String!) {
