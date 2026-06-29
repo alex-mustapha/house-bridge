@@ -142,7 +142,7 @@ function parseLabelConfig(labelNodes) {
 }
 
 // "30m" / "1h" / "1h30m" / "45" -> minutes. Used by `estimate:`.
-function parseDuration(s) {
+export function parseDuration(s) {
   const t = (s || "").trim().toLowerCase();
   let min = 0;
   let matched = false;

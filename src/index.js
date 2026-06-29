@@ -19,7 +19,7 @@ import {
   postViaBot,
   postToDiscord,
 } from "./discord.js";
-import { logChores, queryStats } from "./db.js";
+import { logChores, queryStats, queryDashboard } from "./db.js";
 import {
   fetchDueIssues,
   fetchActiveIssueCount,
@@ -36,12 +36,14 @@ import {
   archiveIssue,
   fetchUnassignedActive,
   deleteComment,
+  fetchRecurringTemplates,
 } from "./linear.js";
-import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate } from "./recurring.js";
+import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, parseDuration } from "./recurring.js";
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
 import { COMMANDS } from "./commands.js";
+import { renderDashboardPage } from "./dashboardpage.js";
 import { verifyAlexaRequest, handleAlexa } from "./alexa.js";
 
 // Parse DISCORD_MENTIONS ("Alex:123,Kristal:456") into { alex: "123", ... }.
@@ -273,6 +275,42 @@ export default {
         return new Response(`register error: ${e?.message || e}\n`, { status: 500 });
       }
     }
+    if (url.pathname === "/pin-dashboard") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      if (!env.DISCORD_BOT_TOKEN) return new Response("DISCORD_BOT_TOKEN not set\n", { status: 400 });
+      const auth = { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` };
+      try {
+        let guild = url.searchParams.get("guild") || env.DISCORD_GUILD_ID;
+        if (!guild) {
+          const g = await fetch("https://discord.com/api/v10/users/@me/guilds", { headers: auth });
+          const guilds = g.ok ? await g.json() : [];
+          if (guilds.length === 1) guild = guilds[0].id;
+          else return new Response(`Pass ?guild=<serverId> (bot in ${guilds.length} servers).\n`, { status: 400 });
+        }
+        const chName = (url.searchParams.get("channel") || "recap").toLowerCase();
+        const chRes = await fetch(`https://discord.com/api/v10/guilds/${guild}/channels`, { headers: auth });
+        if (!chRes.ok) return new Response(`channels lookup: ${chRes.status}\n`, { status: chRes.status });
+        const ch = (await chRes.json()).find((c) => c.type === 0 && (c.name || "").toLowerCase() === chName);
+        if (!ch) return new Response(`No #${chName} text channel found.\n`, { status: 404 });
+        const dashUrl = `${url.origin}/dashboard`;
+        const postRes = await fetch(`https://discord.com/api/v10/channels/${ch.id}/messages`, {
+          method: "POST",
+          headers: { ...auth, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: `📊 **Chore stats dashboard** — live completion %, per-person breakdown, trend, and streaks.\n${dashUrl}`,
+          }),
+        });
+        if (!postRes.ok) return new Response(`post failed: ${postRes.status} ${(await postRes.text()).slice(0, 200)}\n`, { status: postRes.status });
+        const msg = await postRes.json();
+        const pinRes = await fetch(`https://discord.com/api/v10/channels/${ch.id}/pins/${msg.id}`, { method: "PUT", headers: auth });
+        return new Response(
+          JSON.stringify({ posted: true, channel: ch.name, pinned: pinRes.ok, pinStatus: pinRes.status, url: dashUrl }, null, 2),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      } catch (e) {
+        return new Response(`pin error: ${e?.message || e}\n`, { status: 500 });
+      }
+    }
     if (url.pathname === "/delcomment") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       const id = url.searchParams.get("id");
@@ -311,6 +349,27 @@ export default {
       const user = url.searchParams.get("user") || "";
       const status = await dayStatus(env, user);
       return new Response(renderWidgetPage(user, status), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+      });
+    }
+    if (url.pathname === "/dashboard") {
+      // Keyless stats dashboard (chore names + counts only). Refresh the D1
+      // snapshot first so the page is current, then aggregate + render.
+      try {
+        await logChores(env);
+      } catch (e) {
+        console.error("dashboard log refresh failed:", e);
+      }
+      const templates = await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring");
+      const estMap = {};
+      for (const t of templates) {
+        const m = (t.description || "").match(/^\s*estimate\s*:\s*(.+)$/im);
+        const mins = m ? parseDuration(m[1]) : undefined;
+        if (mins) estMap[(t.title || "").toLowerCase()] = mins;
+      }
+      const data = await queryDashboard(env, (title) => estMap[(title || "").toLowerCase()] ?? 15);
+      if (!data) return new Response("D1 not configured\n", { status: 200 });
+      return new Response(renderDashboardPage(data), {
         headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
       });
     }
