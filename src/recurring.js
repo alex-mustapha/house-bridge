@@ -441,7 +441,7 @@ export async function forceReplace(env, identifier) {
 // aren't lopsided. Run weekly (during the Monday recap), not daily.
 export async function runWeek(env, opts = {}) {
   const defs = await buildDefs(env);
-  if (!defs.length) return { created: 0, archived: 0 };
+  if (!defs.length) return { created: 0, archived: 0, moved: 0 };
 
   const users = await getUsers(env);
   let rotation = [];
@@ -501,8 +501,11 @@ export async function runWeek(env, opts = {}) {
   }
 
   // PLAN: one entry per (chore, day-it's-due) in the next 7 days, skipping any
-  // occurrence that already exists.
+  // occurrence that already exists. `correctKeys` is the full set the current
+  // templates produce in-window (before dedup) — used below to reconcile chores
+  // whose template moved them to a different day.
   const plan = [];
+  const correctKeys = new Set();
   for (let d = 0; d < 7; d++) {
     const L = localDate(new Date(base.getTime() + d * 86_400_000));
     for (const c of defs) {
@@ -517,9 +520,25 @@ export async function runWeek(env, opts = {}) {
       // handled at assignment time.
       if (pausesOn(pauses, dueDate).some((p) => p.scope === "global")) continue;
       const key = `${c.teamId}::${c.title}@${dueDate}`;
+      correctKeys.add(key);
       if (existing.has(key)) continue;
       existing.add(key);
       plan.push({ c, dueDate });
+    }
+  }
+
+  // RECONCILE: a template whose schedule changed (e.g. moved Thu -> Fri) leaves
+  // its old-day chore orphaned. Archive future, not-yet-started, in-window
+  // copies whose title still has a template but whose due date the current
+  // schedule no longer produces. Past-due and in-progress copies are left alone.
+  const titlesWithDef = new Set(defs.filter((c) => c.teamId).map((c) => `${c.teamId}::${c.title}`));
+  const toReconcile = [];
+  for (const teamId of teamIds) {
+    for (const n of ctx.spawned[teamId]) {
+      if (!n.dueDate || n.dueDate < todayYmd || n.dueDate > horizonEnd) continue;
+      if (!isOpen(n) || n.state?.type === "started") continue;
+      if (!titlesWithDef.has(`${teamId}::${n.title}`)) continue; // no template -> leave it
+      if (!correctKeys.has(`${teamId}::${n.title}@${n.dueDate}`)) toReconcile.push(n.id);
     }
   }
 
@@ -622,7 +641,7 @@ export async function runWeek(env, opts = {}) {
   }
 
   // EXECUTE.
-  for (const id of toArchive) await archiveIssue(env, id);
+  for (const id of [...toArchive, ...toReconcile]) await archiveIssue(env, id);
   let created = 0;
   for (const e of plan) {
     if (e.skip) continue; // paused (user out / everyone out)
@@ -642,7 +661,9 @@ export async function runWeek(env, opts = {}) {
     }
   }
   // Idempotent: existing occurrences are skipped, so re-runs only fill in gaps.
-  return { created, archived: toArchive.length };
+  // `moved` = chores archived because their template's schedule no longer
+  // produces that day (e.g. a day change); `archived` = past-due cleanup.
+  return { created, archived: toArchive.length, moved: toReconcile.length };
 }
 
 // "2026-09-01" -> "Sep 1, 2026"
