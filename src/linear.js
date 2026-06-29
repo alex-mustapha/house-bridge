@@ -453,28 +453,30 @@ export async function fetchRecentCompletedAssigned(env, assigneeId) {
   return data.issues?.nodes || [];
 }
 
-// Active dated chores for an ICS calendar feed. `who` is either
-// { assigneeId } (a person's chores) or { unassigned: true } (the grab pool),
-// scoped to the given chore projects. Undated chores are dropped by the caller.
-export async function fetchChoresForCalendar(env, projects, who) {
+// Active dated issues for an ICS calendar feed — every team/project, so the
+// calendar reflects all of someone's dated work (chores + shed project + etc.),
+// not just chores. `who` is either { assigneeId } (a person's issues) or
+// { unassigned: true } (the grab pool). The Recurring-template project is
+// excluded (those are definitions, not real tasks); undated issues are dropped.
+export async function fetchChoresForCalendar(env, who) {
   const assignee = who.unassigned ? "assignee: { null: true }" : "assignee: { id: { eq: $aid } }";
-  const vars = who.unassigned ? "$projects: [String!]!" : "$projects: [String!]!, $aid: ID!";
+  const vars = who.unassigned ? "" : "($aid: ID!)";
   const query = `
-    query Cal(${vars}) {
+    query Cal${vars} {
       issues(
-        first: 200
+        first: 250
         filter: {
-          project: { name: { in: $projects } }
           state: { type: { nin: ["completed", "canceled"] } }
           ${assignee}
         }
       ) {
-        nodes { identifier title dueDate url description assignee { name } }
+        nodes { identifier title dueDate url description assignee { name } project { name } }
       }
     }`;
-  const variables = who.unassigned ? { projects } : { projects, aid: who.assigneeId };
+  const variables = who.unassigned ? {} : { aid: who.assigneeId };
   const data = await linearQuery(env, query, variables);
-  return (data.issues?.nodes || []).filter((i) => i.dueDate);
+  const recurring = env.RECURRING_PROJECT || "Recurring";
+  return (data.issues?.nodes || []).filter((i) => i.dueDate && i.project?.name !== recurring);
 }
 
 // Project names (for the /project command's autocomplete).

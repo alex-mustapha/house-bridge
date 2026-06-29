@@ -382,18 +382,17 @@ export default {
       // Keyless ICS feed (chore titles + due dates only). Subscribe by URL:
       //   /cal/alex.ics, /cal/kristal.ics, /cal/unassigned.ics
       const who = url.pathname.slice(5, -4).toLowerCase();
-      const projects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
       let chores;
       let calName;
       if (who === "unassigned") {
-        chores = await fetchChoresForCalendar(env, projects, { unassigned: true });
+        chores = await fetchChoresForCalendar(env, { unassigned: true });
         calName = "Chores — Unassigned";
       } else {
         const user = (await getUsers(env)).find((u) =>
           [u.name, u.displayName].some((n) => (n || "").toLowerCase().includes(who)),
         );
         if (!user) return new Response("Unknown calendar\n", { status: 404 });
-        chores = await fetchChoresForCalendar(env, projects, { assigneeId: user.id });
+        chores = await fetchChoresForCalendar(env, { assigneeId: user.id });
         calName = `Chores — ${user.name}`;
       }
       return new Response(buildICS(calName, chores), {
