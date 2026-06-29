@@ -280,18 +280,23 @@ async function choreAutocomplete(interaction, env) {
         .map((t) => t.title);
       return acChoices(paused.filter(match));
     }
-    const active = await findActiveByTitle(env, typed, choreProjects(env));
-    let pool = active;
-    if (sub.name === "claim") {
-      // claim grabs work nobody owns yet -> only suggest unassigned chores,
-      // which keeps the list short (assigned recurring chores are hidden).
-      pool = active.filter((i) => !i.assignee?.name);
-    } else if (sub.name === "unclaim") {
-      // unclaim drops one of *your* chores -> only suggest chores you own.
-      const mine = await callerName(env, interaction);
-      pool = mine ? active.filter((i) => nameMatches(i.assignee?.name, mine)) : [];
+    if (sub.name === "unclaim") {
+      // unclaim drops one of *your* chores -> suggest only chores you own,
+      // queried directly so we don't miss any past the 25-row match cap.
+      const id = await resolveCaller(env, interaction);
+      if (!id) return acChoices([]);
+      const projects = choreProjects(env);
+      const mine = (await fetchAssignedActiveIssues(env, id))
+        .filter((i) => projects.includes(i.project?.name))
+        .map((i) => i.title)
+        .filter(match);
+      return acChoices(mine);
     }
-    // snooze / skip / done / claim / unclaim -> active chores in House Chores + Ad Hoc
+    const active = await findActiveByTitle(env, typed, choreProjects(env));
+    // claim grabs work nobody owns yet -> only suggest unassigned chores, which
+    // keeps the list short (assigned recurring chores are hidden).
+    const pool = sub.name === "claim" ? active.filter((i) => !i.assignee?.name) : active;
+    // snooze / skip / done / claim -> active chores in House Chores + Ad Hoc
     return acChoices(pool.map((i) => i.title).filter(match));
   }
   return acChoices([]);
