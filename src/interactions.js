@@ -517,6 +517,26 @@ async function choreCommand(interaction, env, ctx) {
       const r = await markChoreDone(env, o.chore);
       return r.ok ? say(`✅ ${r.message}.`) : reply(r.message);
     }
+    case "claim": {
+      const issue = await pickChore(env, o.chore);
+      if (!issue) return reply(`No active chore matching "${o.chore}".`);
+      let userId, who;
+      if (o.assignee) {
+        const u = (await getUsers(env)).find((x) =>
+          [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(o.assignee.toLowerCase())),
+        );
+        if (!u) return reply(`No Linear user matching "${o.assignee}".`);
+        userId = u.id;
+        who = u.displayName || u.name;
+      } else {
+        userId = await resolveCaller(env, interaction);
+        if (!userId) return reply("Couldn't match you to a Linear user — pass `assignee:` to claim for a named person.");
+        who = "you";
+      }
+      const res = await assignIssue(env, issue.id, userId);
+      if (!res?.success) return reply("Couldn't assign that chore.");
+      return say(`🙋 **${issue.title}** is now ${who === "you" ? "yours" : `assigned to ${who}`}.`);
+    }
     case "add": {
       const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
       if (!teamId) return reply("Chores team not found.");

@@ -93,6 +93,15 @@ export const COMMANDS = [
       },
       {
         type: 1,
+        name: "claim",
+        description: "Take ownership of a chore (assigns it to you)",
+        options: [
+          { type: 3, name: "chore", description: "Which chore", required: true, autocomplete: true },
+          { type: 3, name: "assignee", description: "Assign to someone else instead of you", required: false, autocomplete: true },
+        ],
+      },
+      {
+        type: 1,
         name: "add",
         description: "Add a one-off chore",
         options: [
