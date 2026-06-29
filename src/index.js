@@ -367,9 +367,12 @@ export default {
         const mins = m ? parseDuration(m[1]) : undefined;
         if (mins) estMap[(t.title || "").toLowerCase()] = mins;
       }
-      const data = await queryDashboard(env, (title) => estMap[(title || "").toLowerCase()] ?? 15);
+      const allowed = [7, 30, 90, 365];
+      let range = parseInt(url.searchParams.get("range") || "30", 10);
+      if (!allowed.includes(range)) range = 30;
+      const data = await queryDashboard(env, (title) => estMap[(title || "").toLowerCase()] ?? 15, range);
       if (!data) return new Response("D1 not configured\n", { status: 200 });
-      return new Response(renderDashboardPage(data), {
+      return new Response(renderDashboardPage(data, range), {
         headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
       });
     }

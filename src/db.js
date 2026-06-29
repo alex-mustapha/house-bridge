@@ -63,62 +63,16 @@ export async function logChores(env) {
   console.log(`Logged ${stmts.length} chore outcomes to D1.`);
 }
 
-// Everything the /dashboard page needs, computed from the chore log. `estimateOf`
-// (title -> minutes) powers the effort split. Window: last 42 days (for trend).
-export async function queryDashboard(env, estimateOf) {
-  if (!env.DB) return null;
-  await ensureSchema(env);
-  const today = localDate(new Date()).ymd;
-  const d = (n) => {
+const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Completion-rate trend bucketed by the range: daily (≤10d), weekly (≤120d), or
+// monthly (a year). Oldest -> newest.
+function buildTrend(rows, today, days) {
+  const shift = (n) => {
     const [y, m, dd] = today.split("-").map(Number);
     return new Date(Date.UTC(y, m - 1, dd - n)).toISOString().slice(0, 10);
   };
-  const since42 = d(41);
-  const rows =
-    (
-      await env.DB.prepare(
-        `SELECT title, assignee, due_date AS due, status FROM chore_log
-         WHERE due_date >= ?1 AND status != 'open'`,
-      )
-        .bind(since42)
-        .all()
-    ).results || [];
-
-  const since7 = d(6);
-  const since30 = d(29);
-  const est = (t) => (estimateOf ? estimateOf(t) : 15);
-
-  // This week (last 7 days by due date).
-  const wk = { done: 0, onTime: 0, late: 0, missed: 0 };
-  const byPerson = {};
-  const effort = {};
-  const missCount = {};
-  const dayMap = {}; // person -> { due -> hasMiss }
-  for (const r of rows) {
-    const who = r.assignee || "Unassigned";
-    (dayMap[who] ||= {});
-    dayMap[who][r.due] = dayMap[who][r.due] || r.status === "missed";
-
-    if (r.due >= since30 && r.status === "missed") missCount[r.title] = (missCount[r.title] || 0) + 1;
-
-    if (r.due < since7) continue;
-    const p = (byPerson[who] ||= { onTime: 0, late: 0, missed: 0 });
-    if (r.status === "on_time") { wk.done++; wk.onTime++; p.onTime++; }
-    else if (r.status === "late") { wk.done++; wk.late++; p.late++; }
-    else if (r.status === "missed") { wk.missed++; p.missed++; }
-    if ((r.status === "on_time" || r.status === "late") && r.assignee) {
-      effort[r.assignee] = (effort[r.assignee] || 0) + est(r.title);
-    }
-  }
-  const resolved = wk.done + wk.missed;
-  wk.completionPct = resolved ? Math.round((wk.done / resolved) * 100) : 0;
-  wk.onTimePct = wk.done ? Math.round((wk.onTime / wk.done) * 100) : 0;
-
-  // Weekly completion-rate trend (6 buckets, oldest -> newest).
-  const trend = [];
-  for (let w = 5; w >= 0; w--) {
-    const lo = d(w * 7 + 6);
-    const hi = d(w * 7);
+  const tally = (lo, hi) => {
     let done = 0;
     let miss = 0;
     for (const r of rows) {
@@ -126,17 +80,87 @@ export async function queryDashboard(env, estimateOf) {
       if (r.status === "on_time" || r.status === "late") done++;
       else if (r.status === "missed") miss++;
     }
-    const tot = done + miss;
-    trend.push({ label: hi.slice(5), pct: tot ? Math.round((done / tot) * 100) : null });
+    const t = done + miss;
+    return t ? Math.round((done / t) * 100) : null;
+  };
+  const out = [];
+  if (days <= 10) {
+    for (let i = days - 1; i >= 0; i--) {
+      const day = shift(i);
+      out.push({ label: day.slice(5), pct: tally(day, day) });
+    }
+  } else if (days <= 120) {
+    const weeks = Math.ceil(days / 7);
+    for (let w = weeks - 1; w >= 0; w--) out.push({ label: shift(w * 7).slice(5), pct: tally(shift(w * 7 + 6), shift(w * 7)) });
+  } else {
+    const [cy, cm] = today.split("-").map(Number);
+    for (let m = 11; m >= 0; m--) {
+      const idx = cm - 1 - m;
+      const y = cy + Math.floor(idx / 12);
+      const mo = ((idx % 12) + 12) % 12;
+      const lo = `${y}-${String(mo + 1).padStart(2, "0")}-01`;
+      const last = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+      const hi = `${y}-${String(mo + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+      out.push({ label: MON_ABBR[mo], pct: tally(lo, hi) });
+    }
   }
+  return out;
+}
 
-  // Per-person streak: walk back from yesterday; a day with chores must have no
-  // miss; days with no chores bridge.
+// Everything the /dashboard page needs, over the last `days` days. `estimateOf`
+// (title -> minutes) powers the effort split.
+export async function queryDashboard(env, estimateOf, days = 30) {
+  if (!env.DB) return null;
+  await ensureSchema(env);
+  const today = localDate(new Date()).ymd;
+  const shift = (n) => {
+    const [y, m, dd] = today.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, dd - n)).toISOString().slice(0, 10);
+  };
+  // Fetch enough for both the range and the streak walk-back (~41 days).
+  const lookback = Math.max(days, 60);
+  const rows =
+    (
+      await env.DB.prepare(
+        `SELECT title, assignee, due_date AS due, status FROM chore_log
+         WHERE due_date >= ?1 AND status != 'open'`,
+      )
+        .bind(shift(lookback - 1))
+        .all()
+    ).results || [];
+
+  const since = shift(days - 1);
+  const est = (t) => (estimateOf ? estimateOf(t) : 15);
+
+  const summary = { done: 0, onTime: 0, late: 0, missed: 0 };
+  const byPerson = {};
+  const effort = {};
+  const missCount = {};
+  const dayMap = {}; // person -> { due -> hasMiss }  (full lookback, for streaks)
+  for (const r of rows) {
+    const who = r.assignee || "Unassigned";
+    (dayMap[who] ||= {});
+    dayMap[who][r.due] = dayMap[who][r.due] || r.status === "missed";
+    if (r.due < since) continue; // range window for the tallies below
+    if (r.status === "missed") missCount[r.title] = (missCount[r.title] || 0) + 1;
+    const p = (byPerson[who] ||= { onTime: 0, late: 0, missed: 0 });
+    if (r.status === "on_time") { summary.done++; summary.onTime++; p.onTime++; }
+    else if (r.status === "late") { summary.done++; summary.late++; p.late++; }
+    else if (r.status === "missed") { summary.missed++; p.missed++; }
+    if ((r.status === "on_time" || r.status === "late") && r.assignee) {
+      effort[r.assignee] = (effort[r.assignee] || 0) + est(r.title);
+    }
+  }
+  const resolved = summary.done + summary.missed;
+  summary.completionPct = resolved ? Math.round((summary.done / resolved) * 100) : 0;
+  summary.onTimePct = summary.done ? Math.round((summary.onTime / summary.done) * 100) : 0;
+
+  // Per-person streak (range-independent): walk back from yesterday.
   const streaks = {};
   for (const who of Object.keys(dayMap)) {
     let s = 0;
     for (let n = 1; n <= 41; n++) {
-      const hasMiss = dayMap[who][d(n)];
+      const hasMiss = dayMap[who][shift(n)];
       if (hasMiss === undefined) continue;
       if (hasMiss) break;
       s++;
@@ -150,9 +174,10 @@ export async function queryDashboard(env, estimateOf) {
     .map(([title, n]) => ({ title, n }));
 
   return {
-    week: wk,
+    days,
+    summary,
     byPerson: Object.entries(byPerson).map(([name, v]) => ({ name, ...v })),
-    trend,
+    trend: buildTrend(rows, today, days),
     missed,
     effort: Object.entries(effort).map(([name, minutes]) => ({ name, minutes })),
     streaks,

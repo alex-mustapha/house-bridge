@@ -7,11 +7,17 @@ function esc(s) {
   );
 }
 
-export function renderDashboardPage(data) {
+const RANGE_LABEL = { 7: "7 days", 30: "30 days", 90: "90 days", 365: "1 year" };
+
+export function renderDashboardPage(data, range = 30) {
   const streaks =
     Object.entries(data.streaks || {})
       .map(([n, s]) => `${esc(n)} ${s}`)
       .join(" · ") || "—";
+  const rlabel = RANGE_LABEL[range] || `${range} days`;
+  const rangeBar = [[7, "7d"], [30, "30d"], [90, "90d"], [365, "1y"]]
+    .map(([d, l]) => `<a class="rg${d === range ? " on" : ""}" href="/dashboard?range=${d}">${l}</a>`)
+    .join("");
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -36,6 +42,10 @@ export function renderDashboardPage(data) {
   .card .val.sm { font-size: 16px; font-weight: 600; }
   .panel { background: #17171c; border-radius: 16px; padding: 14px 16px; }
   .panel h2 { font-size: 14px; font-weight: 600; color: #c9c9cf; margin-bottom: 10px; }
+  .rangebar { display: flex; gap: 8px; }
+  .rangebar .rg { flex: 1; text-align: center; padding: 9px 0; border-radius: 10px; text-decoration: none;
+    color: #c9c9cf; background: #17171c; font-size: 14px; font-weight: 600; }
+  .rangebar .rg.on { background: #3b9eff; color: #04244a; }
   .cw { position: relative; height: 220px; }
   ul.missed { list-style: none; }
   ul.missed li { display: flex; justify-content: space-between; padding: 9px 0; font-size: 14px;
@@ -49,16 +59,17 @@ export function renderDashboardPage(data) {
 <body>
 <div class="wrap">
   <h1>🧹 Chore stats</h1>
+  <div class="rangebar">${rangeBar}</div>
   <div class="cards">
-    <div class="card"><div class="lbl">Completion (this week)</div><div class="val">${data.week.completionPct}%</div></div>
-    <div class="card"><div class="lbl">On time</div><div class="val">${data.week.onTimePct}%</div></div>
-    <div class="card"><div class="lbl">Done this week</div><div class="val">${data.week.done}</div></div>
-    <div class="card"><div class="lbl">🔥 Streaks</div><div class="val sm">${streaks}</div></div>
+    <div class="card"><div class="lbl">Completion (${rlabel})</div><div class="val">${data.summary.completionPct}%</div></div>
+    <div class="card"><div class="lbl">On time</div><div class="val">${data.summary.onTimePct}%</div></div>
+    <div class="card"><div class="lbl">Done (${rlabel})</div><div class="val">${data.summary.done}</div></div>
+    <div class="card"><div class="lbl">🔥 Streaks (current)</div><div class="val sm">${streaks}</div></div>
   </div>
-  <div class="panel"><h2>Per person — last week</h2><div class="cw"><canvas id="byperson"></canvas></div></div>
-  <div class="panel"><h2>Weekly completion rate</h2><div class="cw"><canvas id="trend"></canvas></div></div>
-  <div class="panel"><h2>Effort split — this week</h2><div class="cw" style="height:200px"><canvas id="effort"></canvas></div></div>
-  <div class="panel"><h2>Most missed (30 days)</h2><ul class="missed" id="missed"></ul></div>
+  <div class="panel"><h2>Per person — ${rlabel}</h2><div class="cw"><canvas id="byperson"></canvas></div></div>
+  <div class="panel"><h2>Completion rate trend</h2><div class="cw"><canvas id="trend"></canvas></div></div>
+  <div class="panel"><h2>Effort split — ${rlabel}</h2><div class="cw" style="height:200px"><canvas id="effort"></canvas></div></div>
+  <div class="panel"><h2>Most missed — ${rlabel}</h2><ul class="missed" id="missed"></ul></div>
   <div class="foot" id="foot"></div>
 </div>
 <script>const DATA = ${JSON.stringify(data)};</script>
