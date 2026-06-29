@@ -558,6 +558,7 @@ export async function fetchRecurringTemplates(env, projectName) {
         nodes {
           title
           description
+          url
           team { id key }
           labels { nodes { id name } }
           assignee { id }

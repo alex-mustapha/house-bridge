@@ -27,6 +27,10 @@ CHORES_PROJECT = "House Chores"
 # Rotation load skew: higher weight = bigger share of the week's chore minutes.
 # Per-person overrides set via `/chores weight` (D1) take precedence.
 ROTATION_WEIGHTS = "Alex:60,Kristal:40"
+# Title of a no-cadence template in the Recurring project to spawn (due at the
+# pause start) whenever a whole-household /chores pause is set — e.g. a trip
+# prep checklist. Leave the template absent to skip this.
+VACATION_PREP_TITLE = "Vacation Prep"
 # Channel the daily digest is posted to BY THE BOT (so it can carry "Done"
 # buttons). #due-today. Requires the DISCORD_BOT_TOKEN secret + the bot having
 # Send Messages here. If unset, the digest falls back to the DUE webhook.

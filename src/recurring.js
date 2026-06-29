@@ -261,6 +261,13 @@ function targetDayOfMonth(chore, L) {
   return 1;
 }
 
+// Append a link back to the source template so any spawned chore has a one-click
+// path to edit its definition.
+export function withTemplateLink(description, url) {
+  if (!url) return description || "";
+  return `${description ? `${description}\n\n` : ""}— [recurring template ↗](${url})`;
+}
+
 // Absolute month index (year*12 + month) of a YYYY-MM-DD date, for anchoring
 // every-N-months cadences to a template's start month.
 function monthIndexOf(ymd) {
@@ -351,6 +358,7 @@ async function buildDefs(env) {
         teamId: t.team?.id,
         labelIds: passthroughLabelIds,
         description: stripDescription(t.description),
+        templateUrl: t.url, // link back to the template from the spawned chore
         onExisting: config.onExisting || "replace",
         cadence: config.cadence,
         days,
@@ -617,7 +625,7 @@ export async function runWeek(env) {
     const result = await createIssue(env, {
       teamId: e.c.teamId,
       title: e.c.title,
-      description: e.c.description,
+      description: withTemplateLink(e.c.description, e.c.templateUrl),
       dueDate: e.dueDate,
       labelIds: e.c.labelIds,
       assigneeId: e.assignee,

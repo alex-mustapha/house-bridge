@@ -25,7 +25,7 @@ import {
   setIssueState,
   fetchSpawned,
 } from "./linear.js";
-import { localDate, annotateTemplates } from "./recurring.js";
+import { localDate, annotateTemplates, withTemplateLink } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
 
@@ -416,13 +416,15 @@ async function choreCommand(interaction, env, ctx) {
       await addPause(env, { scope, target, start: from, end: to, nowIso: new Date().toISOString() });
       // Also archive already-generated recurring chores in the window.
       const cleared = await clearGeneratedInWindow(env, { from, to, userId: pausedUserId });
+      // On a whole-household pause, spawn the prep checklist due at the start.
+      const prepNote = scope === "global" ? await spawnPrepChecklist(env, from) : "";
       refresh();
       const window = to === "9999-12-31" ? `**indefinitely** (from ${from})` : `**${from} → ${to}**`;
       const undo = scope === "user" ? ` user:${target}` : "";
       const clearedNote = cleared
         ? ` Archived **${cleared}** generated chore${cleared === 1 ? "" : "s"} already on the list for those days.`
         : "";
-      return say(`⏸️ Paused ${label} ${window}.${clearedNote} Use \`/chores resume${undo}\` to lift it.`);
+      return say(`⏸️ Paused ${label} ${window}.${clearedNote}${prepNote} Use \`/chores resume${undo}\` to lift it.`);
     }
     case "resume": {
       const today = localDate(new Date()).ymd;
@@ -538,6 +540,29 @@ async function clearGeneratedInWindow(env, { from, to, userId }) {
     if (r?.success) cleared++;
   }
   return cleared;
+}
+
+// On a global pause, spawn the prep-checklist template (VACATION_PREP_TITLE, a
+// no-cadence template in Recurring) into House Chores, due at the pause start.
+// Returns a note for the reply (or "" if there's no such template).
+async function spawnPrepChecklist(env, dueDate) {
+  const prepTitle = env.VACATION_PREP_TITLE || "Vacation Prep";
+  const tpl = (await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring")).find(
+    (t) => (t.title || "").toLowerCase() === prepTitle.toLowerCase(),
+  );
+  if (!tpl) return "";
+  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  if (!teamId) return "";
+  const res = await createIssue(env, {
+    teamId,
+    title: tpl.title,
+    description: withTemplateLink(tpl.description, tpl.url),
+    dueDate,
+    stateId: await getTodoStateId(env, teamId),
+    projectId: await getProjectId(env, env.CHORES_PROJECT || "House Chores"),
+    labelIds: (tpl.labels?.nodes || []).map((l) => l.id),
+  });
+  return res?.success ? ` 📋 Added **${tpl.title}** (due ${dueDate}).` : "";
 }
 
 // Best active chore matching `text` (soonest-due first).
