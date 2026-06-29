@@ -278,10 +278,11 @@ export async function fetchChoreHistory(env, teamId, since) {
     query History($teamId: ID!) {
       issues(
         first: 250
-        includeArchived: true
+        includeArchived: false
         filter: {
           team: { id: { eq: $teamId } }
           dueDate: { gte: "${since}" }
+          state: { type: { neq: "canceled" } }
         }
       ) {
         nodes { identifier title dueDate completedAt assignee { name } }

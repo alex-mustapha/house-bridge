@@ -1,16 +1,18 @@
 // Computes the weekly scoreboard, broken down per assignee, from chore history
 // (issues with due dates, completion timestamps, and assignees). Pure logic.
+// All dates are Eastern (via localDate) so an evening-of-the-due-day completion
+// counts as on time, not late.
 
-function ymd(d) {
-  return d.toISOString().slice(0, 10);
-}
+import { localDate } from "./recurring.js";
+
 function shiftDays(now, n) {
   return new Date(now.getTime() - n * 86_400_000);
 }
+const eastern = (d) => localDate(d).ymd;
 
 export function computeStats(issues, now) {
-  const today = ymd(now);
-  const weekAgo = ymd(shiftDays(now, 7));
+  const today = eastern(now);
+  const weekAgo = eastern(shiftDays(now, 7));
 
   // Per-person tallies over the last 7 days (by due date).
   const acc = {};
@@ -22,7 +24,7 @@ export function computeStats(issues, now) {
     const who = i.assignee?.name;
     if (!who) continue; // unassigned chores aren't relevant to per-person scores
     const a = ensure(who);
-    const completed = i.completedAt ? i.completedAt.slice(0, 10) : null;
+    const completed = i.completedAt ? eastern(new Date(i.completedAt)) : null;
     if (completed) {
       a.done++;
       if (completed <= i.dueDate) a.onTime++;
@@ -45,7 +47,7 @@ export function computeStats(issues, now) {
     const byDay = byDayPerson[name] || {};
     let s = 0;
     for (let n = 1; n <= 30; n++) {
-      const items = byDay[ymd(shiftDays(now, n))];
+      const items = byDay[eastern(shiftDays(now, n))];
       if (!items) continue;
       if (items.every((i) => i.completedAt)) s++;
       else break;
