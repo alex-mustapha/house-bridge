@@ -110,6 +110,11 @@ export const COMMANDS = [
       },
       {
         type: 1,
+        name: "calendar",
+        description: "Get the calendar-subscription links for your chores",
+      },
+      {
+        type: 1,
         name: "add",
         description: "Add a one-off chore",
         options: [

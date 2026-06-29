@@ -26,6 +26,8 @@ CHORES_TEAM = "CHO"
 CHORES_PROJECT = "House Chores"
 # Project for one-off chores added via `/chores add` (no cadence, won't recur).
 ADHOC_PROJECT = "Ad Hoc"
+# Public origin of this Worker, used to print calendar-subscription URLs.
+PUBLIC_BASE_URL = "https://linear-discord-bridge.muffinfactory.workers.dev"
 # Rotation load skew: higher weight = bigger share of the week's chore minutes.
 # Per-person overrides set via `/chores weight` (D1) take precedence.
 ROTATION_WEIGHTS = "Alex:60,Kristal:40"

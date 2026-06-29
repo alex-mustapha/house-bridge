@@ -37,6 +37,7 @@ import {
   fetchUnassignedActive,
   deleteComment,
   fetchRecurringTemplates,
+  fetchChoresForCalendar,
 } from "./linear.js";
 import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, parseDuration } from "./recurring.js";
 import { computeStats } from "./stats.js";
@@ -44,6 +45,7 @@ import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
 import { COMMANDS } from "./commands.js";
 import { renderDashboardPage } from "./dashboardpage.js";
+import { buildICS } from "./calendar.js";
 import { verifyAlexaRequest, handleAlexa } from "./alexa.js";
 
 // Parse DISCORD_MENTIONS ("Alex:123,Kristal:456") into { alex: "123", ... }.
@@ -374,6 +376,32 @@ export default {
       if (!data) return new Response("D1 not configured\n", { status: 200 });
       return new Response(renderDashboardPage(data, range), {
         headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+      });
+    }
+    if (url.pathname.startsWith("/cal/") && url.pathname.endsWith(".ics")) {
+      // Keyless ICS feed (chore titles + due dates only). Subscribe by URL:
+      //   /cal/alex.ics, /cal/kristal.ics, /cal/unassigned.ics
+      const who = url.pathname.slice(5, -4).toLowerCase();
+      const projects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
+      let chores;
+      let calName;
+      if (who === "unassigned") {
+        chores = await fetchChoresForCalendar(env, projects, { unassigned: true });
+        calName = "Chores — Unassigned";
+      } else {
+        const user = (await getUsers(env)).find((u) =>
+          [u.name, u.displayName].some((n) => (n || "").toLowerCase().includes(who)),
+        );
+        if (!user) return new Response("Unknown calendar\n", { status: 404 });
+        chores = await fetchChoresForCalendar(env, projects, { assigneeId: user.id });
+        calName = `Chores — ${user.name}`;
+      }
+      return new Response(buildICS(calName, chores), {
+        headers: {
+          "Content-Type": "text/calendar; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Content-Disposition": `inline; filename="${who}.ics"`,
+        },
       });
     }
 

@@ -512,6 +512,17 @@ async function choreCommand(interaction, env, ctx) {
     }
     case "help":
       return reply(choreHelp());
+    case "calendar": {
+      const base = (env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+      return reply(
+        "📆 **Subscribe to your chores in your calendar app**\n" +
+          "Add these as a *subscribed calendar* (Apple: Settings → Calendar → Accounts → Add → Other → Add Subscribed Calendar; Google: Other calendars → From URL):\n" +
+          `• **Alex** — ${base}/cal/alex.ics\n` +
+          `• **Kristal** — ${base}/cal/kristal.ics\n` +
+          `• **Unassigned** (grabbable) — ${base}/cal/unassigned.ics\n` +
+          "_Each chore shows as an all-day event on its due date with a 9am reminder. Read-only — complete chores from Discord or Linear. Apple refreshes hourly; Google can lag up to a day._",
+      );
+    }
     case "snooze": {
       const issue = await pickChore(env, o.chore);
       if (!issue) return reply(`No active chore matching "${o.chore}".`);

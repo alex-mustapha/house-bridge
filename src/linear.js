@@ -453,6 +453,30 @@ export async function fetchRecentCompletedAssigned(env, assigneeId) {
   return data.issues?.nodes || [];
 }
 
+// Active dated chores for an ICS calendar feed. `who` is either
+// { assigneeId } (a person's chores) or { unassigned: true } (the grab pool),
+// scoped to the given chore projects. Undated chores are dropped by the caller.
+export async function fetchChoresForCalendar(env, projects, who) {
+  const assignee = who.unassigned ? "assignee: { null: true }" : "assignee: { id: { eq: $aid } }";
+  const vars = who.unassigned ? "$projects: [String!]!" : "$projects: [String!]!, $aid: ID!";
+  const query = `
+    query Cal(${vars}) {
+      issues(
+        first: 200
+        filter: {
+          project: { name: { in: $projects } }
+          state: { type: { nin: ["completed", "canceled"] } }
+          ${assignee}
+        }
+      ) {
+        nodes { identifier title dueDate url description assignee { name } }
+      }
+    }`;
+  const variables = who.unassigned ? { projects } : { projects, aid: who.assigneeId };
+  const data = await linearQuery(env, query, variables);
+  return (data.issues?.nodes || []).filter((i) => i.dueDate);
+}
+
 // Project names (for the /project command's autocomplete).
 export async function fetchProjectNames(env) {
   const query = `query { projects(first: 50) { nodes { name } } }`;
