@@ -677,13 +677,14 @@ const ymdAdd1 = (ymd) => {
   return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
 };
 
-// Daily/weekly chores are forgiven across a pause; anything less frequent than
-// weekly accumulates and owes a make-up on return.
-const FORGIVEN_CADENCE = new Set(["daily", "weekly"]);
-const accumulates = (c) => !!c.cadence && !FORGIVEN_CADENCE.has(c.cadence);
+// Only monthly-and-rarer chores accumulate across a pause; anything more
+// frequent (daily through semi-monthly) is forgiven — missing one is no big deal
+// and they'll come due again soon enough.
+const CATCHUP_CADENCE = new Set(["monthly", "bimonthly", "semi-annually", "annually"]);
+const accumulates = (c) => CATCHUP_CADENCE.has(c.cadence);
 
 // Create the "catch-up" make-ups owed after a (global) pause: for each
-// accumulating template (cadence rarer than weekly) that had >=1 scheduled
+// accumulating template (cadence monthly or rarer) that had >=1 scheduled
 // occurrence inside the pause window [start, min(end, returnDate)], create ONE
 // chore due `returnDate` — assigned to its fixed owner if it has one, else
 // unassigned & claimable. Idempotent (skips a title already due that day).
