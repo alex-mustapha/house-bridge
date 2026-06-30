@@ -134,8 +134,6 @@ function parseLabelConfig(labelNodes) {
       (config.months ||= []).push(MONTHS[name]); // jan..dec (annual/semi/bimonthly)
     } else if (name === "paused") {
       config.paused = true; // skip generation while present
-    } else if (name === "catchup") {
-      config.catchup = true; // a skipped occurrence becomes a make-up on return
     } else {
       passthroughLabelIds.push(l.id); // a real label (room, etc.)
     }
@@ -362,7 +360,6 @@ async function buildDefs(env) {
         description: stripDescription(t.description),
         templateUrl: t.url, // link back to the template from the spawned chore
         onExisting: config.onExisting || "replace",
-        catchup: config.catchup, // `catchup` label -> skipped occurrences owe a make-up
         cadence: config.cadence,
         days,
         anyday,
@@ -535,9 +532,10 @@ export async function runWeek(env, opts = {}) {
   // copies whose title still has a template but whose due date the current
   // schedule no longer produces. Past-due and in-progress copies are left alone.
   const titlesWithDef = new Set(defs.filter((c) => c.teamId).map((c) => `${c.teamId}::${c.title}`));
-  // Catch-up chores are deliberately off-schedule make-ups — never reconcile them.
-  const catchupTitles = new Set(
-    defs.filter((c) => c.teamId && c.catchup).map((c) => `${c.teamId}::${c.title}`),
+  // Accumulating chores (rarer than weekly) can carry off-schedule catch-up
+  // make-ups — never reconcile those titles. Reconcile targets weekly chores.
+  const accumulatingTitles = new Set(
+    defs.filter((c) => c.teamId && accumulates(c)).map((c) => `${c.teamId}::${c.title}`),
   );
   const toReconcile = [];
   for (const teamId of teamIds) {
@@ -545,7 +543,7 @@ export async function runWeek(env, opts = {}) {
       if (!n.dueDate || n.dueDate < todayYmd || n.dueDate > horizonEnd) continue;
       if (!isOpen(n) || n.state?.type === "started") continue;
       if (!titlesWithDef.has(`${teamId}::${n.title}`)) continue; // no template -> leave it
-      if (catchupTitles.has(`${teamId}::${n.title}`)) continue; // off-schedule make-up
+      if (accumulatingTitles.has(`${teamId}::${n.title}`)) continue; // may be a make-up
       if (!correctKeys.has(`${teamId}::${n.title}@${n.dueDate}`)) toReconcile.push(n.id);
     }
   }
@@ -679,13 +677,18 @@ const ymdAdd1 = (ymd) => {
   return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
 };
 
-// Create the "catch-up" make-ups owed after a (global) pause: for each template
-// carrying the `catchup` label that had >=1 scheduled occurrence inside the
-// pause window [start, min(end, returnDate)], create ONE unassigned chore due
-// `returnDate`. Idempotent (skips a title already due that day). Returns the
-// titles created.
+// Daily/weekly chores are forgiven across a pause; anything less frequent than
+// weekly accumulates and owes a make-up on return.
+const FORGIVEN_CADENCE = new Set(["daily", "weekly"]);
+const accumulates = (c) => !!c.cadence && !FORGIVEN_CADENCE.has(c.cadence);
+
+// Create the "catch-up" make-ups owed after a (global) pause: for each
+// accumulating template (cadence rarer than weekly) that had >=1 scheduled
+// occurrence inside the pause window [start, min(end, returnDate)], create ONE
+// chore due `returnDate` — assigned to its fixed owner if it has one, else
+// unassigned & claimable. Idempotent (skips a title already due that day).
 export async function createCatchups(env, { start, end, returnDate }) {
-  const defs = (await buildDefs(env)).filter((c) => c.catchup && c.teamId);
+  const defs = (await buildDefs(env)).filter((c) => accumulates(c) && c.teamId);
   if (!defs.length) return { created: 0, titles: [] };
 
   const windowEnd = end && end < returnDate ? end : returnDate;
@@ -729,7 +732,8 @@ export async function createCatchups(env, { start, end, returnDate }) {
       ),
       dueDate: returnDate,
       labelIds: c.labelIds,
-      stateId: todoStates[c.teamId], // unassigned & claimable, per design
+      assigneeId: c.assigneeId, // fixed owner if the template has one, else unassigned
+      stateId: todoStates[c.teamId],
       projectId,
     });
     if (res?.success) titles.push(c.title);
