@@ -419,6 +419,23 @@ async function editInteractionReply(interaction, content) {
   if (!res.ok) console.error("Interaction follow-up failed:", res.status, await res.text());
 }
 
+// For commands whose work can exceed Discord's 3s reply window: acknowledge
+// immediately with a deferred reply, run `worker()` in the background, then
+// edit the reply with the string it returns. Defaults to a public reply.
+function deferAndRun(interaction, ctx, worker, { ephemeral = false } = {}) {
+  ctx?.waitUntil?.(
+    (async () => {
+      try {
+        await editInteractionReply(interaction, await worker());
+      } catch (e) {
+        console.error("Deferred command failed:", e);
+        await editInteractionReply(interaction, "⚠️ That hit an error — check the logs.");
+      }
+    })(),
+  );
+  return { type: 5, data: ephemeral ? { flags: EPHEMERAL } : {} };
+}
+
 const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
 function addDays(ymd, n) {
   const [y, m, d] = ymd.split("-").map(Number);
@@ -445,50 +462,57 @@ async function choreCommand(interaction, env, ctx) {
       // chore scope -> the `paused` label on the template (the source of truth,
       // indefinite; great for variable seasons). Date options don't apply here.
       if (o.chore) {
-        const r = await setPausedLabel(env, o.chore, true, today);
-        refresh();
-        return r;
+        return deferAndRun(interaction, ctx, async () => {
+          const r = await setPausedLabel(env, o.chore, true, today);
+          await annotateTemplates(env).catch((e) => console.error("annotate failed:", e));
+          return r.data.content;
+        });
       }
-      // global / user -> a D1 pause window.
+      // global / user -> a D1 pause window. (Validation stays synchronous so
+      // input errors reply instantly; the Linear work is deferred.)
       if (!env.DB) return reply("Pause storage unavailable (no DB).");
       if (o.from && !isYmd(o.from)) return reply("`from` must be `YYYY-MM-DD`.");
       if (o.to && !isYmd(o.to)) return reply("`to` must be `YYYY-MM-DD`.");
       const from = o.from || today;
       const to = o.to || "9999-12-31";
       if (to < from) return reply("`to` must be on or after `from`.");
-      let scope = "global";
-      let target = null;
-      let label = "**all chores**";
-      let pausedUserId = null;
-      if (o.user) {
-        const u = (await getUsers(env)).find((x) =>
-          [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(o.user.toLowerCase())),
-        );
-        if (!u) return reply(`No Linear user matching "${o.user}".`);
-        scope = "user";
-        target = u.displayName || u.name;
-        pausedUserId = u.id;
-        label = `**${target}**'s chores (the other person covers)`;
-      }
-      await addPause(env, { scope, target, start: from, end: to, nowIso: new Date().toISOString() });
-      // Also archive already-generated recurring chores in the window.
-      const cleared = await clearGeneratedInWindow(env, { from, to, userId: pausedUserId });
-      // On a whole-household pause, spawn the prep checklist due at the start.
-      const prepNote = scope === "global" ? await spawnPrepChecklist(env, from) : "";
-      refresh();
-      const window = to === "9999-12-31" ? `**indefinitely** (from ${from})` : `**${from} → ${to}**`;
-      const undo = scope === "user" ? ` user:${target}` : "";
-      const clearedNote = cleared
-        ? ` Archived **${cleared}** generated chore${cleared === 1 ? "" : "s"} already on the list for those days.`
-        : "";
-      return say(`⏸️ Paused ${label} ${window}.${clearedNote}${prepNote} Use \`/chores resume${undo}\` to lift it.`);
+      return deferAndRun(interaction, ctx, async () => {
+        let scope = "global";
+        let target = null;
+        let label = "**all chores**";
+        let pausedUserId = null;
+        if (o.user) {
+          const u = (await getUsers(env)).find((x) =>
+            [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(o.user.toLowerCase())),
+          );
+          if (!u) return `No Linear user matching "${o.user}".`;
+          scope = "user";
+          target = u.displayName || u.name;
+          pausedUserId = u.id;
+          label = `**${target}**'s chores (the other person covers)`;
+        }
+        await addPause(env, { scope, target, start: from, end: to, nowIso: new Date().toISOString() });
+        // Also archive already-generated recurring chores in the window.
+        const cleared = await clearGeneratedInWindow(env, { from, to, userId: pausedUserId });
+        // On a whole-household pause, spawn the prep checklist due at the start.
+        const prepNote = scope === "global" ? await spawnPrepChecklist(env, from) : "";
+        await annotateTemplates(env).catch((e) => console.error("annotate failed:", e));
+        const window = to === "9999-12-31" ? `**indefinitely** (from ${from})` : `**${from} → ${to}**`;
+        const undo = scope === "user" ? ` user:${target}` : "";
+        const clearedNote = cleared
+          ? ` Archived **${cleared}** generated chore${cleared === 1 ? "" : "s"} already on the list for those days.`
+          : "";
+        return `⏸️ Paused ${label} ${window}.${clearedNote}${prepNote} Use \`/chores resume${undo}\` to lift it.`;
+      });
     }
     case "resume": {
       const today = localDate(new Date()).ymd;
       if (o.chore) {
-        const r = await setPausedLabel(env, o.chore, false, today);
-        refresh();
-        return r;
+        return deferAndRun(interaction, ctx, async () => {
+          const r = await setPausedLabel(env, o.chore, false, today);
+          await annotateTemplates(env).catch((e) => console.error("annotate failed:", e));
+          return r.data.content;
+        });
       }
       if (!env.DB) return reply("Pause storage unavailable (no DB).");
       let filter;
@@ -499,7 +523,9 @@ async function choreCommand(interaction, env, ctx) {
       return say(n ? `▶️ Resumed — cleared ${n} pause${n === 1 ? "" : "s"}.` : `No upcoming ${label} to clear.`);
     }
     case "pauses":
-      return pausesList(env);
+      return deferAndRun(interaction, ctx, async () => (await pausesList(env)).data.content, {
+        ephemeral: true,
+      });
     case "weight": {
       if (o.user && o.reset) {
         if (!env.DB) return reply("Weight storage unavailable (no DB).");
