@@ -48,10 +48,21 @@ export async function getActivePauses(env) {
   if (!env.DB) return [];
   await ensure(env);
   const r = await env.DB.prepare(
-    `SELECT scope, target, start_date, end_date, created_at
+    `SELECT id, scope, target, start_date, end_date, created_at
      FROM pauses WHERE status = 'active' ORDER BY start_date`,
   ).all();
   return r.results || [];
+}
+
+// Soft-clear a single pause by id (used for catch-up of expired pauses, which
+// clearPauses can't reach since it only touches end_date >= today).
+export async function markPauseCleared(env, id, nowIso, status = "cleared") {
+  if (!env.DB) return false;
+  await ensure(env);
+  await env.DB.prepare(`UPDATE pauses SET status = ?1, cleared_at = ?2 WHERE id = ?3`)
+    .bind(status, nowIso || "", id)
+    .run();
+  return true;
 }
 
 // Soft-clear upcoming active pauses (end_date >= today), optionally narrowed to

@@ -53,7 +53,7 @@ import {
   upsertComment,
   getViewerId,
 } from "./linear.js";
-import { getActivePauses, pausesOn } from "./pauses.js";
+import { getActivePauses, pausesOn, markPauseCleared } from "./pauses.js";
 import { getWeightResolver } from "./weights.js";
 
 const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -134,6 +134,8 @@ function parseLabelConfig(labelNodes) {
       (config.months ||= []).push(MONTHS[name]); // jan..dec (annual/semi/bimonthly)
     } else if (name === "paused") {
       config.paused = true; // skip generation while present
+    } else if (name === "catchup") {
+      config.catchup = true; // a skipped occurrence becomes a make-up on return
     } else {
       passthroughLabelIds.push(l.id); // a real label (room, etc.)
     }
@@ -360,6 +362,7 @@ async function buildDefs(env) {
         description: stripDescription(t.description),
         templateUrl: t.url, // link back to the template from the spawned chore
         onExisting: config.onExisting || "replace",
+        catchup: config.catchup, // `catchup` label -> skipped occurrences owe a make-up
         cadence: config.cadence,
         days,
         anyday,
@@ -532,12 +535,17 @@ export async function runWeek(env, opts = {}) {
   // copies whose title still has a template but whose due date the current
   // schedule no longer produces. Past-due and in-progress copies are left alone.
   const titlesWithDef = new Set(defs.filter((c) => c.teamId).map((c) => `${c.teamId}::${c.title}`));
+  // Catch-up chores are deliberately off-schedule make-ups — never reconcile them.
+  const catchupTitles = new Set(
+    defs.filter((c) => c.teamId && c.catchup).map((c) => `${c.teamId}::${c.title}`),
+  );
   const toReconcile = [];
   for (const teamId of teamIds) {
     for (const n of ctx.spawned[teamId]) {
       if (!n.dueDate || n.dueDate < todayYmd || n.dueDate > horizonEnd) continue;
       if (!isOpen(n) || n.state?.type === "started") continue;
       if (!titlesWithDef.has(`${teamId}::${n.title}`)) continue; // no template -> leave it
+      if (catchupTitles.has(`${teamId}::${n.title}`)) continue; // off-schedule make-up
       if (!correctKeys.has(`${teamId}::${n.title}@${n.dueDate}`)) toReconcile.push(n.id);
     }
   }
@@ -664,6 +672,86 @@ export async function runWeek(env, opts = {}) {
   // `moved` = chores archived because their template's schedule no longer
   // produces that day (e.g. a day change); `archived` = past-due cleanup.
   return { created, archived: toArchive.length, moved: toReconcile.length };
+}
+
+const ymdAdd1 = (ymd) => {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+};
+
+// Create the "catch-up" make-ups owed after a (global) pause: for each template
+// carrying the `catchup` label that had >=1 scheduled occurrence inside the
+// pause window [start, min(end, returnDate)], create ONE unassigned chore due
+// `returnDate`. Idempotent (skips a title already due that day). Returns the
+// titles created.
+export async function createCatchups(env, { start, end, returnDate }) {
+  const defs = (await buildDefs(env)).filter((c) => c.catchup && c.teamId);
+  if (!defs.length) return { created: 0, titles: [] };
+
+  const windowEnd = end && end < returnDate ? end : returnDate;
+  if (windowEnd < start) return { created: 0, titles: [] };
+
+  // Which catchup chores actually fell due while we were away.
+  const owed = defs.filter((c) => {
+    let cur = start;
+    for (let guard = 0; cur <= windowEnd && guard < 400; guard++) {
+      if (isDueToday(c, new Date(`${cur}T12:00:00Z`))) return true;
+      cur = ymdAdd1(cur);
+    }
+    return false;
+  });
+  if (!owed.length) return { created: 0, titles: [] };
+
+  const projectName = env.CHORES_PROJECT || "House Chores";
+  const projectId = await getProjectId(env, projectName);
+
+  // Dedup against open chores already due on the return date.
+  const teamIds = [...new Set(owed.map((c) => c.teamId))];
+  const existing = new Set();
+  const todoStates = {};
+  for (const teamId of teamIds) {
+    todoStates[teamId] = await getTodoStateId(env, teamId);
+    for (const n of await fetchSpawned(env, teamId, projectName)) {
+      if (n.dueDate) existing.add(`${teamId}::${n.title}@${n.dueDate}`);
+    }
+  }
+
+  const titles = [];
+  const span = windowEnd === start ? start : `${start}–${windowEnd}`;
+  for (const c of owed) {
+    if (existing.has(`${c.teamId}::${c.title}@${returnDate}`)) continue;
+    const res = await createIssue(env, {
+      teamId: c.teamId,
+      title: c.title,
+      description: withTemplateLink(
+        `🧺 Catch-up after the ${span} pause — this chore accumulates while paused, so it needs doing now.\n\n${c.description || ""}`.trim(),
+        c.templateUrl,
+      ),
+      dueDate: returnDate,
+      labelIds: c.labelIds,
+      stateId: todoStates[c.teamId], // unassigned & claimable, per design
+      projectId,
+    });
+    if (res?.success) titles.push(c.title);
+  }
+  return { created: titles.length, titles };
+}
+
+// Monday housekeeping: any global pause that ended on its own (dated, now past,
+// still active) gets its catch-ups created and is marked cleared so it won't
+// fire again. Indefinite pauses are left for an explicit /chores resume.
+export async function processExpiredPauses(env) {
+  if (!env.DB) return { created: 0, titles: [] };
+  const today = localDate(new Date()).ymd;
+  const nowIso = new Date().toISOString();
+  const titles = [];
+  for (const p of await getActivePauses(env)) {
+    if (p.scope !== "global" || p.end_date === "9999-12-31" || p.end_date >= today) continue;
+    const r = await createCatchups(env, { start: p.start_date, end: p.end_date, returnDate: ymdAdd1(p.end_date) });
+    titles.push(...r.titles);
+    await markPauseCleared(env, p.id, nowIso, "expired");
+  }
+  return { created: titles.length, titles };
 }
 
 // "2026-09-01" -> "Sep 1, 2026"

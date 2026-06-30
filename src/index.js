@@ -39,7 +39,7 @@ import {
   fetchRecurringTemplates,
   fetchChoresForCalendar,
 } from "./linear.js";
-import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, parseDuration } from "./recurring.js";
+import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, parseDuration, processExpiredPauses } from "./recurring.js";
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
@@ -505,6 +505,13 @@ async function handleCron(env) {
   // 1. Weekly recap (Mondays only): establish the coming week's chores up front,
   //    before the digest so it reflects them. Not part of the daily cadence.
   if (isMonday) {
+    try {
+      // Settle catch-ups for any pause that expired on its own first, so the
+      // make-ups exist before the digest.
+      await processExpiredPauses(env);
+    } catch (err) {
+      console.error("Expired-pause catch-up failed:", err);
+    }
     try {
       await runWeek(env);
     } catch (err) {

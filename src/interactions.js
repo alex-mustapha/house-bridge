@@ -27,7 +27,7 @@ import {
   assignIssue,
   unassignIssue,
 } from "./linear.js";
-import { localDate, annotateTemplates, withTemplateLink, runWeek } from "./recurring.js";
+import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
 
@@ -515,12 +515,28 @@ async function choreCommand(interaction, env, ctx) {
         });
       }
       if (!env.DB) return reply("Pause storage unavailable (no DB).");
-      let filter;
-      let label = "all pauses";
-      if (o.user) { filter = { scope: "user", target: o.user }; label = `${o.user}'s pauses`; }
-      const n = await clearPauses(env, today, filter);
-      refresh();
-      return say(n ? `▶️ Resumed — cleared ${n} pause${n === 1 ? "" : "s"}.` : `No upcoming ${label} to clear.`);
+      const filter = o.user ? { scope: "user", target: o.user } : undefined;
+      const label = o.user ? `${o.user}'s pauses` : "all pauses";
+      return deferAndRun(interaction, ctx, async () => {
+        // Global pauses being lifted owe catch-ups for any accumulating chore.
+        const globals = o.user ? [] : (await getActivePauses(env)).filter((p) => p.scope === "global");
+        const n = await clearPauses(env, today, filter);
+        const made = [];
+        for (const p of globals) {
+          const r = await createCatchups(env, {
+            start: p.start_date,
+            end: p.end_date === "9999-12-31" ? null : p.end_date,
+            returnDate: today,
+          });
+          made.push(...r.titles);
+        }
+        await annotateTemplates(env).catch((e) => console.error("annotate failed:", e));
+        const base = n ? `▶️ Resumed — cleared ${n} pause${n === 1 ? "" : "s"}.` : `No upcoming ${label} to clear.`;
+        const catchNote = made.length
+          ? ` 🧺 Catch-up tasks created (unassigned — claim them): **${made.join("**, **")}**.`
+          : "";
+        return base + catchNote;
+      });
     }
     case "pauses":
       return deferAndRun(interaction, ctx, async () => (await pausesList(env)).data.content, {
