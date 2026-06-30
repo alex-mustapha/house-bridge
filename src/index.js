@@ -39,7 +39,7 @@ import {
   fetchRecurringTemplates,
   fetchChoresForCalendar,
 } from "./linear.js";
-import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, parseDuration, processExpiredPauses } from "./recurring.js";
+import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, parseDuration, processExpiredPauses, choreCost } from "./recurring.js";
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
@@ -363,16 +363,20 @@ export default {
         console.error("dashboard log refresh failed:", e);
       }
       const templates = await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring");
-      const estMap = {};
+      // Map each chore title to its effort-adjusted minutes, matching how the
+      // weekly balancer weighs it (time × effort multiplier).
+      const costMap = {};
       for (const t of templates) {
-        const m = (t.description || "").match(/^\s*estimate\s*:\s*(.+)$/im);
-        const mins = m ? parseDuration(m[1]) : undefined;
-        if (mins) estMap[(t.title || "").toLowerCase()] = mins;
+        const em = (t.description || "").match(/^\s*estimate\s*:\s*(.+)$/im);
+        const mins = em ? parseDuration(em[1]) : undefined;
+        const ef = (t.description || "").match(/^\s*effort\s*:\s*([1-5])\s*$/im);
+        const effort = ef ? parseInt(ef[1], 10) : undefined;
+        if (mins || effort) costMap[(t.title || "").toLowerCase()] = choreCost(mins, effort);
       }
       const allowed = [7, 30, 90, 365];
       let range = parseInt(url.searchParams.get("range") || "30", 10);
       if (!allowed.includes(range)) range = 30;
-      const data = await queryDashboard(env, (title) => estMap[(title || "").toLowerCase()] ?? 15, range);
+      const data = await queryDashboard(env, (title) => costMap[(title || "").toLowerCase()] ?? 15, range);
       if (!data) return new Response("D1 not configured\n", { status: 200 });
       return new Response(renderDashboardPage(data, range), {
         headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },

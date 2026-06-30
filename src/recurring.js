@@ -26,7 +26,9 @@
 //     week: 0 | 1 | 2       which week for triweekly (default 0)
 //     dueafter: 2           due date N days out (default today)
 //     count: 3              "anyday" chore: times/week on auto-spread days
-//     estimate: 30m         effort (e.g. 30m, 1h30m) — weekly balance is by total time
+//     estimate: 30m         time (e.g. 30m, 1h30m); weekly balance is by time
+//     effort: 1..5          difficulty (1 easiest, 5 hardest); scales the balance
+//                           cost on top of time (long-but-easy counts less)
 //     opposite: <title>     assign the other person from that chore on the same day
 //     start: 2026-06-27     first eligible date; also anchors the every-N-weeks cycle
 //     end: 2026-10-31       last eligible date; stops recurring after it
@@ -92,6 +94,16 @@ const ONMISS = new Set(["always", "skip", "replace"]);
 // chores still balance ≈evenly by count.
 const DEFAULT_EST_MIN = 15;
 
+// effort: 1..5 -> a multiplier on the time-based cost, centered on 3 (neutral).
+// A long-but-easy chore (effort 1) counts half its minutes; a short-but-grueling
+// one (effort 5) counts double. Absent/3 leaves the cost unchanged.
+const EFFORT_MULT = { 1: 0.5, 2: 0.75, 3: 1, 4: 1.5, 5: 2 };
+export const effortMultiplier = (effort) => EFFORT_MULT[effort] ?? 1;
+
+// The balancing cost of one chore occurrence: effort-adjusted minutes.
+export const choreCost = (estimate, effort) =>
+  (estimate || DEFAULT_EST_MIN) * effortMultiplier(effort);
+
 const ANYDAY_SPREAD = {
   1: ["sunday"], // once — due end of week
   2: ["wednesday", "sunday"],
@@ -156,7 +168,7 @@ export function parseDuration(s) {
 
 // week/dueafter/opposite/start/end/count/estimate live in the description;
 // parsed then stripped. (Months come from labels only.)
-const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end|count|estimate)\s*:/i;
+const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end|count|estimate|effort)\s*:/i;
 function parseDescriptionConfig(description) {
   const cfg = {};
   if (!description) return cfg;
@@ -167,6 +179,10 @@ function parseDescriptionConfig(description) {
   // estimate: 30m / 1h30m -> effort in minutes (weights the weekly balance).
   const est = description.match(/^\s*estimate\s*:\s*(.+)$/im);
   if (est) cfg.estimate = parseDuration(est[1]);
+  // effort: 1..5 -> difficulty (1 easiest, 5 hardest). Scales the balance cost
+  // on top of time, so a long-but-easy chore counts less than its minutes.
+  const eff = description.match(/^\s*effort\s*:\s*([1-5])\s*$/im);
+  if (eff) cfg.effort = parseInt(eff[1], 10);
   // week phase for biweekly (even/odd) and triweekly (0/1/2).
   const weekLine = description.match(/^\s*week\s*:\s*(even|odd|\d+)\s*$/im);
   if (weekLine) {
@@ -365,6 +381,7 @@ async function buildDefs(env) {
         anyday,
         count,
         estimate: descCfg.estimate,
+        effort: descCfg.effort,
         dom: config.dom,
         months: config.months,
         weekPhase: descCfg.weekPhase,
@@ -581,10 +598,11 @@ export async function runWeek(env, opts = {}) {
   if (rotation.length >= 2 && plan.length) {
     const [A, B] = rotation;
     const wt = { [A]: resolveWeight(nameOf(A)), [B]: resolveWeight(nameOf(B)) };
-    // Balance by total effort (minutes), so a 60-min chore counts more than a
-    // 5-min one. Unestimated chores use DEFAULT_EST_MIN -> ≈count-balancing.
+    // Balance by effort-adjusted minutes (time × effort multiplier), so a long
+    // chore counts more than a short one and a hard chore more than an easy one.
+    // Unestimated chores use DEFAULT_EST_MIN -> ≈count-balancing.
     const counts = { [A]: 0, [B]: 0 };
-    const weightOf = (c) => (c && c.estimate) || DEFAULT_EST_MIN;
+    const weightOf = (c) => (c ? choreCost(c.estimate, c.effort) : DEFAULT_EST_MIN);
     // Whoever has the lower weighted load (minutes / member-weight) goes next.
     const lower = () => (counts[A] / wt[A] <= counts[B] / wt[B] ? A : B);
     for (const teamId of teamIds) {
@@ -768,12 +786,14 @@ function formatDate(ymd) {
 // Human-readable cadence from a parsed chore config.
 function describeSchedule(c) {
   const est = c.estimate ? ` · ~${c.estimate}m` : "";
+  const eff = c.effort ? ` · effort ${c.effort}/5` : "";
+  const tail = est + eff;
   if (c.anyday) {
     const per = c.cadence === "biweekly" ? "every other week" : c.cadence === "triweekly" ? "every 3 weeks" : "week";
     const n = c.count || 1;
-    return (n === 1 ? `Any day, once a ${per === "week" ? "week" : per}` : `${n}× per ${per}, flexible days`) + est;
+    return (n === 1 ? `Any day, once a ${per === "week" ? "week" : per}` : `${n}× per ${per}, flexible days`) + tail;
   }
-  return describeBase(c) + est;
+  return describeBase(c) + tail;
 }
 
 function describeBase(c) {
@@ -903,6 +923,7 @@ export async function annotateTemplates(env) {
         anyday,
         count,
         estimate: descCfg.estimate,
+        effort: descCfg.effort,
         dom: config.dom,
         months: config.months,
         weekPhase: descCfg.weekPhase,
