@@ -168,7 +168,7 @@ export function parseDuration(s) {
 
 // week/dueafter/opposite/start/end/count/estimate live in the description;
 // parsed then stripped. (Months come from labels only.)
-const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end|count|estimate|effort)\s*:/i;
+const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end|count|estimate|effort|every)\s*:/i;
 function parseDescriptionConfig(description) {
   const cfg = {};
   if (!description) return cfg;
@@ -183,6 +183,10 @@ function parseDescriptionConfig(description) {
   // on top of time, so a long-but-easy chore counts less than its minutes.
   const eff = description.match(/^\s*effort\s*:\s*([1-5])\s*$/im);
   if (eff) cfg.effort = parseInt(eff[1], 10);
+  // every: Nd -> rolling interval of N days, anchored on `start:`. (No frequency
+  // label needed; "every: 3d" reads due every 3 days from the start date.)
+  const ev = description.match(/^\s*every\s*:\s*(\d{1,3})\s*d?\s*$/im);
+  if (ev) cfg.intervalDays = Math.max(1, parseInt(ev[1], 10));
   // week phase for biweekly (even/odd) and triweekly (0/1/2).
   const weekLine = description.match(/^\s*week\s*:\s*(even|odd|\d+)\s*$/im);
   if (weekLine) {
@@ -316,6 +320,13 @@ function isDueToday(chore, now) {
   switch (chore.cadence) {
     case "daily":
       return true;
+    case "interval": {
+      // Every N days, counting from the `start:` anchor (required).
+      if (!chore.intervalDays || !chore.start) return false;
+      const [sy, sm, sd] = chore.start.split("-").map(Number);
+      const diff = Math.round((Date.UTC(L.year, L.month - 1, L.dom) - Date.UTC(sy, sm - 1, sd)) / 86_400_000);
+      return diff >= 0 && diff % chore.intervalDays === 0;
+    }
     case "weekly":
       return onWeekday;
     case "biweekly":
@@ -357,12 +368,21 @@ async function buildDefs(env) {
     const templates = await fetchRecurringTemplates(env, projectName);
     for (const t of templates) {
       const { config, passthroughLabelIds } = parseLabelConfig(t.labels?.nodes || []);
+      const descCfg = parseDescriptionConfig(t.description);
+      // `every: Nd` is a self-contained cadence — no frequency label needed, but
+      // it must have a `start:` anchor to count the interval from.
+      if (descCfg.intervalDays && !config.cadence) {
+        if (!descCfg.start) {
+          console.warn(`Template "${t.title}" uses every: but has no start: anchor — skipping.`);
+          continue;
+        }
+        config.cadence = "interval";
+      }
       if (!config.cadence) {
         console.warn(`Template "${t.title}" has no frequency label — skipping.`);
         continue;
       }
       if (config.paused) continue; // `paused` label -> don't generate
-      const descCfg = parseDescriptionConfig(t.description);
       // "anyday": a weekly-family chore with no weekday label runs `count` times
       // per week on auto-spread days (default once, due Sunday).
       const weeklyFamily = ["weekly", "biweekly", "triweekly"].includes(config.cadence);
@@ -382,6 +402,7 @@ async function buildDefs(env) {
         count,
         estimate: descCfg.estimate,
         effort: descCfg.effort,
+        intervalDays: descCfg.intervalDays,
         dom: config.dom,
         months: config.months,
         weekPhase: descCfg.weekPhase,
@@ -803,6 +824,7 @@ function describeBase(c) {
   const inMonths = months ? ` (${months})` : "";
   switch (c.cadence) {
     case "daily": return "Every day";
+    case "interval": return `Every ${c.intervalDays} days${c.start ? ` from ${c.start}` : ""}`;
     case "weekly": return `Weekly on ${days || "—"}`;
     case "biweekly": return `Every other week on ${days || "—"}`;
     case "triweekly": return `Every 3 weeks on ${days || "—"}`;
@@ -823,6 +845,7 @@ export async function describeTemplate(env, q) {
   if (!t) return { error: `no template matching "${q}"` };
   const { config } = parseLabelConfig(t.labels?.nodes || []);
   const descCfg = parseDescriptionConfig(t.description);
+  if (descCfg.intervalDays && !config.cadence && descCfg.start) config.cadence = "interval";
   const weeklyFamily = ["weekly", "biweekly", "triweekly"].includes(config.cadence);
   const anyday = weeklyFamily && !(config.days && config.days.length);
   const count = anyday ? descCfg.count || 1 : undefined;
@@ -832,6 +855,8 @@ export async function describeTemplate(env, q) {
     anyday,
     count,
     estimate: descCfg.estimate,
+    effort: descCfg.effort,
+    intervalDays: descCfg.intervalDays,
     dom: config.dom,
     months: config.months,
     weekPhase: descCfg.weekPhase,
@@ -906,8 +931,9 @@ export async function annotateTemplates(env) {
   for (const t of templates) {
    try {
     const { config } = parseLabelConfig(t.labels?.nodes || []);
-    if (!config.cadence) { report.push({ title: t.title, action: "no-cadence", labels: (t.labels?.nodes || []).map((l) => l.name) }); continue; }
     const descCfg = parseDescriptionConfig(t.description);
+    if (descCfg.intervalDays && !config.cadence && descCfg.start) config.cadence = "interval";
+    if (!config.cadence) { report.push({ title: t.title, action: "no-cadence", labels: (t.labels?.nodes || []).map((l) => l.name) }); continue; }
 
     const head = `${SCHEDULE_MARKER} _(auto-generated; not copied to spawned chores)_\n`;
     let body;
@@ -924,6 +950,7 @@ export async function annotateTemplates(env) {
         count,
         estimate: descCfg.estimate,
         effort: descCfg.effort,
+        intervalDays: descCfg.intervalDays,
         dom: config.dom,
         months: config.months,
         weekPhase: descCfg.weekPhase,
