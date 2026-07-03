@@ -497,7 +497,7 @@ export async function forceReplace(env, identifier) {
 // aren't lopsided. Run weekly (during the Monday recap), not daily.
 export async function runWeek(env, opts = {}) {
   const defs = await buildDefs(env);
-  if (!defs.length) return { created: 0, archived: 0, moved: 0 };
+  if (!defs.length) return { created: 0, archived: 0, moved: 0, remaining: 0, capped: false };
 
   const users = await getUsers(env);
   let rotation = [];
@@ -529,7 +529,10 @@ export async function runWeek(env, opts = {}) {
   // lookups and the week stays under the Worker subrequest cap.
   const base = new Date();
   const todayYmd = localDate(base).ymd;
-  const horizonEnd = localDate(new Date(base.getTime() + 6 * 86_400_000)).ymd;
+  // How many days ahead to materialize (default 7). A larger window is a
+  // one-time fill; later runs only add the new far days (dedup skips the rest).
+  const horizonDays = Math.max(1, parseInt(env.GEN_HORIZON_DAYS || "7", 10) || 7);
+  const horizonEnd = localDate(new Date(base.getTime() + (horizonDays - 1) * 86_400_000)).ymd;
   const isOpen = (n) => !["completed", "canceled"].includes(n.state?.type);
 
   const projectName = env.CHORES_PROJECT || "House Chores";
@@ -556,13 +559,13 @@ export async function runWeek(env, opts = {}) {
     }
   }
 
-  // PLAN: one entry per (chore, day-it's-due) in the next 7 days, skipping any
+  // PLAN: one entry per (chore, day-it's-due) across the horizon, skipping any
   // occurrence that already exists. `correctKeys` is the full set the current
   // templates produce in-window (before dedup) — used below to reconcile chores
   // whose template moved them to a different day.
   const plan = [];
   const correctKeys = new Set();
-  for (let d = 0; d < 7; d++) {
+  for (let d = 0; d < horizonDays; d++) {
     const L = localDate(new Date(base.getTime() + d * 86_400_000));
     for (const c of defs) {
       if (!c.teamId || !isDueToday(c, new Date(`${L.ymd}T12:00:00Z`))) continue;
@@ -703,11 +706,18 @@ export async function runWeek(env, opts = {}) {
     }
   }
 
-  // EXECUTE.
-  for (const id of [...toArchive, ...toReconcile]) await archiveIssue(env, id);
+  // EXECUTE. Cap creates per invocation to stay under the Worker 50-subrequest
+  // limit — matters only for a one-time large-horizon fill; normal weekly runs
+  // create far fewer. Leftover occurrences fill in on the next run (dedup-safe).
+  const archives = [...toArchive, ...toReconcile];
+  const maxCreates = Math.max(1, parseInt(env.GEN_MAX_CREATES || "40", 10) || 40);
+  const budget = Math.max(0, maxCreates - archives.length);
+  for (const id of archives) await archiveIssue(env, id);
+  const toCreate = plan.filter((e) => !e.skip);
   let created = 0;
-  for (const e of plan) {
-    if (e.skip) continue; // paused (user out / everyone out)
+  let capped = false;
+  for (const e of toCreate) {
+    if (created >= budget) { capped = true; break; }
     const result = await createIssue(env, {
       teamId: e.c.teamId,
       title: e.c.title,
@@ -725,8 +735,10 @@ export async function runWeek(env, opts = {}) {
   }
   // Idempotent: existing occurrences are skipped, so re-runs only fill in gaps.
   // `moved` = chores archived because their template's schedule no longer
-  // produces that day (e.g. a day change); `archived` = past-due cleanup.
-  return { created, archived: toArchive.length, moved: toReconcile.length };
+  // produces that day; `archived` = past-due cleanup; `remaining`/`capped` flag
+  // a partial fill (hit the per-run create cap — run again to finish).
+  const remaining = toCreate.length - created;
+  return { created, archived: toArchive.length, moved: toReconcile.length, remaining, capped };
 }
 
 const ymdAdd1 = (ymd) => {

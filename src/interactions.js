@@ -574,9 +574,12 @@ async function choreCommand(interaction, env, ctx) {
           try {
             const r = await runWeek(env, { skipCleanup: true });
             const moved = r.moved ? ` · **${r.moved}** stale day(s) removed` : "";
+            const more = r.capped
+              ? ` ⏳ Hit the per-run cap with **${r.remaining}** still to create — run \`/chores sync\` again to finish.`
+              : "";
             await editInteractionReply(
               interaction,
-              `♻️ Reschedule complete — **${r.created}** new chore${r.created === 1 ? "" : "s"} created${moved}. ` +
+              `♻️ Reschedule complete — **${r.created}** new chore${r.created === 1 ? "" : "s"} created${moved}.${more} ` +
                 "Past-due and in-progress chores were left untouched (past-due cleanup runs Mondays only).",
             );
           } catch (e) {
