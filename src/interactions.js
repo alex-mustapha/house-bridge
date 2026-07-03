@@ -474,8 +474,16 @@ async function choreCommand(interaction, env, ctx) {
       // global / user -> a D1 pause window. (Validation stays synchronous so
       // input errors reply instantly; the Linear work is deferred.)
       if (!env.DB) return reply("Pause storage unavailable (no DB).");
-      if (o.from && !isYmd(o.from)) return reply("`from` must be `YYYY-MM-DD`.");
-      if (o.to && !isYmd(o.to)) return reply("`to` must be `YYYY-MM-DD`.");
+      // Guardrail: a global pause archives EVERY chore in the window, so never
+      // do it by accident — require an explicit everyone:true when no user given.
+      if (!o.user && !o.everyone) {
+        return reply(
+          "⚠️ No `user:` given. To pause just one person use `user:<name>`. " +
+            "To pause the **whole household** (this archives all chores in the window), re-run with `everyone:true`.",
+        );
+      }
+      if (o.from && !isYmd(o.from)) return reply("`from` must be `YYYY-MM-DD` (e.g. 2026-07-14).");
+      if (o.to && !isYmd(o.to)) return reply("`to` must be `YYYY-MM-DD` (e.g. 2026-07-14).");
       const from = o.from || today;
       const to = o.to || "9999-12-31";
       if (to < from) return reply("`to` must be on or after `from`.");

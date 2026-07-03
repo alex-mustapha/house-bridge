@@ -29,10 +29,11 @@ export const COMMANDS = [
       {
         type: 1, // SUB_COMMAND
         name: "pause",
-        description: "Pause chores (no scope = everyone; no dates = until you resume)",
+        description: "Pause a person's or one chore's chores (whole household needs everyone:true)",
         options: [
           { type: 3, name: "user", description: "Pause just this person (sick/away)", required: false, autocomplete: true },
           { type: 3, name: "chore", description: "Pause just this chore", required: false, autocomplete: true },
+          { type: 5, name: "everyone", description: "Pause the WHOLE household (archives all chores in the window)", required: false },
           { type: 3, name: "from", description: "Start date YYYY-MM-DD (default today)", required: false },
           { type: 3, name: "to", description: "End date YYYY-MM-DD (default: indefinite)", required: false },
         ],
