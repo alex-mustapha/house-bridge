@@ -3,23 +3,28 @@
 A tiny Cloudflare Worker that sends **Linear → Discord** notifications for a
 shared household workspace:
 
-- **Real-time updates** — issue created / updated / completed / commented, posted
-  as rich Discord embeds, routed per team.
+- **Real-time updates** — meaningful issue changes (created / completed / canceled
+  / removed, and edits to title, status, assignee, priority, or due date) posted as
+  rich embeds, routed per team. Comments and description-only edits (e.g. ticking a
+  checklist box) are intentionally **not** echoed.
 - **Daily digest** — today's + overdue chores, **grouped by assignee and
-  @-mentioning each person**, on a cron.
+  @-mentioning each person**, with an **actions dropdown** (mark done / claim
+  unassigned).
 - **Recurring chores** — a free replacement for Linear's paid recurring issues,
-  authored entirely in Linear, with auto-assignment that alternates owners.
-- **Free-plan cap warning** — pings `#bot-log` as you approach the 250 active-issue
-  limit so you know when to archive.
-- **"All done today" celebration** — when you complete a chore and nothing else
-  due today/overdue remains in that team, posts a 🎉 to Discord.
-- **Weekly scoreboard** — every Monday, a separate scoreboard per person
-  (done, on-time, missed, streak).
-- **Manual toolkit** — key-guarded HTTP endpoints to run the cron, force a
-  replace, or post the scoreboard on demand.
+  authored entirely in Linear, with **effort-weighted 60/40 auto-assignment** and a
+  configurable multi-week generation horizon.
+- **Calendars + dashboard** — subscribe to per-person ICS feeds; a mobile stats
+  dashboard at `/dashboard`.
+- **Free-plan cap warning**, **weekly scoreboard**, and a key-guarded **manual
+  toolkit**.
 
 Everything here runs on **free tiers** (Cloudflare Workers free plan, Linear free
 plan, Discord webhooks). You will not hit a paywall.
+
+> **📖 The full, current feature reference is [FEATURES.md](FEATURES.md)** — it's
+> the source of truth for cadences, directives, the `/chores` commands, pausing,
+> catch-ups, reconciliation, calendars, and the dashboard. This README covers
+> setup and the Discord layout.
 
 > Note: Linear's *native* Discord integration is inbound only (`/linear issue`,
 > `/linear search`, `/linear wrap`). It does **not** push updates to Discord.
@@ -40,13 +45,13 @@ plan, Discord webhooks). You will not hit a paywall.
    # project-updates    ← weekly status posts
 📅 DAILY
    # due-soon           ← morning digest, split by owner + @-mentions; also the
-                          default home for the 🎉 celebration and weekly scoreboard
+                          default home for the weekly scoreboard
 🤖 ADMIN
    # bot-log            ← Worker health + "near 250-issue cap" warnings
 ```
 
-The 🎉 celebration and scoreboard default to `#due-soon`; set
-`DISCORD_WEBHOOK_DONE` / `DISCORD_WEBHOOK_STATS` to give them their own channels.
+The scoreboard defaults to `#due-soon`; set `DISCORD_WEBHOOK_STATS` to give it its
+own channel.
 
 Rooms (bedroom, bathroom, kitchen…) live as **Linear labels**, not channels —
 so the feed stays quiet and the digest tags each item by room. Promote a room to
@@ -367,8 +372,8 @@ secret (`wrangler secret put NAME`). Local dev reads `.dev.vars` (see
 | `DISCORD_WEBHOOK_DEFAULT` | yes | Fallback channel for unmapped teams. |
 | `DISCORD_WEBHOOK_DUE` | yes | Daily digest channel. |
 | `DISCORD_WEBHOOK_ADMIN` | rec. | Cap warnings / bot log. |
-| `DISCORD_WEBHOOK_DONE` | opt. | "All done" celebration (falls back to DUE → DEFAULT). |
 | `DISCORD_WEBHOOK_STATS` | opt. | Weekly scoreboard (falls back to DUE → DEFAULT). |
+| `DISCORD_BOT_TOKEN` | rec. | Bot-posted digest with the actions dropdown; also `/register-commands`, `/pin-dashboard`. |
 | `DISCORD_MENTIONS` | opt. | `Name:DiscordUserID,…` so the digest @-mentions owners. |
 | `ROTATION_MEMBERS` | opt. | `Alex,Kristal` — alternating auto-assignment. |
 | `CRON_KEY` | opt. | Enables the manual toolkit endpoints. |

@@ -15,20 +15,33 @@ Two control surfaces, deliberately split:
   labels/directives: cadence, weekday, month, day-of-month, `start:`/`end:`, `count:`,
   `estimate:`, `silent`, `paused`, `opposite:`, `every: Nd|Nw|Nm`.
 - **`/chores` Discord slash command** is for **one-off / transient** changes:
-  `pause`/`resume` (scoped), `snooze`, `skip`, `add`, `done`, `pauses`, `help`.
-  Discord is the user's preferred primary interface for everything except templating.
+  `pause`/`resume` (scoped), `done`, `claim`, `unclaim`, `snooze`, `skip`, `add`, `pauses`,
+  `weight`, `calendar`, `sync`, `help`. Discord is the user's preferred primary interface for
+  everything except templating.
 
 **New one-off scheduling features → add as `/chores` subcommands, NOT new endpoints/labels.**
 
 Pause semantics:
 - `/chores pause chore:<name>` toggles the **`paused` label** on the matching Recurring
-  template(s) — the label is the source of truth for taking a chore off-radar (good for
-  variable seasons like mowing). Adds a dated audit comment.
-- `/chores pause` (everyone) / `/chores pause user:<name>` are **D1 holds** with date windows
-  (open-ended = until resume). A user pause = "other person covers": paused user drops from
-  rotation (their rotating chores shift to the other), fixed chores skipped.
-- Holds are **soft-cleared** (status + cleared_at, not deleted) so history is queryable via
-  `/chores pauses`.
+  template(s) — source of truth for taking a chore off-radar. Adds a dated audit comment AND
+  retracts already-generated future copies (reconcile).
+- `/chores pause user:<name>` and `/chores pause everyone:true` are **D1 holds** with date
+  windows (open-ended = until resume). **Guardrail:** no `user:` and no `everyone:true` →
+  refuse (a global pause archives the whole window; never do it by accident).
+- **User pause = "other person covers": reassign in place** (`coverUserPause`), NOT
+  delete/recreate. Global pause archives the window + spawns Vacation Prep. Resume rebalances.
+- Monthly-or-rarer chores skipped during a global pause get a **catch-up** make-up on resume /
+  auto-expiry (`createCatchups`, `processExpiredPauses`).
+- Holds are **soft-cleared** (status + cleared_at) so history is queryable via `/chores pauses`.
+
+Long horizon + reconciliation:
+- Generation materializes `GEN_HORIZON_DAYS` (30) ahead, capped at `GEN_MAX_CREATES` (40) per
+  run (subrequest limit); dedup makes it a one-time fill. So changes must reconcile the existing
+  window, not wait for next week: template edits (webhook → `runWeek`), `paused` label
+  add/remove, and `/chores weight` (`rebalanceWindow`) all update materialized chores in place.
+  Reconcile only touches future, not-yet-started chores. **Deleted-template orphans are NOT
+  pruned** (deprioritized).
+- Dates in `/chores pause` etc. are strict `YYYY-MM-DD` (a typo like `2026-07014` is rejected).
 
 ## Gotchas
 - **Deploy → commit → push, same turn.** After every `npm run deploy`, immediately

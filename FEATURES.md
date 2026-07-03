@@ -2,16 +2,18 @@
 
 The **linear-discord-bridge** is a single Cloudflare Worker that turns a Linear
 workspace into a shared household chore system, with Discord as the day-to-day
-interface. Everything runs on free tiers (Cloudflare Workers + D1, Linear free,
-Discord).
+interface and personal calendars as a passive view. Everything runs on free
+tiers (Cloudflare Workers + D1, Linear free, Discord).
 
 - **Linear** holds the data: recurring-chore *templates* (definitions) and the
-  actual *chores* (in the House Chores project).
-- **The Worker** generates chores, posts to Discord, serves slash commands, and
-  runs maintenance — daily on a cron plus on demand.
-- **Discord** is how you interact: a daily digest with tap-to-complete buttons,
-  and the `/chores` command for one-off changes.
-- **D1** stores long-term analytics and pause history.
+  actual *chores* (in the House Chores project) plus one-off tasks (Ad Hoc).
+- **The Worker** generates chores, posts to Discord, serves slash commands,
+  reconciles changes, serves calendar feeds + a stats dashboard, and runs
+  maintenance — daily on a cron plus on demand.
+- **Discord** is how you interact: a daily digest with an actions dropdown, and
+  the `/chores` command for one-off changes.
+- **Calendars** (iOS/Google via ICS subscription) show upcoming chores passively.
+- **D1** stores long-term analytics, pause history, and rotation-weight overrides.
 
 ---
 
@@ -20,11 +22,12 @@ Discord).
 Two entry points in one Worker:
 
 - **`fetch()`** — receives Linear webhooks (real-time events), Discord
-  interactions (slash commands + buttons), and the toolkit/status endpoints.
+  interactions (slash commands + menus), calendar/status/dashboard pages, and the
+  keyed toolkit endpoints.
 - **`scheduled()`** — the daily cron (`0 12 * * *` UTC = 8am EDT / 7am EST).
   Every day: digest + cap check + auto-archive. **Mondays** add the weekly recap
-  (generate the week + scoreboard + D1 snapshot). **Sundays** refresh template
-  schedule comments.
+  (settle expired pauses → generate the window → scoreboard → D1 snapshot).
+  **Sundays** refresh template schedule comments.
 
 All dates — "today", weekday, day-of-month, due dates, streaks — are computed in
 **America/New_York** via `Intl.DateTimeFormat`, so they reflect the household's
@@ -35,40 +38,44 @@ is UTC and doesn't shift for DST — see the note in `wrangler.toml`.)
 
 ## Real-time activity mirror
 
-Beyond the daily digest, the Worker mirrors Linear activity to Discord as it
-happens (via Linear webhooks):
+The Worker mirrors **meaningful** Linear issue changes to Discord as they happen
+(via webhooks), deliberately kept quiet:
 
-- **Issue events** — created / updated / completed / canceled / removed — post an
-  embed with status, assignee, and priority, color- and emoji-coded by action
-  (🆕 created · ✏️ updated · ✅ completed · 🚫 canceled · 🗑️ removed).
-- **New comments** on issues post an embed too.
-- **Recurring templates are excluded** (they live in the Recurring project), and
-  any chore labeled **`silent`** is skipped — so routine generation doesn't spam
-  the channel.
+- **Issue events** — created / completed / canceled / removed, and updates that
+  change a **surfaced field** (title, status, assignee, priority, due date) — post
+  a color/emoji-coded embed.
+- **Comments are never echoed**, and **description-only edits are skipped** — so
+  ticking a checklist box, or the bot's own schedule comments, don't spam the
+  channel. (Linear's webhook `updatedFrom` tells us which fields changed.)
+- **Recurring templates are excluded** from the mirror; any chore labeled
+  **`silent`** is skipped too.
 - **Per-team routing:** events post to `DISCORD_WEBHOOK_<TEAMKEY>` (e.g.
-  `DISCORD_WEBHOOK_CHO`, `DISCORD_WEBHOOK_PRJ`) if set, otherwise
-  `DISCORD_WEBHOOK_DEFAULT` — so different teams can go to different channels.
+  `DISCORD_WEBHOOK_CHO`) if set, else `DISCORD_WEBHOOK_DEFAULT`.
+
+Editing a **Recurring template** in Linear (a day/cadence change, or toggling the
+`paused` label) doesn't post, but **triggers an immediate reconcile** of the
+materialized window (see *Reconciliation*).
 
 ---
 
 ## Recurring chores (templates)
 
 Recurring chores are defined as **template tickets** in the **Recurring** Linear
-project. They're definitions, not chores to do — they stay in Backlog. Each
-Monday the Worker reads them and generates that week's actual chores into
-**House Chores** (assigned, due-dated, checklists copied). A 🔁 Schedule comment
-on each template shows its cadence, active window, and next dates.
+project. They're definitions, not chores to do — they stay in Backlog. The Worker
+reads them and generates actual chores into **House Chores** (assigned, due-dated,
+checklists copied). A 🔁 Schedule comment on each template shows its cadence,
+active window, effort, and next dates.
 
 ### Labels
 
 | Label | Purpose |
 |---|---|
-| **frequency** (one) | `daily` `weekly` `biweekly` `triweekly` `semi-monthly` `monthly` `bimonthly` `semi-annually` `annually` |
+| **frequency** (one) | `daily` `weekly` `biweekly` `triweekly` `semi-monthly` `monthly` `bimonthly` `semi-annually` `annually`. *(Optional if you use the `every:` directive.)* |
 | **weekday** (any) | `monday`…`sunday` for weekly-family cadences. **Omit** to make it an "any day" chore (due Sunday, or N/week via `count:`). |
-| **month** (any) | `january`…`december`. Limits a chore to those months **every year** (works on *all* cadences — e.g. a weekly mow chore only May–Sep). For monthly-family cadences it also picks which month(s) the cycle lands on. |
+| **month** (any) | `january`…`december`. Limits a chore to those months **every year** (all cadences — e.g. a weekly mow chore only May–Sep). For monthly-family cadences it also picks which month(s) the cycle lands on. |
 | **day-of-month** | `first` / `middle` / `last` → 1st / 15th / last day (monthly-family). |
 | **on-miss** | `skip` (you still owe it) / `replace` (default — supersede once overdue). |
-| **paused** | Takes this one chore off-radar until removed (source of truth for seasonal pausing). Toggle from Discord with `/chores pause chore:` / `resume chore:`. |
+| **paused** | Takes this one chore off-radar until removed (source of truth for seasonal pausing). Toggle from Discord with `/chores pause chore:` / `resume chore:`. Adding it also **retracts** already-generated future copies. |
 | **silent** | Generate the chore without posting it to Discord. |
 | any **room** label | Copied onto the spawned chore (e.g. `kitchen`). |
 
@@ -78,37 +85,77 @@ Parsed from the template description, then stripped from the spawned copy.
 
 | Directive | Meaning |
 |---|---|
-| `start: 2026-06-27` | First eligible date; also **anchors** the recurrence cycle (every-N-weeks *and* every-N-months) from that date. |
-| `end: 2026-10-31` | Last eligible date; stops recurring after it (one-time window — use month labels for a yearly season). |
-| `count: 3` | "Any day" chore (weekly-family, no weekday label): times per week, auto-spread (3 → Mon/Wed/Fri). Default 1 (due Sunday). |
-| `estimate: 30m` | Effort (`30m`, `1h30m`, …). The weekly 50/50 balance is by **total time**, not chore count. Unestimated chores default to 15 min. |
-| `week: even`/`odd` (biweekly) or `week: 0`/`1`/`2` (triweekly) | Which cycle. |
+| `start: 2026-06-27` | First eligible date; also **anchors** every-N-weeks / every-N-months / `every:` cycles. |
+| `end: 2026-10-31` | Last eligible date; stops recurring after it. |
+| `every: N[d\|w\|m]` | **Rolling interval** from `start:` (required): `d`=days (default), `w`=weeks, `m`=calendar months. e.g. `every: 3d`, `every: 2w`, `every: 3m`. No frequency label needed. |
+| `count: 3` | "Any day" chore (weekly-family, no weekday label): times per week, auto-spread. Default 1 (due Sunday). |
+| `estimate: 30m` | **Time** (`30m`, `1h30m`, …). Unestimated chores default to 15 min. |
+| `effort: 1..5` | **Difficulty** (1 easiest, 5 hardest, default 3 = neutral). Multiplies the time-based balance cost (`0.5×`…`2×`), so a long-but-easy chore counts less and a short-but-hard one more. |
+| `week: even`/`odd` (biweekly) or `0`/`1`/`2` (triweekly) | Which cycle. |
 | `dueafter: 2` | Due N days out instead of today. |
 | `opposite: Cook Dinner` | Assign the *other* person from that chore's owner on the same day. |
 
 Anything else in the description (e.g. a `- [ ]` checklist) is copied onto each
 spawned chore.
 
-> **Picking dates:** the day *within* a period comes from the selector label
-> (weekday for weekly-family, day-of-month for monthly-family), not from
-> `start`. The first chore lands exactly on `start` only when `start` matches
-> that selector. `daily` and `semi-monthly` use the start day directly.
-
 ---
 
 ## Generation & assignment
 
-- Runs the **Monday** cron: generates the coming week's chores (today + 6 days),
-  each on its real due day.
-- **Assignment** balances the week by **weighted effort**: each chore's
-  `estimate:` minutes are distributed so each member's `minutes / weight` ratio
-  stays even. Member weights come from `ROTATION_WEIGHTS` (default
-  `Alex:60,Kristal:40` → a 60/40 split) with per-person overrides via
-  `/chores weight`. Accounts for fixed owners and `opposite:` pairs.
-- Put an explicit **assignee** on a template to fix that chore to one person
-  (skips rotation).
-- **Replace policy:** overdue copies of `replace` chores are archived so misses
-  don't pile up.
+- **Horizon:** the Worker materializes chores up to **`GEN_HORIZON_DAYS`** ahead
+  (default **30**). A larger horizon is a **one-time fill** — because generation
+  dedups by `(team, title, due date)`, later runs only create the new far days.
+- **One-time fill safety:** each run creates at most **`GEN_MAX_CREATES`**
+  (default 40) chores to stay under the Worker's 50-subrequest limit. A big
+  initial fill reports "N still to create — run `/chores sync` again to finish";
+  normal weekly runs never hit it.
+- **Assignment** balances the window by **effort-adjusted time**:
+  `cost = estimate × effortMultiplier(effort)`, distributed so each member's
+  `cost / weight` ratio stays even. Member weights come from `ROTATION_WEIGHTS`
+  (default `Alex:60,Kristal:40`) with per-person overrides via `/chores weight`.
+  Honors fixed owners and `opposite:` pairs.
+- Put an explicit **assignee** on a template to fix that chore to one person.
+- **Replace policy:** overdue copies of `replace` chores are archived (Monday
+  cron only) so misses don't pile up. `/chores sync` skips this so a mid-week run
+  never sweeps a not-yet-done chore.
+
+---
+
+## Reconciliation (keeps the materialized window honest)
+
+With a long horizon you can't wait for "next week" to fix the schedule, so
+changes reconcile the already-generated chores — usually **immediately**:
+
+| Change | Effect on existing chores | When |
+|---|---|---|
+| Template **day/cadence** edit | archive the stale day + create the new one | Linear webhook (instant) · Monday · `/chores sync` |
+| **`paused` label** added | archive its future not-yet-started copies | webhook · Monday · sync |
+| **`paused` label** removed | regenerate its upcoming copies | `/chores resume chore:` · webhook · Monday |
+| **Global pause** | archive the window's chores + spawn Vacation Prep | `/chores pause everyone:true` (instant) |
+| **User pause** | **reassign** that person's chores to the other, in place | `/chores pause user:` (instant) |
+| **Resume** | clear the hold, make catch-ups, refill, rebalance | `/chores resume` (instant) |
+| **Weight change** | reassign future rotating chores to match the new split | `/chores weight` (instant) |
+| Template **deletion** | *(not reconciled — orphans linger; no prune)* | — |
+
+Reconciliation only ever touches **future, not-yet-started** chores; past-due and
+in-progress ones are left alone. Reassignments/rebalances are in place (no
+delete/recreate), capped at `GEN_MAX_CREATES` per run.
+
+---
+
+## Catch-up chores (rare chores survive a pause)
+
+A pause normally *forgives* skipped chores. But anything **monthly or rarer**
+(`monthly`, `bimonthly`, `semi-annually`, `annually`, and any `every: Nm`) that
+had ≥1 occurrence inside a **global** pause window owes **one** make-up when you
+return — you shouldn't lose the once-a-month maintenance over a vacation.
+
+- Fires on **`/chores resume`** and on the **Monday cron** for dated pauses that
+  expired on their own.
+- One make-up per chore (not one per skipped day), idempotent, due the return day.
+- Assigned to the template's **fixed owner** if it has one, else **unassigned &
+  claimable**. Marked "🧺 Catch-up after the … pause".
+- Daily/weekly/biweekly/triweekly/semi-monthly chores are **forgiven** (no make-up).
 
 ---
 
@@ -116,25 +163,31 @@ spawned chore.
 
 | | Per-chore (seasonal) | Global / per-person (transient) |
 |---|---|---|
-| **Trigger** | `/chores pause chore:<name>` | `/chores pause` / `/chores pause user:<name>` |
+| **Trigger** | `/chores pause chore:<name>` | `/chores pause everyone:true` / `/chores pause user:<name>` |
 | **Stored as** | the `paused` **label** on the template | a **D1 row** (with date window) |
 | **Duration** | indefinite (until removed) | `from:`/`to:` window, or open-ended |
 | **Cleared by** | `/chores resume chore:` | `/chores resume` (± `user:`) |
-| **History** | one comment per pause→resume cycle on the template | soft-cleared D1 rows, shown by `/chores pauses` |
+| **History** | one comment per pause→resume cycle | soft-cleared D1 rows, shown by `/chores pauses` |
 
-- **Global** pause skips all generation in-window. **User** pause = "other
-  person covers": the paused person drops from rotation (their rotating chores
-  shift to the other) and chores fixed to them are skipped.
-- A global vacation pause/resume **does not** clear a `paused` label, so
-  seasonal chores survive a vacation cycle.
-- Schedule comments are pause-aware (note the hold and skip held dates in Next).
+- **Guardrail:** a pause with no `user:` **refuses** unless you pass
+  **`everyone:true`** — a global pause archives *every* chore in the window, so it
+  can't be triggered by accident (e.g. forgetting `user:`).
+- **Global** pause archives the window and spawns the **Vacation Prep** checklist
+  (`VACATION_PREP_TITLE`, unassigned, due the pause start).
+- **User** pause = "the other person covers": the paused person's in-window chores
+  are **reassigned in place** to the other, and future generation drops them from
+  rotation. On resume the window is **rebalanced** to fold them back in.
+- A global vacation pause/resume **does not** touch a `paused` label, so seasonal
+  chores survive a vacation cycle.
+- **Dates are strict `YYYY-MM-DD`** — a malformed `from:`/`to:` is rejected.
 
 ---
 
 ## Discord slash commands
 
-Autocomplete suggests real chores/people as you type, so no exact spelling
-needed. Run `/chores help` in Discord for the in-channel version.
+Autocomplete suggests real chores/people as you type. Run `/chores help` in
+Discord for the in-channel version. **After editing commands, re-register** (hit
+`/register-commands?key=<CRON_KEY>`).
 
 **View**
 ```
@@ -145,70 +198,100 @@ needed. Run `/chores help` in Discord for the in-channel version.
 
 **Pause / resume**
 ```
-/chores pause [from: to:]                pause everyone (vacation)
-/chores pause user:<name> [from: to:]    opt one person out
-/chores pause chore:<name>               take one chore off-radar (paused label)
-/chores resume [user:|chore:]            clear holds / un-pause a chore
+/chores pause everyone:true [from: to:]   pause the whole household (vacation)
+/chores pause user:<name> [from: to:]     opt one person out (other covers)
+/chores pause chore:<name>                take one chore off-radar (paused label)
+/chores resume [user:|chore:]             clear holds / un-pause a chore
 ```
 
 **Day-to-day**
 ```
-/chores snooze chore:<name> [days:N]     push a due date out (default 1)
-/chores skip chore:<name>                skip the current copy (returns next cycle)
-/chores done chore:<name>                mark a chore done
-/chores add title:<…> [due:YYYY-MM-DD] [assignee:<name>]
+/chores done chore:<name>                 mark a chore done
+/chores claim chore:<name> [assignee:]    take ownership (default: you)
+/chores unclaim chore:<name>              drop one of your chores to unassigned
+/chores snooze chore:<name> [days:N]      push a due date out (default 1)
+/chores skip chore:<name>                 skip the current copy (returns next cycle)
+/chores add title:<…> [due:] [assignee:]  add a one-off chore (→ Ad Hoc, no due date by default)
 ```
 
 **Info & tuning**
 ```
-/chores pauses                              what's currently paused (+ history)
-/chores weight [user: value: reset:]        view/skew the rotation load (e.g. 60/40)
-/chores help                                the command reference
+/chores pauses                            what's currently paused (+ history)
+/chores weight [user: value: reset:]      view/skew the rotation load (rebalances the window)
+/chores calendar                          calendar-subscription links
+/chores sync                              re-run generation now (idempotent; fills the horizon)
+/chores help                              the command reference
 ```
+
+`done` / `claim` / `unclaim` / `snooze` / `skip` search both **House Chores** and
+**Ad Hoc**. `claim` autocomplete lists only unassigned chores; `unclaim` lists
+only your own. Ownership is matched by Linear **user id**, not name.
 
 ---
 
-## Daily digest & tap-to-complete
+## Daily digest & actions dropdown
 
-- The daily cron posts **today's + overdue** chores to `#due-today`, grouped by
-  assignee, with @-mentions.
-- It also lists **unassigned tasks due later this week** (within
-  `UNASSIGNED_LOOKAHEAD_DAYS`, default 7) under a "🙋 Unassigned — due this week"
-  section, so either person can claim them before they're due.
-- When `DISCORD_BOT_TOKEN` + `DISCORD_DUE_CHANNEL_ID` are set, the digest is
-  posted **by the bot** with a green **✓ Done button per chore** (up to 25).
-  Tapping a button marks that chore done in Linear and removes the button.
-  Without those, it falls back to a plain webhook digest (no buttons).
-- *Why buttons, not emoji reactions:* reactions are delivered only over a
-  persistent Discord Gateway connection, which a serverless Worker can't hold —
-  button clicks arrive over the same HTTP path as slash commands.
-- **"All done" celebration:** completing the last due chore posts a celebration.
+- The daily cron posts **today's + overdue** chores to the due channel, grouped by
+  assignee, with @-mentions. It also lists **unassigned chores due later this
+  week** (within `UNASSIGNED_LOOKAHEAD_DAYS`, default 7).
+- When `DISCORD_BOT_TOKEN` + `DISCORD_DUE_CHANNEL_ID` are set, the digest is posted
+  **by the bot** with a single **actions dropdown** (multi-select, up to 25): pick
+  "✓ &lt;chore&gt;" to mark an assigned chore done, or "🙋 &lt;chore&gt;" to claim an
+  unassigned one. Falls back to a plain webhook digest (no menu) otherwise.
+- *Why a menu, not emoji reactions:* reactions need a persistent Discord Gateway a
+  serverless Worker can't hold; menu/button interactions arrive over the same HTTP
+  path as slash commands.
+
+---
+
+## Calendars (ICS subscription)
+
+The Worker serves read-only calendar feeds you subscribe to once; your calendar
+app polls them and stays in sync. `/chores calendar` prints the URLs.
+
+- **`/cal/alex.ics`**, **`/cal/kristal.ics`** — that person's assigned dated work.
+- **`/cal/unassigned.ics`** — unassigned dated work anyone can grab.
+- Feeds cover **all active dated issues workspace-wide** (chores *and* other
+  projects like a shed build), excluding only the Recurring templates.
+- Each chore is an **all-day event** on its due date with a Linear link and a 9am
+  day-of reminder. Rebuilt live on every fetch, so it reflects the current
+  schedule automatically.
+- **Apple** honors a refresh interval (set it hourly). **Google** refreshes
+  subscribed URLs on its own slow schedule (up to ~24h); on Android, subscribe via
+  **ICSx⁵** to control the interval.
+
+---
+
+## Stats dashboard
+
+- **`/dashboard`** — a mobile-friendly, dark, keyless page (Chart.js): completion
+  %, on-time %, done count, current streaks, per-person stacked bar, completion
+  trend, **effort split** (effort-adjusted minutes), and most-missed. A range bar
+  switches **7 / 30 / 90 / 365** days (`?range=`). Reads from D1, so history
+  survives Linear archiving. A link is pinned in **#recap** (`/pin-dashboard`).
 
 ---
 
 ## Phone status (widget + web)
 
-- **`/status?user=<name>`** — JSON: `done`, `remaining`, today's `tasks` (with
-  Linear links), what was `completed` today, and the consecutive-day `streak`.
-  Keyless (read-only).
-- **`/widget?user=<name>`** — a styled, auto-refreshing web page (gradient card,
-  today's list, done-today, streak). "Add to Home Screen" for an app-like icon
-  (works on Android + iOS). With `&key=<CRON_KEY>` it shows ✓ Done buttons.
-- **iOS Scriptable widget** (`scriptable-chores-widget.js`) — a Home/Lock Screen
-  widget showing remaining count / list / streak; taps open the today page.
+- **`/status?user=<name>`** — JSON: `done`, `remaining`, today's `tasks`,
+  `completed` today, `streak`. Keyless.
+- **`/widget?user=<name>`** — a styled auto-refreshing page ("Add to Home Screen").
+- **iOS Scriptable widget** (`scriptable-chores-widget.js`).
 - **Streak** = consecutive days where every chore due that day was completed
-  (days with no chores bridge it; today-in-progress doesn't break it).
+  (no-chore days bridge it; today-in-progress doesn't break it).
 
 ---
 
 ## Maintenance & analytics
 
-- **Auto-archive:** chores completed more than `CHORE_RETENTION_DAYS` (default
-  30) ago are archived (6 days/week, ≤`ARCHIVE_MAX` per run) so the active-issue
-  count stays under Linear's free 250 cap. Manual backfill: `/archive?key=…`.
+- **Auto-archive:** chores completed more than `CHORE_RETENTION_DAYS` (default 30)
+  ago are archived (≤`ARCHIVE_MAX` per run) so the active count stays under
+  Linear's free 250 cap. Manual: `/archive?key=…`.
 - **Cap warning:** posts to the admin channel once active issues reach
-  `CAP_WARN_AT` (default 220).
+  `CAP_WARN_AT` (default 220). *(A 30-day horizon runs higher — keep an eye here.)*
 - **Weekly scoreboard:** per-person done / on-time / late / missed + streak.
+  Completion is compared in Eastern; archived/canceled issues are excluded.
 - **Stats (D1):** Monday snapshot of outcomes; query via `/stats?key=…&days=N`.
 
 ---
@@ -218,41 +301,44 @@ needed. Run `/chores help` in Discord for the in-channel version.
 | Endpoint | Action |
 |---|---|
 | `/run-cron` | Run the full daily cron now |
-| `/run-week` | Generate the coming week's chores now |
-| `/annotate` | Refresh template schedule comments |
+| `/run-week` | Generate the horizon now |
+| `/annotate` | Refresh template schedule comments (returns a report) |
 | `/archive` | Archive old completed chores now |
-| `/scoreboard` | Post the weekly scoreboard now |
-| `/stats?days=N` | Stats summary |
+| `/scoreboard` · `/stats?days=N` | Post scoreboard / stats |
 | `/replace?issue=CHO-12` | Archive + recreate an issue (rotates assignee) |
 | `/done?match=<text>` | Mark the best-matching chore done |
-| `/botcheck` | Diagnose the bot token / channel for digest buttons |
-| `/status` `/widget` | Phone status (keyless) |
-| `/interactions` | Discord slash-command + button endpoint (Ed25519-verified) |
+| `/describe?q=<title>` | Diagnose what the engine parses for a template |
+| `/delcomment?issue=…&id=…` | Delete a bot-authored comment |
+| `/register-commands` | (Re)register slash commands with Discord |
+| `/pin-dashboard` | Post + pin the dashboard link in #recap |
+| `/botcheck` | Diagnose the bot token / channel for the digest |
+
+**Keyless (read-only, non-sensitive):** `/status`, `/widget`, `/dashboard`,
+`/cal/*.ics`. `/interactions` is the Ed25519-verified Discord endpoint.
 
 ---
 
 ## Security & verification
 
-- **Linear webhooks** are verified with HMAC-SHA256 against
-  `LINEAR_WEBHOOK_SECRET`; a bad/absent signature is rejected (401).
-- **Discord interactions** (slash commands + buttons) are verified with the app's
-  Ed25519 public key (`DISCORD_PUBLIC_KEY`) and are inherently gated to your
-  guild — so they need no shared secret.
-- **Toolkit endpoints** that mutate or read sensitive data require
-  `?key=<CRON_KEY>`. Read-only, non-sensitive status (`/status`, `/widget`) is
-  intentionally **keyless** so the phone widget needs no secret. (`/widget` only
-  exposes the ✓ Done buttons when opened with `&key=`.)
+- **Linear webhooks** — HMAC-SHA256 against `LINEAR_WEBHOOK_SECRET`; bad/absent
+  signature rejected (401).
+- **Discord interactions** — verified with the app's Ed25519 key
+  (`DISCORD_PUBLIC_KEY`) and inherently gated to your guild, so no shared secret.
+- **Toolkit endpoints** that mutate or read sensitive data require `?key=<CRON_KEY>`.
+  Status/widget/dashboard/calendar are intentionally keyless.
 
 ---
 
 ## Configuration
 
-**Vars** (`wrangler.toml`): `DUE_LOOKAHEAD_DAYS`, `CAP_WARN_AT`,
-`RECURRING_PROJECT`, `CHORES_TEAM`, `CHORES_PROJECT`, `DISCORD_DUE_CHANNEL_ID`,
+**Vars** (`wrangler.toml`): `DUE_LOOKAHEAD_DAYS`, `UNASSIGNED_LOOKAHEAD_DAYS`,
+`CAP_WARN_AT`, `RECURRING_PROJECT`, `CHORES_TEAM`, `CHORES_PROJECT`,
+`ADHOC_PROJECT`, `ROTATION_WEIGHTS`, `VACATION_PREP_TITLE`, `GEN_HORIZON_DAYS`,
+`GEN_MAX_CREATES`, `PUBLIC_BASE_URL`, `DISCORD_DUE_CHANNEL_ID`,
 `CHORE_RETENTION_DAYS`, `ARCHIVE_MAX`. `ROTATION_MEMBERS` and `DISCORD_MENTIONS`
-map your two people for rotation and @-pings.
+map the two people for rotation and @-pings.
 
-**Secrets** (`wrangler secret put`): `LINEAR_API_KEY` (the `Chore Bot` user's
+**Secrets** (`wrangler secret put`): `LINEAR_API_KEY` (the "muffin" bot user's
 key), `LINEAR_WEBHOOK_SECRET`, `DISCORD_PUBLIC_KEY`, `DISCORD_BOT_TOKEN`,
 `CRON_KEY`.
 
@@ -261,12 +347,11 @@ key), `LINEAR_WEBHOOK_SECRET`, `DISCORD_PUBLIC_KEY`, `DISCORD_BOT_TOKEN`,
 | Var | Used for |
 |---|---|
 | `DISCORD_WEBHOOK_DUE` | Daily digest (fallback when not bot-posting) |
-| `DISCORD_DUE_CHANNEL_ID` + `DISCORD_BOT_TOKEN` | Bot-posted digest with ✓ Done buttons |
+| `DISCORD_DUE_CHANNEL_ID` + `DISCORD_BOT_TOKEN` | Bot-posted digest with the actions dropdown |
 | `DISCORD_WEBHOOK_<TEAMKEY>` (e.g. `_CHO`) | Real-time events for that team |
 | `DISCORD_WEBHOOK_DEFAULT` | Real-time events fallback |
-| `DISCORD_WEBHOOK_DONE` | "All done" celebration (falls back to DUE/DEFAULT) |
 | `DISCORD_WEBHOOK_ADMIN` | Free-tier cap warning |
 | `DISCORD_WEBHOOK_STATS` | Stats posts (falls back to DUE/DEFAULT) |
 
-> **After changing slash commands**, re-run `scripts/register-commands.js` so
-> Discord picks them up. **After deploying**, commit and push.
+> **After changing slash commands**, hit `/register-commands?key=…` so Discord
+> picks them up. **After deploying**, commit and push.
