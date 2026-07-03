@@ -27,7 +27,7 @@ import {
   assignIssue,
   unassignIssue,
 } from "./linear.js";
-import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups } from "./recurring.js";
+import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
 
@@ -464,8 +464,11 @@ async function choreCommand(interaction, env, ctx) {
       if (o.chore) {
         return deferAndRun(interaction, ctx, async () => {
           const r = await setPausedLabel(env, o.chore, true, today);
+          // Retract this chore's already-materialized future copies now.
+          const wk = await runWeek(env, { skipCleanup: true }).catch(() => null);
           await annotateTemplates(env).catch((e) => console.error("annotate failed:", e));
-          return r.data.content;
+          const note = wk?.moved ? ` Cleared **${wk.moved}** upcoming copy(ies).` : "";
+          return r.data.content + note;
         });
       }
       // global / user -> a D1 pause window. (Validation stays synchronous so
@@ -496,13 +499,21 @@ async function choreCommand(interaction, env, ctx) {
         const cleared = await clearGeneratedInWindow(env, { from, to, userId: pausedUserId });
         // On a whole-household pause, spawn the prep checklist due at the start.
         const prepNote = scope === "global" ? await spawnPrepChecklist(env, from) : "";
+        // A user pause means the other person covers — regenerate so the cleared
+        // chores come back assigned to whoever's still available in-window.
+        // (Global pause: generation skips the paused days, so this is a no-op there.)
+        let coverNote = "";
+        if (scope === "user") {
+          const wk = await runWeek(env, { skipCleanup: true }).catch(() => null);
+          if (wk?.created) coverNote = ` Reassigned **${wk.created}** to cover.`;
+        }
         await annotateTemplates(env).catch((e) => console.error("annotate failed:", e));
         const window = to === "9999-12-31" ? `**indefinitely** (from ${from})` : `**${from} → ${to}**`;
         const undo = scope === "user" ? ` user:${target}` : "";
         const clearedNote = cleared
           ? ` Archived **${cleared}** generated chore${cleared === 1 ? "" : "s"} already on the list for those days.`
           : "";
-        return `⏸️ Paused ${label} ${window}.${clearedNote}${prepNote} Use \`/chores resume${undo}\` to lift it.`;
+        return `⏸️ Paused ${label} ${window}.${clearedNote}${coverNote}${prepNote} Use \`/chores resume${undo}\` to lift it.`;
       });
     }
     case "resume": {
@@ -510,6 +521,8 @@ async function choreCommand(interaction, env, ctx) {
       if (o.chore) {
         return deferAndRun(interaction, ctx, async () => {
           const r = await setPausedLabel(env, o.chore, false, today);
+          // Regenerate so the unpaused chore's upcoming occurrences come back.
+          await runWeek(env, { skipCleanup: true }).catch(() => null);
           await annotateTemplates(env).catch((e) => console.error("annotate failed:", e));
           return r.data.content;
         });
@@ -530,6 +543,8 @@ async function choreCommand(interaction, env, ctx) {
           });
           made.push(...r.titles);
         }
+        // Refill the window: days the pause was suppressing can generate again.
+        await runWeek(env, { skipCleanup: true }).catch(() => null);
         await annotateTemplates(env).catch((e) => console.error("annotate failed:", e));
         const base = n ? `▶️ Resumed — cleared ${n} pause${n === 1 ? "" : "s"}.` : `No upcoming ${label} to clear.`;
         const catchNote = made.length
@@ -545,14 +560,24 @@ async function choreCommand(interaction, env, ctx) {
     case "weight": {
       if (o.user && o.reset) {
         if (!env.DB) return reply("Weight storage unavailable (no DB).");
-        await clearWeight(env, o.user);
-        return say(`↩️ Reset **${o.user}**'s rotation weight to the default.`);
+        return deferAndRun(interaction, ctx, async () => {
+          await clearWeight(env, o.user);
+          const rb = await rebalanceWindow(env).catch(() => null);
+          const note = rb?.reassigned ? ` Rebalanced **${rb.reassigned}** upcoming chore(s).` : "";
+          return `↩️ Reset **${o.user}**'s rotation weight to the default.${note}`;
+        });
       }
       if (o.user && o.value != null) {
         if (!env.DB) return reply("Weight storage unavailable (no DB).");
         const v = Math.max(1, Math.min(1000, parseInt(o.value, 10)));
-        await setWeight(env, o.user, v);
-        return say(`⚖️ **${o.user}**'s rotation weight is now ${v}. Takes effect at the next weekly generation.`);
+        return deferAndRun(interaction, ctx, async () => {
+          await setWeight(env, o.user, v);
+          const rb = await rebalanceWindow(env).catch(() => null);
+          const note = rb?.reassigned
+            ? ` Rebalanced **${rb.reassigned}** upcoming chore(s) to match.`
+            : " No upcoming chores needed reassigning.";
+          return `⚖️ **${o.user}**'s rotation weight is now ${v}.${note}`;
+        });
       }
       const rows = await listWeights(env);
       const total = rows.reduce((s, r) => s + r.weight, 0) || 1;

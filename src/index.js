@@ -468,9 +468,17 @@ async function hasLabel(env, data, name) {
 async function handleEvent(payload, env) {
   const { type, action, data } = payload;
 
-  // Don't echo template tickets (they live in the Recurring project) to Discord.
+  // Template tickets (Recurring project) aren't echoed to Discord, but editing
+  // one — a day/cadence change, or toggling the `paused` label — should
+  // reconcile the already-materialized window right away (day-change reconcile +
+  // paused-label retraction), instead of waiting for Monday or a manual sync.
   const recurringProject = env.RECURRING_PROJECT || "Recurring";
-  if (data?.project?.name === recurringProject) return;
+  if (data?.project?.name === recurringProject) {
+    if (type === "Issue" && ["create", "update", "remove"].includes(action)) {
+      await runWeek(env, { skipCleanup: true }).catch((e) => console.error("template-edit reconcile failed:", e));
+    }
+    return;
+  }
 
   // Comments are no longer echoed to Discord (too noisy).
   if (type !== "Issue") return;

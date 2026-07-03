@@ -56,6 +56,7 @@ import {
   fetchTemplatesForAnnotation,
   upsertComment,
   getViewerId,
+  assignIssue,
 } from "./linear.js";
 import { getActivePauses, pausesOn, markPauseCleared } from "./pauses.js";
 import { getWeightResolver } from "./weights.js";
@@ -452,6 +453,23 @@ async function buildDefs(env) {
   return defs;
 }
 
+// Titles ("teamId::title") of templates currently carrying the `paused` label —
+// used to retract their already-materialized future chores (buildDefs drops
+// paused templates, so the reconciler can't see them otherwise).
+async function pausedTemplateTitles(env) {
+  const out = new Set();
+  try {
+    const tpls = await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring");
+    for (const t of tpls) {
+      const paused = (t.labels?.nodes || []).some((l) => (l.name || "").toLowerCase() === "paused");
+      if (paused && t.team?.id) out.add(`${t.team.id}::${t.title}`);
+    }
+  } catch (err) {
+    console.error("pausedTemplateTitles failed:", err);
+  }
+  return out;
+}
+
 // Manually archive an issue and spawn a fresh copy (same title/team/labels/
 // description), rotating the assignee to the other member. Used by /replace.
 export async function forceReplace(env, identifier) {
@@ -596,13 +614,18 @@ export async function runWeek(env, opts = {}) {
   const accumulatingTitles = new Set(
     defs.filter((c) => c.teamId && accumulates(c)).map((c) => `${c.teamId}::${c.title}`),
   );
+  // A template that just got the `paused` label drops out of generation; its
+  // already-materialized future, not-yet-started copies must be retracted too.
+  const pausedTitles = await pausedTemplateTitles(env);
   const toReconcile = [];
   for (const teamId of teamIds) {
     for (const n of ctx.spawned[teamId]) {
       if (!n.dueDate || n.dueDate < todayYmd || n.dueDate > horizonEnd) continue;
       if (!isOpen(n) || n.state?.type === "started") continue;
-      if (!titlesWithDef.has(`${teamId}::${n.title}`)) continue; // no template -> leave it
-      if (accumulatingTitles.has(`${teamId}::${n.title}`)) continue; // may be a make-up
+      const key = `${teamId}::${n.title}`;
+      if (pausedTitles.has(key)) { toReconcile.push(n.id); continue; } // template now paused
+      if (!titlesWithDef.has(key)) continue; // no template -> leave it
+      if (accumulatingTitles.has(key)) continue; // may be a make-up
       if (!correctKeys.has(`${teamId}::${n.title}@${n.dueDate}`)) toReconcile.push(n.id);
     }
   }
@@ -739,6 +762,93 @@ export async function runWeek(env, opts = {}) {
   // a partial fill (hit the per-run create cap — run again to finish).
   const remaining = toCreate.length - created;
   return { created, archived: toArchive.length, moved: toReconcile.length, remaining, capped };
+}
+
+// Re-balance already-materialized chores after a weight change. Reassigns
+// future, not-yet-started, rotating chores (no fixed owner, no `opposite:`
+// coupling) across the horizon to match the current weights. Fixed-owner,
+// opposite, started, and past-due chores are left untouched; a paused user is
+// never assigned on a day they're out. Bounded by GEN_MAX_CREATES per run.
+export async function rebalanceWindow(env) {
+  const users = await getUsers(env);
+  let rotation = [];
+  if (env.ROTATION_MEMBERS) {
+    rotation = matchMembers(env.ROTATION_MEMBERS, users);
+    if (rotation.length < 2) rotation = [];
+  }
+  if (rotation.length < 2) return { reassigned: 0 };
+  const [A, B] = rotation;
+  const resolveWeight = await getWeightResolver(env);
+  const nameOf = (id) => {
+    const u = users.find((x) => x.id === id);
+    return u?.displayName || u?.name || "";
+  };
+  const wt = { [A]: resolveWeight(nameOf(A)) || 50, [B]: resolveWeight(nameOf(B)) || 50 };
+
+  const defs = await buildDefs(env);
+  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const byTitle = {};
+  for (const c of defs) if (c.teamId === teamId) byTitle[c.title] = c;
+
+  // User pauses drop a member from rotation on their days.
+  const pauses = await getActivePauses(env);
+  const nameToId = (name) => {
+    const want = (name || "").toLowerCase();
+    return users.find((x) => [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(want)))?.id || null;
+  };
+  const userPauses = pauses
+    .filter((p) => p.scope === "user")
+    .map((p) => ({ ...p, userId: nameToId(p.target) }))
+    .filter((p) => p.userId);
+  const pausedOn = (ymd) => userPauses.filter((p) => ymd >= p.start_date && ymd <= p.end_date).map((p) => p.userId);
+
+  const today = localDate(new Date()).ymd;
+  const horizonDays = Math.max(1, parseInt(env.GEN_HORIZON_DAYS || "7", 10) || 7);
+  const horizonEnd = localDate(new Date(Date.now() + (horizonDays - 1) * 86_400_000)).ymd;
+  const cost = (title) => {
+    const c = byTitle[title];
+    return c ? choreCost(c.estimate, c.effort) : DEFAULT_EST_MIN;
+  };
+
+  const spawned = await fetchSpawned(env, teamId, env.CHORES_PROJECT || "House Chores");
+  const counts = { [A]: 0, [B]: 0 };
+  const movable = [];
+  for (const n of spawned) {
+    if (!n.dueDate || n.dueDate < today || n.dueDate > horizonEnd) continue;
+    if (["completed", "canceled"].includes(n.state?.type) || n.state?.type === "started") continue;
+    const c = byTitle[n.title];
+    if (!c) continue; // no active template (paused/deleted/ad-hoc) -> leave
+    if (c.assigneeId || c.opposite) {
+      // Locked to a person/pairing: count its load but don't move it.
+      if (n.assignee?.id && n.assignee.id in counts) counts[n.assignee.id] += cost(n.title);
+      continue;
+    }
+    movable.push(n);
+  }
+  movable.sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
+
+  const cap = Math.max(1, parseInt(env.GEN_MAX_CREATES || "40", 10) || 40);
+  let reassigned = 0;
+  for (const n of movable) {
+    const out = pausedOn(n.dueDate);
+    const allowed = [A, B].filter((id) => !out.includes(id));
+    if (!allowed.length) continue;
+    let target;
+    if (allowed.length === 1) target = allowed[0];
+    else {
+      const la = counts[A] / wt[A];
+      const lb = counts[B] / wt[B];
+      // On a tie keep the current owner to avoid pointless reassignment churn.
+      target = la < lb ? A : lb < la ? B : allowed.includes(n.assignee?.id) ? n.assignee.id : A;
+    }
+    counts[target] += cost(n.title);
+    if (n.assignee?.id !== target) {
+      if (reassigned >= cap) break;
+      const res = await assignIssue(env, n.id, target);
+      if (res?.success) reassigned++;
+    }
+  }
+  return { reassigned };
 }
 
 const ymdAdd1 = (ymd) => {
