@@ -10,7 +10,6 @@
 import { verifyLinearSignature } from "./verify.js";
 import {
   formatIssueEmbed,
-  formatCommentEmbed,
   buildDigestMessage,
   buildCapWarningEmbed,
   buildScoreboardMessage,
@@ -473,13 +472,19 @@ async function handleEvent(payload, env) {
   const recurringProject = env.RECURRING_PROJECT || "Recurring";
   if (data?.project?.name === recurringProject) return;
 
-  let embed = null;
+  // Comments are no longer echoed to Discord (too noisy).
+  if (type !== "Issue") return;
 
-  if (type === "Issue") {
-    embed = formatIssueEmbed(payload);
-  } else if (type === "Comment" && action === "create") {
-    embed = formatCommentEmbed(payload);
+  // Skip description-only edits: only notify when a field we actually surface
+  // changed (title, state, assignee, priority, due date). `updatedFrom` lists
+  // the changed fields; if it's present and touches none of these, it's noise.
+  if (action === "update") {
+    const MEANINGFUL = ["title", "state", "stateId", "assignee", "assigneeId", "priority", "dueDate"];
+    const changed = Object.keys(payload.updatedFrom || {});
+    if (changed.length && !changed.some((k) => MEANINGFUL.includes(k))) return;
   }
+
+  const embed = formatIssueEmbed(payload);
   if (!embed) return;
 
   const teamKey = data?.team?.key || data?.issue?.team?.key;
