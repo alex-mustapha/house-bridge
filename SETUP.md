@@ -66,14 +66,18 @@ Create an issue in Linear → watch it appear in the logs and in `#chores-activi
 
 ## Later (optional)
 - [ ] Author recurring chores in the Linear `Recurring` project (see README §7)
-- [ ] `wrangler secret put ROTATION_MEMBERS` (e.g. `Alex,Kristal`) for alternating
-      auto-assignment
+- [ ] `wrangler secret put ROTATION_MEMBERS` (e.g. `Alex,Kristal`) for
+      effort-weighted auto-assignment (skew via `ROTATION_WEIGHTS` / `/chores weight`)
 - [ ] `wrangler secret put DISCORD_MENTIONS` (`Name:DiscordUserID,…`) so the daily
       digest @-mentions each owner
+- [ ] `wrangler secret put DISCORD_BOT_TOKEN` for the bot-posted digest (actions
+      dropdown), `/register-commands`, and `/pin-dashboard`
 - [ ] `wrangler secret put CRON_KEY` to enable the manual toolkit endpoints
-      (run-cron / scoreboard / replace — see README "Manual toolkit")
-- [ ] `wrangler secret put DISCORD_WEBHOOK_DONE` / `DISCORD_WEBHOOK_STATS` to give
-      the celebration and scoreboard their own channels
+      (run-cron / run-week / scoreboard / replace — see README "Manual toolkit")
+- [ ] `wrangler secret put DISCORD_WEBHOOK_STATS` to give the scoreboard its own
+      channel
+- [ ] Register slash commands: hit `/register-commands?key=<CRON_KEY>` once
+      (and again any time `src/commands.js` changes)
 - [ ] Enable Linear's native Discord integration to create issues from Discord
       (README "Creating issues & projects from Discord")
 - [ ] Adjust cron time in `wrangler.toml` for EST winter (see notes in that file)
