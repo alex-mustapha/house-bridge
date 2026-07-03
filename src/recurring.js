@@ -851,6 +851,31 @@ export async function rebalanceWindow(env) {
   return { reassigned };
 }
 
+// A user pause means "the other person covers." Reassign the paused user's
+// open chores in the window to a covering rotation member — reassign in place,
+// never delete/recreate. Returns how many were handed over.
+export async function coverUserPause(env, { userId, from, to }) {
+  const users = await getUsers(env);
+  const rotation = env.ROTATION_MEMBERS ? matchMembers(env.ROTATION_MEMBERS, users) : [];
+  const covers = rotation.filter((id) => id !== userId);
+  if (!covers.length) return 0;
+  const cover = covers[0]; // 2-person household: the other member
+  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  if (!teamId) return 0;
+  const spawned = await fetchSpawned(env, teamId, env.CHORES_PROJECT || "House Chores");
+  const cap = Math.max(1, parseInt(env.GEN_MAX_CREATES || "40", 10) || 40);
+  let reassigned = 0;
+  for (const n of spawned) {
+    if (n.assignee?.id !== userId) continue;
+    if (!n.dueDate || n.dueDate < from || n.dueDate > to) continue;
+    if (["completed", "canceled"].includes(n.state?.type)) continue;
+    if (reassigned >= cap) break;
+    const res = await assignIssue(env, n.id, cover);
+    if (res?.success) reassigned++;
+  }
+  return reassigned;
+}
+
 const ymdAdd1 = (ymd) => {
   const [y, m, d] = ymd.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);

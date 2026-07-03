@@ -27,7 +27,7 @@ import {
   assignIssue,
   unassignIssue,
 } from "./linear.js";
-import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow } from "./recurring.js";
+import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, coverUserPause } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
 
@@ -495,25 +495,27 @@ async function choreCommand(interaction, env, ctx) {
           label = `**${target}**'s chores (the other person covers)`;
         }
         await addPause(env, { scope, target, start: from, end: to, nowIso: new Date().toISOString() });
-        // Also archive already-generated recurring chores in the window.
-        const cleared = await clearGeneratedInWindow(env, { from, to, userId: pausedUserId });
-        // On a whole-household pause, spawn the prep checklist due at the start.
-        const prepNote = scope === "global" ? await spawnPrepChecklist(env, from) : "";
-        // A user pause means the other person covers — regenerate so the cleared
-        // chores come back assigned to whoever's still available in-window.
-        // (Global pause: generation skips the paused days, so this is a no-op there.)
-        let coverNote = "";
+        let actionNote = "";
+        let prepNote = "";
         if (scope === "user") {
-          const wk = await runWeek(env, { skipCleanup: true }).catch(() => null);
-          if (wk?.created) coverNote = ` Reassigned **${wk.created}** to cover.`;
+          // The other person covers: reassign her in-window chores in place
+          // (no delete/recreate). Future generation drops her from rotation.
+          const moved = await coverUserPause(env, { userId: pausedUserId, from, to });
+          actionNote = moved
+            ? ` Reassigned **${moved}** of ${target}'s chores in that window to the other person.`
+            : ` No chores of ${target}'s in that window needed covering.`;
+        } else {
+          // Whole household away: archive the in-window chores + spawn prep.
+          const cleared = await clearGeneratedInWindow(env, { from, to });
+          prepNote = await spawnPrepChecklist(env, from);
+          actionNote = cleared
+            ? ` Archived **${cleared}** chore${cleared === 1 ? "" : "s"} already on the list for those days.`
+            : "";
         }
         await annotateTemplates(env).catch((e) => console.error("annotate failed:", e));
         const window = to === "9999-12-31" ? `**indefinitely** (from ${from})` : `**${from} → ${to}**`;
         const undo = scope === "user" ? ` user:${target}` : "";
-        const clearedNote = cleared
-          ? ` Archived **${cleared}** generated chore${cleared === 1 ? "" : "s"} already on the list for those days.`
-          : "";
-        return `⏸️ Paused ${label} ${window}.${clearedNote}${coverNote}${prepNote} Use \`/chores resume${undo}\` to lift it.`;
+        return `⏸️ Paused ${label} ${window}.${actionNote}${prepNote} Use \`/chores resume${undo}\` to lift it.`;
       });
     }
     case "resume": {
@@ -543,14 +545,17 @@ async function choreCommand(interaction, env, ctx) {
           });
           made.push(...r.titles);
         }
-        // Refill the window: days the pause was suppressing can generate again.
+        // Refill any days a global pause was suppressing, then rebalance so a
+        // returning person is folded back into the rotation for the window.
         await runWeek(env, { skipCleanup: true }).catch(() => null);
+        const rb = n ? await rebalanceWindow(env).catch(() => null) : null;
         await annotateTemplates(env).catch((e) => console.error("annotate failed:", e));
         const base = n ? `▶️ Resumed — cleared ${n} pause${n === 1 ? "" : "s"}.` : `No upcoming ${label} to clear.`;
+        const rebNote = rb?.reassigned ? ` Rebalanced **${rb.reassigned}** upcoming chore(s).` : "";
         const catchNote = made.length
           ? ` 🧺 Catch-up tasks created (unassigned — claim them): **${made.join("**, **")}**.`
           : "";
-        return base + catchNote;
+        return base + rebNote + catchNote;
       });
     }
     case "pauses":
