@@ -101,17 +101,35 @@ function mentionFor(name, mentionMap) {
 // @-pinged in `content` (mentions only notify from content, not the embed);
 // overdue lines get a 🔴 marker.
 export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = []) {
+  // Past-due work gets its own section ahead of today's, rather than sitting
+  // inside each person's list behind a small 🔴. Chores are allowed to slip —
+  // but slipping should stay visible day to day, not be noticed only when the
+  // Monday sweep makes them disappear.
+  const overdue = issues.filter((i) => i.dueDate && i.dueDate < today);
+  const current = issues.filter((i) => !i.dueDate || i.dueDate >= today);
+
   const groups = new Map(); // owner name | "Unassigned" -> issues[]
-  for (const i of issues) {
+  for (const i of current) {
     const key = i.assignee?.name || "Unassigned";
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(i);
   }
 
-  const line = (i) =>
-    `• ${i.dueDate && i.dueDate < today ? "🔴 " : ""}[${i.title}](${i.url})`;
-  const sections = [...groups.entries()].map(
-    ([name, items]) => `**${name}**\n${items.map(line).join("\n")}`,
+  const sections = [];
+  if (overdue.length) {
+    const od = [...overdue]
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate)) // oldest first
+      .map((i) => {
+        const days = daysBetween(i.dueDate, today);
+        const who = i.assignee?.name || "unassigned";
+        return `• [${i.title}](${i.url}) — ${days} day${days === 1 ? "" : "s"} late · ${who}`;
+      })
+      .join("\n");
+    sections.push(`⏰ **Past due**\n${od}`);
+  }
+  const line = (i) => `• [${i.title}](${i.url})`;
+  sections.push(
+    ...[...groups.entries()].map(([name, items]) => `**${name}**\n${items.map(line).join("\n")}`),
   );
 
   // Unclaimed work due later this week, so someone can grab it ahead of time.
@@ -122,9 +140,17 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
     sections.push(`🙋 **Unassigned — due this week**\n${us}`);
   }
 
-  const pings = [...groups.entries()]
-    .filter(([name]) => name !== "Unassigned")
-    .map(([name, items]) => `${mentionFor(name, mentionMap) || name} — ${items.length}`);
+  // Ping counts span overdue + today's, not just `groups` (which is today-only
+  // now) — otherwise a day whose only work is past due would @-mention nobody.
+  const perOwner = new Map();
+  for (const i of issues) {
+    const name = i.assignee?.name;
+    if (!name) continue;
+    perOwner.set(name, (perOwner.get(name) || 0) + 1);
+  }
+  const pings = [...perOwner.entries()].map(
+    ([name, n]) => `${mentionFor(name, mentionMap) || name} — ${n}`,
+  );
 
   // Bar color carries meaning: red if anything's overdue, green if nothing's
   // due, otherwise a calm blue.
@@ -142,6 +168,15 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
     ],
     allowed_mentions: { parse: ["users"] },
   };
+}
+
+// Whole days between two YYYY-MM-DD dates (UTC midnights, so DST can't skew it).
+function daysBetween(from, to) {
+  const ms = (s) => {
+    const [y, m, d] = s.split("-").map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((ms(to) - ms(from)) / 86_400_000);
 }
 
 // "2026-07-06" -> "Mon Jul 6"

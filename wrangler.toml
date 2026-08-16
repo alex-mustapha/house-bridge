@@ -22,7 +22,10 @@ CAP_WARN_AT = "220"
 RECURRING_PROJECT = "Recurring"
 # How many days ahead to materialize chores (default 7). Larger = a one-time
 # fill; later weekly runs only add the new far days (dedup skips the rest).
-GEN_HORIZON_DAYS = "30"
+# Kept at two weeks: far enough to see what's coming, short enough that the
+# active-issue count stays clear of Linear's free 250 cap and future copies
+# don't sit around for a month alongside work that hasn't been done yet.
+GEN_HORIZON_DAYS = "14"
 # Max chores created per generation run, to stay under the Worker 50-subrequest
 # limit. Only bites on a big one-time fill; run /chores sync again to continue.
 GEN_MAX_CREATES = "40"

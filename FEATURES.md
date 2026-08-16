@@ -74,7 +74,7 @@ active window, effort, and next dates.
 | **weekday** (any) | `monday`…`sunday` for weekly-family cadences. **Omit** to make it an "any day" chore (due Sunday, or N/week via `count:`). |
 | **month** (any) | `january`…`december`. Limits a chore to those months **every year** (all cadences — e.g. a weekly mow chore only May–Sep). For monthly-family cadences it also picks which month(s) the cycle lands on. |
 | **day-of-month** | `first` / `middle` / `last` → 1st / 15th / last day (monthly-family). |
-| **on-miss** | `skip` (you still owe it) / `replace` (default — supersede once overdue). |
+| **on-miss** | `replace` (default) — an overdue copy is **archived** by the Monday sweep and superseded next cycle. **`skip`** — never swept: the overdue copy **survives until completed**, and each recurrence still generates. Use `skip` for anything that can't just be missed (e.g. *Refill Olive's meds*); `replace` is right for chores where missing one is genuinely fine. |
 | **paused** | Takes this one chore off-radar until removed (source of truth for seasonal pausing). Toggle from Discord with `/chores pause chore:` / `resume chore:`. Adding it also **retracts** already-generated future copies. |
 | **silent** | Generate the chore without posting it to Discord. |
 | any **room** label | Copied onto the spawned chore (e.g. `kitchen`). |
@@ -103,21 +103,37 @@ spawned chore.
 ## Generation & assignment
 
 - **Horizon:** the Worker materializes chores up to **`GEN_HORIZON_DAYS`** ahead
-  (default **30**). A larger horizon is a **one-time fill** — because generation
+  (default **14**). A larger horizon is a **one-time fill** — because generation
   dedups by `(team, title, due date)`, later runs only create the new far days.
 - **One-time fill safety:** each run creates at most **`GEN_MAX_CREATES`**
   (default 40) chores to stay under the Worker's 50-subrequest limit. A big
   initial fill reports "N still to create — run `/chores sync` again to finish";
   normal weekly runs never hit it.
-- **Assignment** balances the window by **effort-adjusted time**:
-  `cost = estimate × effortMultiplier(effort)`, distributed so each member's
-  `cost / weight` ratio stays even. Member weights come from `ROTATION_WEIGHTS`
-  (default `Alex:60,Kristal:40`) with per-person overrides via `/chores weight`.
-  Honors fixed owners and `opposite:` pairs.
-- Put an explicit **assignee** on a template to fix that chore to one person.
+- **Assignment is rotation-first.** Each chore **title alternates owner every
+  occurrence** — whoever did it last doesn't get it next time. This is the
+  primary rule, so no one gets the same chore two cycles running, and it holds
+  across a whole horizon fill (the last-owner state updates as the window is
+  planned, not just from a pre-run snapshot).
+- **Load balancing is a tiebreak only.** Effort-adjusted time
+  (`cost = estimate × effortMultiplier(effort)`, compared as `cost / weight`)
+  now decides only titles with **no rotation history** — a brand-new chore.
+  Member weights still come from `ROTATION_WEIGHTS` (default
+  `Alex:60,Kristal:40`) with overrides via `/chores weight`. *Consequence:*
+  strict alternation can leave weighted minutes uneven; that's the intended
+  trade — predictable turns beat a balanced ledger.
+- If the person whose turn it is is **paused** that day, the other covers, and
+  the turn passes normally on the next occurrence.
+- Put an explicit **assignee** on a template to **pin** that chore to one person
+  (it then never rotates) — the supported way to make a chore "sticky".
+- `opposite:` pairs still assign the other person from the paired chore.
 - **Replace policy:** overdue copies of `replace` chores are archived (Monday
   cron only) so misses don't pile up. `/chores sync` skips this so a mid-week run
   never sweeps a not-yet-done chore.
+  > ⚠️ Archiving is **not** completing. A `replace` chore that was still open and
+  > past due is archived *unfinished* — it leaves active views with no record in
+  > Discord, and archived issues are excluded from the scoreboard, so it isn't
+  > even counted as missed. That's fine for genuinely forgivable chores and wrong
+  > for anything that must eventually happen — label those **`on-miss: skip`**.
 
 ---
 
@@ -234,6 +250,11 @@ only your own. Ownership is matched by Linear **user id**, not name.
 - The daily cron posts **today's + overdue** chores to the due channel, grouped by
   assignee, with @-mentions. It also lists **unassigned chores due later this
   week** (within `UNASSIGNED_LOOKAHEAD_DAYS`, default 7).
+- **⏰ Past due** is its own section at the top, oldest first, showing how many
+  days late each chore is and who owns it. Chores are allowed to slip — the
+  point is that slipping stays *visible daily*, instead of being noticed only
+  when the Monday sweep makes it vanish. @-mention counts include past-due work,
+  so a day with nothing new still pings whoever's carrying something.
 - When `DISCORD_BOT_TOKEN` + `DISCORD_DUE_CHANNEL_ID` are set, the digest is posted
   **by the bot** with a single **actions dropdown** (multi-select, up to 25): pick
   "✓ &lt;chore&gt;" to mark an assigned chore done, or "🙋 &lt;chore&gt;" to claim an
@@ -289,7 +310,8 @@ app polls them and stays in sync. `/chores calendar` prints the URLs.
   ago are archived (≤`ARCHIVE_MAX` per run) so the active count stays under
   Linear's free 250 cap. Manual: `/archive?key=…`.
 - **Cap warning:** posts to the admin channel once active issues reach
-  `CAP_WARN_AT` (default 220). *(A 30-day horizon runs higher — keep an eye here.)*
+  `CAP_WARN_AT` (default 220). *(The 14-day horizon keeps this comfortable; a
+  longer one runs much closer to the cap.)*
 - **Weekly scoreboard:** per-person done / on-time / late / missed + streak.
   Completion is compared in Eastern; archived/canceled issues are excluded.
 - **Stats (D1):** Monday snapshot of outcomes; query via `/stats?key=…&days=N`.

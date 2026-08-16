@@ -658,8 +658,11 @@ export async function runWeek(env, opts = {}) {
     return u?.displayName || u?.name || "";
   };
 
-  // ASSIGN per occurrence, balancing the week by weighted effort. Seed counts
-  // from chores already assigned this week so mid-week re-runs stay balanced.
+  // ASSIGN per occurrence. **Rotation is the primary rule**: each chore title
+  // alternates owner every occurrence, so nobody gets the same chore two cycles
+  // running. Weighted-effort load balancing is kept, but demoted to a tiebreak —
+  // it only decides titles with no rotation history (a brand-new chore). Pin a
+  // chore to one person by putting an explicit assignee on its template.
   if (rotation.length >= 2 && plan.length) {
     const [A, B] = rotation;
     const wt = { [A]: resolveWeight(nameOf(A)), [B]: resolveWeight(nameOf(B)) };
@@ -677,32 +680,62 @@ export async function runWeek(env, opts = {}) {
         if (id in counts) counts[id] += weightOf(defs.find((x) => x.teamId === teamId && x.title === n.title));
       }
     }
-    const seed = localDate(base).weekIndex % 2 === 0 ? A : B;
     const bump = (id, w) => {
       if (id in counts) counts[id] += w;
     };
+
+    // Who held each title most recently — the state rotation turns on. Seeded by
+    // *latest due date* among materialized copies (schedule order is what the
+    // household perceives), falling back to creation-order history for titles
+    // with no live copy. Crucially it's updated as the plan is assigned, so a
+    // multi-week fill alternates across its own occurrences instead of reading
+    // one stale pre-run snapshot for every day in the horizon.
+    const liveLast = {};
+    const lastDue = {};
+    for (const teamId of teamIds) {
+      for (const [title, id] of Object.entries(ctx.lastByTitle[teamId] || {})) {
+        if (id) liveLast[`${teamId}::${title}`] = id;
+      }
+      for (const n of ctx.spawned[teamId]) {
+        if (!n.dueDate || !n.assignee?.id) continue;
+        const key = `${teamId}::${n.title}`;
+        if (lastDue[key] && n.dueDate <= lastDue[key]) continue;
+        lastDue[key] = n.dueDate;
+        liveLast[key] = n.assignee.id;
+      }
+    }
+    const setLast = (c, id) => {
+      liveLast[`${c.teamId}::${c.title}`] = id;
+    };
+
     // Fixed-owner chores: skip if that owner is paused that day, else assign.
     for (const e of plan) {
       if (!e.c.assigneeId) continue;
       if (pausedUserIdsOn(e.dueDate).includes(e.c.assigneeId)) { e.skip = true; continue; }
       e.assignee = e.c.assigneeId;
       bump(e.assignee, weightOf(e.c));
+      setLast(e.c, e.assignee);
     }
-    // Rotating chores: assign among the members present that day, weighted.
+    // Rotating chores: hand the title to whoever did NOT do it last time. Load
+    // only breaks the tie when the title has no history. `plan` is built in
+    // ascending date order, so a title's occurrences alternate down the horizon.
     for (const e of plan) {
       if (e.c.assigneeId || e.c.opposite || e.skip) continue;
       const allowed = allowedOn(e.dueDate);
       if (!allowed.length) { e.skip = true; continue; } // everyone paused — skip
       let cand;
-      if (allowed.length === 1) cand = allowed[0];
-      else if (counts[A] / wt[A] < counts[B] / wt[B]) cand = A;
-      else if (counts[B] / wt[B] < counts[A] / wt[A]) cand = B;
-      else {
-        const last = ctx.lastByTitle[e.c.teamId]?.[e.c.title];
-        cand = last === A ? B : last === B ? A : seed;
+      if (allowed.length === 1) {
+        cand = allowed[0]; // the other person is paused — no choice
+      } else {
+        const last = liveLast[`${e.c.teamId}::${e.c.title}`];
+        const other = last ? rotation.find((id) => id !== last) : null;
+        // Rotate. If the person whose turn it is happens to be paused that day,
+        // the other covers rather than the chore being skipped.
+        cand = other && allowed.includes(other) ? other : last && allowed.includes(last) ? last : lower();
       }
       e.assignee = cand;
       bump(cand, weightOf(e.c));
+      setLast(e.c, cand);
     }
     for (const e of plan) {
       if (!e.c.opposite || e.skip) continue;
@@ -720,6 +753,7 @@ export async function runWeek(env, opts = {}) {
       }
       e.assignee = cand;
       bump(cand, weightOf(e.c));
+      setLast(e.c, cand);
     }
   } else {
     // No rotation: keep fixed owners, but skip a fixed chore whose owner is paused.
@@ -1042,6 +1076,11 @@ export async function describeTemplate(env, q) {
     title: t.title,
     rawLabels: (t.labels?.nodes || []).map((l) => l.name),
     parsedCadence: config.cadence || null,
+    // Resolved miss policy: "replace" (default) archives an unfinished overdue
+    // copy on the Monday sweep; "skip" survives until completed. Surfaced
+    // explicitly so you can verify it without eyeballing rawLabels.
+    onMiss: config.onExisting || "replace",
+    sweptWhenOverdue: (config.onExisting || "replace") === "replace",
     dom: config.dom || null,
     months: config.months || null,
     schedule: describeSchedule(chore),

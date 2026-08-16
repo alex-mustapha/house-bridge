@@ -34,8 +34,27 @@ Pause semantics:
   auto-expiry (`createCatchups`, `processExpiredPauses`).
 - Holds are **soft-cleared** (status + cleared_at) so history is queryable via `/chores pauses`.
 
+Assignment (rotation-first — changed Aug 2026):
+- **Per-title alternation is the primary rule**: whoever did a chore last doesn't get it next
+  occurrence. Effort/weight load balancing survives but is a **tiebreak only**, used when a title
+  has no history. Don't "fix" the resulting uneven weighted minutes — that's intended.
+- The last-owner map (`liveLast`) is seeded from the **latest due date** among materialized copies
+  (falling back to creation-order history) and **updated as the plan is assigned**. That last part
+  matters: reading a pre-run snapshot for every day of a bulk fill was the original bug — the same
+  person got a chore for weeks straight.
+- Pin a chore to one person with an explicit **assignee on the template**; there's no `sticky`
+  directive and we don't want one.
+
+Missed chores:
+- `on-miss: replace` (default) archives an open past-due copy on the **Monday** sweep.
+  **Archiving ≠ completing** — the work vanishes unfinished, and archived issues are excluded from
+  the scoreboard, so it isn't even logged as missed. Anything that must eventually happen
+  (meds, etc.) needs the **`on-miss: skip`** label, which is never swept.
+- The digest's **⏰ Past due** section is the pressure valve: chores may slip, but slipping must
+  stay visible daily rather than being discovered by absence.
+
 Long horizon + reconciliation:
-- Generation materializes `GEN_HORIZON_DAYS` (30) ahead, capped at `GEN_MAX_CREATES` (40) per
+- Generation materializes `GEN_HORIZON_DAYS` (14) ahead, capped at `GEN_MAX_CREATES` (40) per
   run (subrequest limit); dedup makes it a one-time fill. So changes must reconcile the existing
   window, not wait for next week: template edits (webhook → `runWeek`), `paused` label
   add/remove, and `/chores weight` (`rebalanceWindow`) all update materialized chores in place.

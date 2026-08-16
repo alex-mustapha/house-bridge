@@ -429,7 +429,13 @@ function deferAndRun(interaction, ctx, worker, { ephemeral = false } = {}) {
         await editInteractionReply(interaction, await worker());
       } catch (e) {
         console.error("Deferred command failed:", e);
-        await editInteractionReply(interaction, "⚠️ That hit an error — check the logs.");
+        // Surface the actual failure (Linear's message bubbles up through
+        // linearQuery) — a generic "check the logs" made these undiagnosable.
+        const detail = (e?.message || "").slice(0, 300);
+        await editInteractionReply(
+          interaction,
+          `⚠️ That hit an error${detail ? `: ${detail}` : " — check the logs."}`,
+        );
       }
     })(),
   );
@@ -639,85 +645,106 @@ async function choreCommand(interaction, env, ctx) {
           "_Each chore shows as an all-day event on its due date with a 9am reminder. Read-only — complete chores from Discord or Linear. Apple refreshes hourly; Google can lag up to a day._",
       );
     }
+    // The day-to-day mutations below all do 2-5 sequential Linear round-trips.
+    // Run inline they raced Discord's 3s reply window; each is deferred so the
+    // ack is instant and the Linear work finishes in the background.
     case "snooze": {
-      const issue = await pickChore(env, o.chore);
-      if (!issue) return reply(`No active chore matching "${o.chore}".`);
-      const days = Math.max(1, Math.min(60, parseInt(o.days, 10) || 1));
-      const newDue = addDays(issue.dueDate || localDate(new Date()).ymd, days);
-      const res = await updateIssueDueDate(env, issue.id, newDue);
-      if (!res?.success) return reply("Couldn't update the due date.");
-      return say(`😴 Snoozed **${issue.title}** ${days} day${days === 1 ? "" : "s"} → due ${newDue}.`);
+      return deferAndRun(interaction, ctx, async () => {
+        const issue = await pickChore(env, o.chore);
+        if (!issue) return `No active chore matching "${o.chore}".`;
+        const days = Math.max(1, Math.min(60, parseInt(o.days, 10) || 1));
+        const newDue = addDays(issue.dueDate || localDate(new Date()).ymd, days);
+        const res = await updateIssueDueDate(env, issue.id, newDue);
+        if (!res?.success) return "Couldn't update the due date.";
+        return `😴 Snoozed **${issue.title}** ${days} day${days === 1 ? "" : "s"} → due ${newDue}.`;
+      });
     }
     case "skip": {
-      const issue = await pickChore(env, o.chore);
-      if (!issue) return reply(`No active chore matching "${o.chore}".`);
-      const res = await archiveIssue(env, issue.id);
-      if (!res?.success) return reply("Couldn't skip that chore.");
-      return say(`⏭️ Skipped **${issue.title}** for now — it'll return on its next scheduled date.`);
+      return deferAndRun(interaction, ctx, async () => {
+        const issue = await pickChore(env, o.chore);
+        if (!issue) return `No active chore matching "${o.chore}".`;
+        const res = await archiveIssue(env, issue.id);
+        if (!res?.success) return "Couldn't skip that chore.";
+        return `⏭️ Skipped **${issue.title}** for now — it'll return on its next scheduled date.`;
+      });
     }
     case "done": {
-      const r = await markChoreDone(env, o.chore);
-      return r.ok ? say(`✅ ${r.message}.`) : reply(r.message);
+      return deferAndRun(interaction, ctx, async () => {
+        const r = await markChoreDone(env, o.chore);
+        return r.ok ? `✅ ${r.message}.` : r.message;
+      });
     }
     case "claim": {
-      const issue = await pickChore(env, o.chore);
-      if (!issue) return reply(`No active chore matching "${o.chore}".`);
-      let userId, who;
-      if (o.assignee) {
-        const u = (await getUsers(env)).find((x) =>
-          [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(o.assignee.toLowerCase())),
-        );
-        if (!u) return reply(`No Linear user matching "${o.assignee}".`);
-        userId = u.id;
-        who = u.name || u.displayName;
-      } else {
-        userId = await resolveCaller(env, interaction);
-        if (!userId) return reply("Couldn't match you to a Linear user — pass `assignee:` to claim for a named person.");
-        const u = (await getUsers(env)).find((x) => x.id === userId);
-        who = u?.name || u?.displayName || "you";
-      }
-      const res = await assignIssue(env, issue.id, userId);
-      if (!res?.success) return reply("Couldn't assign that chore.");
-      return say(`🙋 **${who}** claimed **${issue.title}**.`);
+      return deferAndRun(interaction, ctx, async () => {
+        // The chore lookup and the user list are independent — fetch together.
+        const [issue, users] = await Promise.all([pickChore(env, o.chore), getUsers(env)]);
+        if (!issue) return `No active chore matching "${o.chore}".`;
+        let userId, who;
+        if (o.assignee) {
+          const u = users.find((x) =>
+            [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(o.assignee.toLowerCase())),
+          );
+          if (!u) return `No Linear user matching "${o.assignee}".`;
+          userId = u.id;
+          who = u.name || u.displayName;
+        } else {
+          userId = await resolveCaller(env, interaction);
+          if (!userId) return "Couldn't match you to a Linear user — pass `assignee:` to claim for a named person.";
+          who = users.find((x) => x.id === userId)?.name || "you";
+        }
+        const res = await assignIssue(env, issue.id, userId);
+        if (!res?.success) return "Couldn't assign that chore.";
+        return `🙋 **${who}** claimed **${issue.title}**.`;
+      });
     }
     case "unclaim": {
-      const meId = await resolveCaller(env, interaction);
-      if (!meId) return reply("Couldn't match you to a Linear user.");
-      const issue = await pickChore(env, o.chore);
-      if (!issue) return reply(`No active chore matching "${o.chore}".`);
-      if (issue.assignee?.id !== meId)
-        return reply(
-          issue.assignee?.name
+      return deferAndRun(interaction, ctx, async () => {
+        const [meId, issue] = await Promise.all([resolveCaller(env, interaction), pickChore(env, o.chore)]);
+        if (!meId) return "Couldn't match you to a Linear user.";
+        if (!issue) return `No active chore matching "${o.chore}".`;
+        if (issue.assignee?.id !== meId)
+          return issue.assignee?.name
             ? `**${issue.title}** is assigned to ${issue.assignee.name}, not you.`
-            : `**${issue.title}** is already unassigned.`,
-        );
-      const res = await unassignIssue(env, issue.id);
-      if (!res?.success) return reply("Couldn't unassign that chore.");
-      return say(`🤚 Dropped **${issue.title}** back to the unassigned pool.`);
+            : `**${issue.title}** is already unassigned.`;
+        const res = await unassignIssue(env, issue.id);
+        if (!res?.success) return "Couldn't unassign that chore.";
+        return `🤚 Dropped **${issue.title}** back to the unassigned pool.`;
+      });
     }
     case "add": {
-      const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
-      if (!teamId) return reply("Chores team not found.");
+      // Validate synchronously so a typo replies instantly, then defer: creating
+      // an issue needs several Linear round-trips and used to run inline, which
+      // regularly blew past Discord's 3s window and surfaced as "the application
+      // did not respond" — often *after* the chore had actually been created.
       if (o.due && !isYmd(o.due)) return reply("`due` must be `YYYY-MM-DD`.");
       const dueDate = o.due || null; // no due date unless one is given
-      let assigneeId;
-      if (o.assignee) {
-        const u = (await getUsers(env)).find((x) =>
-          [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(o.assignee.toLowerCase())),
-        );
-        if (!u) return reply(`No Linear user matching "${o.assignee}".`);
-        assigneeId = u.id;
-      }
-      const res = await createIssue(env, {
-        teamId,
-        title: o.title,
-        dueDate,
-        assigneeId,
-        stateId: await getTodoStateId(env, teamId),
-        projectId: await getProjectId(env, env.ADHOC_PROJECT || "Ad Hoc"),
+      return deferAndRun(interaction, ctx, async () => {
+        // Independent lookups in parallel — one wave instead of three.
+        const [teamId, projectId, users] = await Promise.all([
+          getTeamId(env, env.CHORES_TEAM || "CHO"),
+          getProjectId(env, env.ADHOC_PROJECT || "Ad Hoc"),
+          o.assignee ? getUsers(env) : Promise.resolve(null),
+        ]);
+        if (!teamId) return "Chores team not found.";
+        let assigneeId;
+        if (o.assignee) {
+          const u = (users || []).find((x) =>
+            [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(o.assignee.toLowerCase())),
+          );
+          if (!u) return `No Linear user matching "${o.assignee}".`;
+          assigneeId = u.id;
+        }
+        const res = await createIssue(env, {
+          teamId,
+          title: o.title,
+          dueDate,
+          assigneeId,
+          stateId: await getTodoStateId(env, teamId),
+          projectId,
+        });
+        if (!res?.success) return "Couldn't create the chore — Linear rejected it.";
+        return `➕ Added **${o.title}**${dueDate ? ` (due ${dueDate})` : ""} to Ad Hoc${assigneeId ? ` for ${o.assignee}` : ""}.`;
       });
-      if (!res?.success) return reply("Couldn't create the chore.");
-      return say(`➕ Added **${o.title}**${dueDate ? ` (due ${dueDate})` : ""} to Ad Hoc${assigneeId ? ` for ${o.assignee}` : ""}.`);
     }
   }
   return reply("Unknown `/chores` subcommand.");

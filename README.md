@@ -170,10 +170,18 @@ so only one can be picked at a time.
 - **`day-of-month` group** (pick one): `first` / `middle` / `last` →
   1st / 15th / last day — used by `monthly`, `bimonthly`, `semi-annually`,
   `annually`
-- **collision group** (optional): `skip` / `replace` — default `replace`.
-  `replace` only supersedes the previous copy once it's **overdue** (so you get
-  the full window to finish on time); `skip` never makes a second copy while one
-  is still open.
+- **on-miss** (optional): `skip` / `replace` — default `replace`.
+  `replace` supersedes the previous copy once it's **overdue** (so you get the
+  full window to finish on time): the Monday sweep **archives** the unfinished
+  copy and the next cycle spawns a fresh one.
+  `skip` is **never swept** — the overdue copy survives until it's actually
+  completed, and each new occurrence still generates on schedule, so genuinely
+  owed work accumulates instead of disappearing.
+  > Archiving is not completing. A swept `replace` chore leaves active views
+  > unfinished and, because archived issues are excluded from the scoreboard,
+  > isn't even counted as missed. Use `skip` for anything that must eventually
+  > happen (e.g. refilling a prescription); keep `replace` where missing one is
+  > genuinely fine. Past-due work is listed daily in the digest either way.
 - **`paused` label** (optional): stops generating that chore until you remove it
   — ideal for seasonal chores (pause mowing in winter, resume in spring).
 
@@ -205,13 +213,20 @@ Optional description directives (parsed, then stripped from the copied body):
 
 Every other label (e.g. `kitchen`) is copied onto the spawned chore.
 
-**Auto-assignment (balanced).** Set `ROTATION_MEMBERS` to your two members
+**Auto-assignment (rotation-first).** Set `ROTATION_MEMBERS` to your two members
 (names or emails — `wrangler secret put ROTATION_MEMBERS`, e.g. `Alex,Kristal`).
-When the week is generated, chores are split **≈50/50 across the whole week**
-rather than each alternating independently — so weeks aren't lopsided. Fixed
-owners (a template with an explicit assignee) and `opposite:` pairs are counted
-in, the lighter-loaded person gets each next chore (ties alternate from last
-time), and which person eats the odd chore flips each week.
+Each chore **title alternates owner every occurrence**: whoever did it last
+doesn't get it next time. That's the primary rule, and it holds across the whole
+generated window, so nobody gets the same chore two cycles running.
+
+Effort-adjusted load balancing (`estimate:` × `effort:`, weighted by
+`ROTATION_WEIGHTS`) is kept but acts only as a **tiebreak** for a title with no
+history. Strict alternation can therefore leave the weighted minutes somewhat
+uneven — that's the intended trade: predictable turns beat a balanced ledger.
+
+To **pin** a chore to one person, put an explicit assignee on its template; it
+then never rotates. If someone is paused on the day their turn comes up, the
+other covers and the turn passes normally next occurrence.
 
 Example — kitchen cleaned M/W/F, deep-cleaned on the 1st of each month:
 - Ticket `Clean the kitchen`: labels `weekly` `monday` `wednesday` `friday` `kitchen`
