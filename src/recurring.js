@@ -910,6 +910,15 @@ export async function reshuffleWindow(env) {
   const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
   const byTitle = {};
   for (const c of defs) if (c.teamId === teamId) byTitle[c.title] = c;
+  // A title can legitimately have SEVERAL templates — that's how a per-weekday
+  // split is expressed (e.g. "Cook Dinner" monday+wednesday -> one person,
+  // friday -> the other, each with its own fixed assignee). `byTitle` keeps only
+  // the last one, so decide "is this title hand-assigned?" across *all* defs:
+  // if any template for the title pins an owner or pairs via `opposite:`, the
+  // whole title is hand-managed and rotation must not touch it.
+  const pinnedTitles = new Set(
+    defs.filter((c) => c.teamId === teamId && (c.assigneeId || c.opposite)).map((c) => c.title),
+  );
 
   const pauses = await getActivePauses(env);
   const nameToId = (name) => {
@@ -934,7 +943,7 @@ export async function reshuffleWindow(env) {
   for (const n of spawned) {
     if (!n.dueDate) continue;
     const c = byTitle[n.title];
-    if (!c || c.assigneeId || c.opposite) continue; // no template, or pinned/paired -> never move
+    if (!c || pinnedTitles.has(n.title)) continue; // no template, or hand-assigned -> never move
     if (n.dueDate < today) {
       if (!n.assignee?.id) continue;
       if (lastDue[n.title] && n.dueDate <= lastDue[n.title]) continue;
