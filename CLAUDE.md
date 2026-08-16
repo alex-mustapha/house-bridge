@@ -43,7 +43,12 @@ Assignment (rotation-first — changed Aug 2026):
   matters: reading a pre-run snapshot for every day of a bulk fill was the original bug — the same
   person got a chore for weeks straight.
 - Pin a chore to one person with an explicit **assignee on the template**; there's no `sticky`
-  directive and we don't want one.
+  directive and we don't want one. To pin only *some* weekdays, use
+  **`assign: monday=Kristal, friday=Alex`** — unlisted weekdays still rotate.
+- **Pinning is decided across ALL templates sharing a title**, not the one a `byTitle` map
+  happens to keep. A per-weekday split can also be expressed as several same-title templates,
+  and `reshuffleWindow`/`rebalanceWindow` would otherwise reassign hand-managed chores depending
+  on map ordering. Keep using `pinnedTitles` (assignee || opposite || assignDays) for that check.
 
 Missed chores:
 - `on-miss: replace` (default) archives an open past-due copy on the **Monday** sweep.

@@ -207,6 +207,12 @@ Optional description directives (parsed, then stripped from the copied body):
 - `dueafter: 2` — due date N days out (default today)
 - `opposite: Change sheets` — assign the *other* person from that chore's owner
   this run (both chores must be due the same day for it to apply)
+- `assign: monday=Kristal, wednesday=Kristal, friday=Alex` — a **per-weekday
+  fixed owner**, so one template can split a chore across people by day rather
+  than needing a separate template each. Weekdays you don't list fall through to
+  normal rotation (`assign: friday=Alex` pins only Fridays). A template-level
+  assignee pins every occurrence and wins outright. Any chore pinned this way is
+  left alone by `/chores reshuffle` and `/chores weight`.
 - `start: 2026-06-27` — the first eligible date (nothing generates before it);
   for `biweekly`/`triweekly` it also **anchors** the cycle, so it proceeds every
   2 / 3 weeks from that date (no need to figure out even/odd)

@@ -94,6 +94,7 @@ Parsed from the template description, then stripped from the spawned copy.
 | `week: even`/`odd` (biweekly) or `0`/`1`/`2` (triweekly) | Which cycle. |
 | `dueafter: 2` | Due N days out instead of today. |
 | `opposite: Cook Dinner` | Assign the *other* person from that chore's owner on the same day. |
+| `assign: monday=Kristal, friday=Alex` | **Per-weekday fixed owner.** Splits one chore across people by day, so a single template can cover "Kristal cooks Mon/Wed, Alex cooks Fri" without duplicating it. Weekdays you don't list fall through to normal rotation, so `assign: friday=Alex` pins only Fridays. A template-level **assignee** pins *every* occurrence and wins outright. Names match loosely, same as elsewhere. |
 
 Anything else in the description (e.g. a `- [ ]` checklist) is copied onto each
 spawned chore.
@@ -125,6 +126,10 @@ spawned chore.
   the turn passes normally on the next occurrence.
 - Put an explicit **assignee** on a template to **pin** that chore to one person
   (it then never rotates) — the supported way to make a chore "sticky".
+- Use **`assign:`** to pin *particular weekdays* to particular people while
+  leaving the rest rotating. Any title that's hand-managed this way (template
+  assignee, `assign:`, or `opposite:`) is skipped by `/chores reshuffle` and
+  `/chores weight`, so manual arrangements are never reshuffled away.
 - `opposite:` pairs still assign the other person from the paired chore.
 - **Replace policy:** overdue copies of `replace` chores are archived (Monday
   cron only) so misses don't pile up. `/chores sync` skips this so a mid-week run

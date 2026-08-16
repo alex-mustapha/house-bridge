@@ -171,7 +171,7 @@ export function parseDuration(s) {
 
 // week/dueafter/opposite/start/end/count/estimate live in the description;
 // parsed then stripped. (Months come from labels only.)
-const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end|count|estimate|effort|every)\s*:/i;
+const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end|count|estimate|effort|every|assign)\s*:/i;
 function parseDescriptionConfig(description) {
   const cfg = {};
   if (!description) return cfg;
@@ -207,6 +207,24 @@ function parseDescriptionConfig(description) {
   // opposite: <chore title> -> assign the other member from that chore this run
   const opp = description.match(/^\s*opposite\s*:\s*(.+)$/im);
   if (opp) cfg.opposite = opp[1].trim();
+  // assign: monday=Kristal, wednesday=Kristal, friday=Alex
+  //   -> per-weekday fixed owner on ONE template, instead of duplicating the
+  //   template per person. Names resolve the same loose way as elsewhere (see
+  //   resolveAssignDays). Weekdays not listed fall through to normal rotation,
+  //   so `assign: friday=Alex` pins only Fridays. A template-level assignee
+  //   still wins outright — this is for splitting a title across people.
+  const asn = description.match(/^\s*assign\s*:\s*(.+)$/im);
+  if (asn) {
+    const map = {};
+    for (const part of asn[1].split(/[,;]/)) {
+      const m = part.match(/^\s*([a-z]+)\s*=\s*(.+?)\s*$/i);
+      if (!m) continue;
+      const day = m[1].toLowerCase();
+      if (!(day in WEEKDAYS)) continue; // ignore junk rather than failing the template
+      map[day] = m[2].trim();
+    }
+    if (Object.keys(map).length) cfg.assignDays = map;
+  }
   // start: YYYY-MM-DD -> first eligible date; also anchors the biweekly/triweekly cycle
   const st = description.match(/^\s*start\s*:\s*(\d{4}-\d{2}-\d{2})\s*$/im);
   if (st) cfg.start = st[1];
@@ -428,6 +446,7 @@ async function buildDefs(env) {
         dueAfterDays: descCfg.dueAfterDays,
         opposite: descCfg.opposite, // assign opposite of this chore's owner
         assigneeId: t.assignee?.id, // explicit owner on the template = fixed
+        assignDays: descCfg.assignDays, // per-weekday fixed owners (names, resolved later)
         start: descCfg.start, // first eligible date
         end: descCfg.end, // last eligible date
         anchorWeek: descCfg.start
@@ -708,11 +727,27 @@ export async function runWeek(env, opts = {}) {
       liveLast[`${c.teamId}::${c.title}`] = id;
     };
 
+    // `assign: monday=Kristal, friday=Alex` -> a per-weekday fixed owner, so one
+    // template can split a chore across people by day instead of needing a
+    // separate template each. Resolved here rather than at parse time because it
+    // needs the workspace user list. A weekday that isn't listed returns null and
+    // falls through to normal rotation.
+    const ownerForDay = (c, ymd) => {
+      if (!c.assignDays) return null;
+      const dow = new Date(`${ymd}T12:00:00Z`).getUTCDay();
+      const dayName = Object.keys(WEEKDAYS).find((k) => WEEKDAYS[k] === dow);
+      const who = c.assignDays[dayName];
+      return who ? nameToId(who) : null;
+    };
+    // A template-level assignee pins every occurrence and wins outright.
+    const fixedOwnerOf = (e) => e.c.assigneeId || ownerForDay(e.c, e.dueDate);
+
     // Fixed-owner chores: skip if that owner is paused that day, else assign.
     for (const e of plan) {
-      if (!e.c.assigneeId) continue;
-      if (pausedUserIdsOn(e.dueDate).includes(e.c.assigneeId)) { e.skip = true; continue; }
-      e.assignee = e.c.assigneeId;
+      const owner = fixedOwnerOf(e);
+      if (!owner) continue;
+      if (pausedUserIdsOn(e.dueDate).includes(owner)) { e.skip = true; continue; }
+      e.assignee = owner;
       bump(e.assignee, weightOf(e.c));
       setLast(e.c, e.assignee);
     }
@@ -720,7 +755,7 @@ export async function runWeek(env, opts = {}) {
     // only breaks the tie when the title has no history. `plan` is built in
     // ascending date order, so a title's occurrences alternate down the horizon.
     for (const e of plan) {
-      if (e.c.assigneeId || e.c.opposite || e.skip) continue;
+      if (fixedOwnerOf(e) || e.c.opposite || e.skip) continue;
       const allowed = allowedOn(e.dueDate);
       if (!allowed.length) { e.skip = true; continue; } // everyone paused — skip
       let cand;
@@ -756,10 +791,18 @@ export async function runWeek(env, opts = {}) {
       setLast(e.c, cand);
     }
   } else {
-    // No rotation: keep fixed owners, but skip a fixed chore whose owner is paused.
+    // No rotation: keep fixed owners (template-level and per-weekday `assign:`),
+    // but skip a fixed chore whose owner is paused.
+    const dayOwner = (c, ymd) => {
+      if (!c.assignDays) return null;
+      const dow = new Date(`${ymd}T12:00:00Z`).getUTCDay();
+      const dayName = Object.keys(WEEKDAYS).find((k) => WEEKDAYS[k] === dow);
+      return c.assignDays[dayName] ? nameToId(c.assignDays[dayName]) : null;
+    };
     for (const e of plan) {
-      if (e.c.assigneeId && pausedUserIdsOn(e.dueDate).includes(e.c.assigneeId)) { e.skip = true; continue; }
-      e.assignee = e.c.assigneeId;
+      const owner = e.c.assigneeId || dayOwner(e.c, e.dueDate);
+      if (owner && pausedUserIdsOn(e.dueDate).includes(owner)) { e.skip = true; continue; }
+      e.assignee = owner;
     }
   }
 
@@ -824,7 +867,7 @@ export async function rebalanceWindow(env) {
   const byTitle = {};
   for (const c of defs) if (c.teamId === teamId) byTitle[c.title] = c;
   const pinnedTitles = new Set(
-    defs.filter((c) => c.teamId === teamId && (c.assigneeId || c.opposite)).map((c) => c.title),
+    defs.filter((c) => c.teamId === teamId && (c.assigneeId || c.opposite || c.assignDays)).map((c) => c.title),
   );
 
   // User pauses drop a member from rotation on their days.
@@ -923,7 +966,7 @@ export async function reshuffleWindow(env) {
   // if any template for the title pins an owner or pairs via `opposite:`, the
   // whole title is hand-managed and rotation must not touch it.
   const pinnedTitles = new Set(
-    defs.filter((c) => c.teamId === teamId && (c.assigneeId || c.opposite)).map((c) => c.title),
+    defs.filter((c) => c.teamId === teamId && (c.assigneeId || c.opposite || c.assignDays)).map((c) => c.title),
   );
 
   const pauses = await getActivePauses(env);
@@ -1192,6 +1235,12 @@ export async function describeTemplate(env, q) {
     // explicitly so you can verify it without eyeballing rawLabels.
     onMiss: config.onExisting || "replace",
     sweptWhenOverdue: (config.onExisting || "replace") === "replace",
+    // Who owns it: a template assignee pins every occurrence; `assign:` pins
+    // only the weekdays listed (the rest rotate). Both make the title
+    // hand-managed, so /chores reshuffle and weight leave it alone.
+    fixedAssignee: t.assignee?.name || null,
+    assignDays: descCfg.assignDays || null,
+    rotates: !t.assignee && !descCfg.assignDays && !descCfg.opposite,
     dom: config.dom || null,
     months: config.months || null,
     schedule: describeSchedule(chore),
