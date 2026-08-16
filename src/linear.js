@@ -621,7 +621,7 @@ export async function fetchRecurringTemplates(env, projectName) {
           url
           team { id key }
           labels { nodes { id name } }
-          assignee { id }
+          assignee { id name }
         }
       }
     }`;
