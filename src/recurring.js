@@ -823,6 +823,9 @@ export async function rebalanceWindow(env) {
   const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
   const byTitle = {};
   for (const c of defs) if (c.teamId === teamId) byTitle[c.title] = c;
+  const pinnedTitles = new Set(
+    defs.filter((c) => c.teamId === teamId && (c.assigneeId || c.opposite)).map((c) => c.title),
+  );
 
   // User pauses drop a member from rotation on their days.
   const pauses = await getActivePauses(env);
@@ -852,7 +855,10 @@ export async function rebalanceWindow(env) {
     if (["completed", "canceled"].includes(n.state?.type) || n.state?.type === "started") continue;
     const c = byTitle[n.title];
     if (!c) continue; // no active template (paused/deleted/ad-hoc) -> leave
-    if (c.assigneeId || c.opposite) {
+    // Pinning is decided across ALL templates for the title, not just the one
+    // `byTitle` happened to keep: a per-weekday split is several templates
+    // sharing a title, and only some of them carry the assignee.
+    if (pinnedTitles.has(n.title)) {
       // Locked to a person/pairing: count its load but don't move it.
       if (n.assignee?.id && n.assignee.id in counts) counts[n.assignee.id] += cost(n.title);
       continue;
