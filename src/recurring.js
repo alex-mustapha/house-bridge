@@ -885,6 +885,102 @@ export async function rebalanceWindow(env) {
   return { reassigned };
 }
 
+// Re-rotate already-materialized chores so each title alternates owner again.
+// Generation dedups by (team, title, due date), so occurrences created before
+// rotation-first assignment landed keep whatever owner they were given — a
+// balancer-era window can hold the same person on a chore many cycles running,
+// and nothing fixes it on its own. This walks each title's future copies in due
+// order and alternates them.
+//
+// Deliberately NOT bounded by GEN_HORIZON_DAYS: the copies needing repair were
+// materialized under a longer horizon and sit past the current window's end.
+// Only future, not-yet-started, rotating chores move (fixed-owner, `opposite:`,
+// started, and past-due copies are left alone), and a paused user is never
+// given a day they're out. Bounded by GEN_MAX_CREATES per run.
+export async function reshuffleWindow(env) {
+  const users = await getUsers(env);
+  let rotation = [];
+  if (env.ROTATION_MEMBERS) {
+    rotation = matchMembers(env.ROTATION_MEMBERS, users);
+    if (rotation.length < 2) rotation = [];
+  }
+  if (rotation.length < 2) return { reassigned: 0, considered: 0, capped: false };
+
+  const defs = await buildDefs(env);
+  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const byTitle = {};
+  for (const c of defs) if (c.teamId === teamId) byTitle[c.title] = c;
+
+  const pauses = await getActivePauses(env);
+  const nameToId = (name) => {
+    const want = (name || "").toLowerCase();
+    return users.find((x) => [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(want)))?.id || null;
+  };
+  const userPauses = pauses
+    .filter((p) => p.scope === "user")
+    .map((p) => ({ ...p, userId: nameToId(p.target) }))
+    .filter((p) => p.userId);
+  const pausedOn = (ymd) => userPauses.filter((p) => ymd >= p.start_date && ymd <= p.end_date).map((p) => p.userId);
+
+  const today = localDate(new Date()).ymd;
+  const spawned = await fetchSpawned(env, teamId, env.CHORES_PROJECT || "House Chores");
+
+  // Seed each title's rotation position from the most recent copy that already
+  // happened, so the first future occurrence alternates off real history rather
+  // than restarting the cycle arbitrarily.
+  const last = {};
+  const lastDue = {};
+  const future = {};
+  for (const n of spawned) {
+    if (!n.dueDate) continue;
+    const c = byTitle[n.title];
+    if (!c || c.assigneeId || c.opposite) continue; // no template, or pinned/paired -> never move
+    if (n.dueDate < today) {
+      if (!n.assignee?.id) continue;
+      if (lastDue[n.title] && n.dueDate <= lastDue[n.title]) continue;
+      lastDue[n.title] = n.dueDate;
+      last[n.title] = n.assignee.id;
+      continue;
+    }
+    if (["completed", "canceled", "started"].includes(n.state?.type)) continue;
+    (future[n.title] ||= []).push(n);
+  }
+
+  const cap = Math.max(1, parseInt(env.GEN_MAX_CREATES || "40", 10) || 40);
+  let reassigned = 0;
+  let considered = 0;
+  let capped = false;
+  for (const [title, list] of Object.entries(future)) {
+    list.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    for (const n of list) {
+      considered++;
+      const out = pausedOn(n.dueDate);
+      const allowed = rotation.filter((id) => !out.includes(id));
+      if (!allowed.length) continue;
+      const prev = last[title];
+      const other = prev ? rotation.find((id) => id !== prev) : null;
+      // Rotate; if whoever's turn it is is paused that day, the other covers.
+      const target =
+        allowed.length === 1
+          ? allowed[0]
+          : other && allowed.includes(other)
+            ? other
+            : prev && allowed.includes(prev)
+              ? prev
+              : allowed.includes(n.assignee?.id)
+                ? n.assignee.id // no history at all — leave it put rather than churn
+                : allowed[0];
+      last[title] = target;
+      if (n.assignee?.id === target) continue;
+      if (reassigned >= cap) { capped = true; break; }
+      const res = await assignIssue(env, n.id, target);
+      if (res?.success) reassigned++;
+    }
+    if (capped) break;
+  }
+  return { reassigned, considered, capped };
+}
+
 // A user pause means "the other person covers." Reassign the paused user's
 // open chores in the window to a covering rotation member — reassign in place,
 // never delete/recreate. Returns how many were handed over.

@@ -121,6 +121,11 @@ export const COMMANDS = [
       },
       {
         type: 1,
+        name: "reshuffle",
+        description: "Re-rotate upcoming chores so each one alternates between you again",
+      },
+      {
+        type: 1,
         name: "add",
         description: "Add a one-off chore",
         options: [

@@ -1,6 +1,10 @@
 name = "linear-discord-bridge"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
+# Pin the owning account. Without this wrangler silently targets whichever
+# account happens to be logged in — with the wrong one active it will create a
+# second, unrelated Worker of the same name instead of updating this one.
+account_id = "8b74b28235d1fb890e45422ca8edc2c7"
 
 # Daily digest + recurring-chore creation.
 # IMPORTANT: Cloudflare cron is UTC and does NOT observe daylight saving.

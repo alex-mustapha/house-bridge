@@ -27,7 +27,7 @@ import {
   assignIssue,
   unassignIssue,
 } from "./linear.js";
-import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, coverUserPause } from "./recurring.js";
+import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, reshuffleWindow, coverUserPause } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
 
@@ -634,6 +634,21 @@ async function choreCommand(interaction, env, ctx) {
       );
       return { type: 5, data: { flags: EPHEMERAL } }; // deferred ephemeral reply
     }
+    case "reshuffle": {
+      // Repairs rotation on chores that were already materialized (generation
+      // dedups, so it never revisits them). Deferred — it can touch the whole
+      // materialized window.
+      return deferAndRun(interaction, ctx, async () => {
+        const r = await reshuffleWindow(env);
+        if (!r.considered) return "🔀 Nothing upcoming to re-rotate.";
+        if (!r.reassigned) return `🔀 Checked **${r.considered}** upcoming chore(s) — rotation already looks right.`;
+        const more = r.capped ? " ⏳ Hit the per-run cap — run it again to finish." : "";
+        return (
+          `🔀 Re-rotated **${r.reassigned}** of **${r.considered}** upcoming chore(s) so they alternate again.${more} ` +
+          "Pinned chores, `opposite:` pairs, in-progress and past-due chores were left alone."
+        );
+      });
+    }
     case "calendar": {
       const base = (env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
       return reply(
@@ -898,6 +913,7 @@ function choreHelp() {
     "• `/chores weight [user:<name>] [value:<n>] [reset:true]` — view or skew the rotation load (rebalances the upcoming window).",
     "• `/chores calendar` — links to subscribe to your chores in your calendar app.",
     "• `/chores sync` — re-run generation now (idempotent; fills the schedule horizon).",
+    "• `/chores reshuffle` — re-rotate upcoming chores so each one alternates between you again.",
     "• `/chores help` — this message.",
     "",
     "Names match loosely (partial, case-insensitive). Permanent recurring chores are defined as **templates** in Linear's _Recurring_ project; `/tasks`, `/project`, `/unassigned` list issues.",
