@@ -1240,6 +1240,7 @@ export async function describeTemplate(env, q) {
     // hand-managed, so /chores reshuffle and weight leave it alone.
     fixedAssignee: t.assignee?.name || null,
     assignDays: descCfg.assignDays || null,
+    opposite: descCfg.opposite || null, // paired chore: takes the other person
     rotates: !t.assignee && !descCfg.assignDays && !descCfg.opposite,
     dom: config.dom || null,
     months: config.months || null,
