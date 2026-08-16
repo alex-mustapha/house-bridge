@@ -302,13 +302,17 @@ export async function getIssueByIdentifier(env, identifier) {
   return data.issues?.nodes?.[0] || null;
 }
 
-// Chores (archived included) due on/after `since`, for the weekly scoreboard.
+// Chores due on/after `since`, for the weekly recap. Archived issues are
+// INCLUDED deliberately: the Monday cron sweeps last week's unfinished chores
+// (step 1) before the recap runs (step 4), so excluding archived meant the
+// recap couldn't see the very misses that had just been swept and reported a
+// flatteringly small number.
 export async function fetchChoreHistory(env, teamId, since) {
   const query = `
     query History($teamId: ID!) {
       issues(
         first: 250
-        includeArchived: false
+        includeArchived: true
         filter: {
           team: { id: { eq: $teamId } }
           dueDate: { gte: "${since}" }

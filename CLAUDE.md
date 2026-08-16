@@ -50,6 +50,15 @@ Assignment (rotation-first — changed Aug 2026):
   and `reshuffleWindow`/`rebalanceWindow` would otherwise reassign hand-managed chores depending
   on map ordering. Keep using `pinnedTitles` (assignee || opposite || assignDays) for that check.
 
+Weekly recap:
+- Covers the **finished week ending yesterday**, not a window including today — every day is
+  final, so "not completed" unambiguously means missed.
+- `fetchChoreHistory` must keep **`includeArchived: true`**. The Monday cron sweeps last week's
+  unfinished chores (step 1) *before* the recap posts (step 4); excluding archived meant the
+  recap couldn't see the misses that had just been swept and under-reported badly.
+- The streak is **chore-days** (days you had chores and cleared them), not calendar days. Don't
+  relabel it "N-day streak" — that read as consecutive days while actually spanning up to 30.
+
 Missed chores:
 - `on-miss: replace` (default) archives an open past-due copy on the **Monday** sweep.
   **Archiving ≠ completing** — the work vanishes unfinished, and archived issues are excluded from

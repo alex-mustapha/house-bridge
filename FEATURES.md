@@ -317,8 +317,21 @@ app polls them and stays in sync. `/chores calendar` prints the URLs.
 - **Cap warning:** posts to the admin channel once active issues reach
   `CAP_WARN_AT` (default 220). *(The 14-day horizon keeps this comfortable; a
   longer one runs much closer to the cap.)*
-- **Weekly scoreboard:** per-person done / on-time / late / missed + streak.
-  Completion is compared in Eastern; archived/canceled issues are excluded.
+- **Weekly recap** (Mondays): one embed covering the **finished week ending
+  yesterday** (Mon–Sun), so every day in it is final and "missed" is unambiguous.
+  - **Household + per-person `done of assigned` and completion %** — a bare
+    "2 done" says nothing without the denominator; 2 of 2 and 2 of 12 are very
+    different weeks.
+  - **Trend vs the week before** (`▲ 12 pts` / `▼ 16 pts`).
+  - **What slipped** — the missed chores by name and owner (up to 10), which is
+    the part you can act on.
+  - **Chore-days clear** replaces the old "N-day streak": it counts days you
+    actually had chores and cleared them, so a chore-free week can't build one.
+    The old label implied consecutive calendar days and could span a month.
+  - Bar colour tracks household completion (green ≥80%, amber ≥50%, red below).
+  - Completion is compared in Eastern. **Archived issues are included** — the
+    Monday sweep runs *before* the recap, so excluding them hid the very misses
+    that had just been swept. Canceled issues are still excluded.
 - **Stats (D1):** Monday snapshot of outcomes; query via `/stats?key=…&days=N`.
 
 ---

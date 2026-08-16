@@ -248,27 +248,62 @@ export async function postViaBot(env, channelId, payload) {
   return res.ok;
 }
 
-// One embed per person, so each gets their own weekly scoreboard.
+// A single weekly-recap embed. One card rather than one per person, so the two
+// are directly comparable; each line leads with how much of their own load they
+// cleared (done / assigned), since a raw "done" count says nothing without the
+// denominator — 2 of 2 and 2 of 12 are very different weeks.
 export function buildScoreboardMessage(stats) {
-  const embeds = stats.people.map((p) => ({
-    title: `📊 ${p.name} — last week`,
-    description:
-      `✅ **${p.done}** done (${p.onTime} on time, ${p.late} late)\n` +
-      `❌ **${p.missed}** missed\n` +
-      `🔥 ${p.streak}-day streak`,
-    color: 0x9b59b6, // purple
-    timestamp: new Date().toISOString(),
-  }));
-
-  if (!embeds.length) {
-    embeds.push({
-      title: "📊 Last week",
-      description: "No chores in the last 7 days.",
-      color: 0x9b59b6,
-      timestamp: new Date().toISOString(),
-    });
+  const { people, household, missed, window } = stats;
+  const stamp = new Date().toISOString();
+  if (!people.length) {
+    return {
+      embeds: [
+        { title: "📊 Weekly recap", description: "No chores were due last week.", color: 0x9b59b6, timestamp: stamp },
+      ],
+    };
   }
-  return { embeds };
+
+  // "▲ 12 pts" / "▼ 5 pts" against the week before — a number on its own can't
+  // tell you whether things are getting better or worse.
+  const trend = (d) => (d === null ? "" : d > 0 ? ` ▲ ${d} pts` : d < 0 ? ` ▼ ${Math.abs(d)} pts` : " ·  no change");
+  const pctText = (p) => (p === null ? "—" : `${p}%`);
+
+  const lines = [`**Household** — ${household.done} of ${household.total} done · **${pctText(household.pct)}**${trend(household.delta)}`, ""];
+  for (const p of people) {
+    lines.push(`**${p.name}** — ${p.done} of ${p.total} · **${pctText(p.pct)}**${trend(p.delta)}`);
+    const bits = [`✅ ${p.onTime} on time`];
+    if (p.late) bits.push(`⏰ ${p.late} late`);
+    if (p.missed) bits.push(`❌ ${p.missed} missed`);
+    // Labelled "chore-days" on purpose: it counts days you actually had chores
+    // and cleared them, so it can span more than a week and a chore-free week
+    // never builds one. Calling it an N-day streak was misleading.
+    if (p.streak) bits.push(`🔥 ${p.streak} chore-day${p.streak === 1 ? "" : "s"} clear`);
+    lines.push(bits.join(" · "));
+    lines.push("");
+  }
+
+  if (missed.length) {
+    const shown = missed.slice(0, 10).map((m) => `• ${m.title} — ${m.who}`);
+    if (missed.length > 10) shown.push(`• …and ${missed.length - 10} more`);
+    lines.push(`❌ **What slipped**\n${shown.join("\n")}`);
+  } else {
+    lines.push("🎉 **Nothing slipped** — everything due last week got done.");
+  }
+
+  // Green when the household cleared most of its load, amber mid, red when
+  // more was missed than done.
+  const pct = household.pct ?? 0;
+  const color = pct >= 80 ? 0x2ecc71 : pct >= 50 ? 0xf39c12 : 0xe74c3c;
+  return {
+    embeds: [
+      {
+        title: `📊 Weekly recap · ${fmtDue(window.from)} – ${fmtDue(window.to)}`,
+        description: lines.join("\n").slice(0, 4000),
+        color,
+        timestamp: stamp,
+      },
+    ],
+  };
 }
 
 export function buildCapWarningEmbed(count, cap = 250) {
