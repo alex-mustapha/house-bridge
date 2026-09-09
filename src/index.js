@@ -38,7 +38,7 @@ import {
   fetchRecurringTemplates,
   fetchChoresForCalendar,
 } from "./linear.js";
-import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, parseDuration, processExpiredPauses, choreCost } from "./recurring.js";
+import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, describeAllTemplates, parseDuration, processExpiredPauses, choreCost } from "./recurring.js";
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
@@ -326,7 +326,12 @@ export default {
     if (url.pathname === "/describe") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       const q = url.searchParams.get("q") || "";
-      return new Response(JSON.stringify(await describeTemplate(env, q), null, 2), {
+      // No `q` -> the whole Recurring project grouped by miss policy. A per-title
+      // lookup can't give a true inventory: a template whose next occurrence is
+      // beyond the horizon is never materialized, so you can't discover it from
+      // the calendar or chore list to look it up in the first place.
+      const body = q ? await describeTemplate(env, q) : await describeAllTemplates(env);
+      return new Response(JSON.stringify(body, null, 2), {
         headers: { "Content-Type": "application/json" },
       });
     }

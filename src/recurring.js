@@ -1202,6 +1202,40 @@ export async function describeTemplate(env, q) {
   const tpls = await fetchRecurringTemplates(env, project);
   const t = tpls.find((x) => x.title.toLowerCase().includes((q || "").toLowerCase()));
   if (!t) return { error: `no template matching "${q}"` };
+  return summarizeTemplate(t);
+}
+
+// Every template in the Recurring project, grouped by miss policy. Answers
+// "what actually survives being missed?" — which a per-title lookup can't,
+// because a template whose next occurrence is past the generation horizon is
+// never materialized and so never shows up in the calendar or the chore list.
+export async function describeAllTemplates(env) {
+  const project = env.RECURRING_PROJECT || "Recurring";
+  const tpls = await fetchRecurringTemplates(env, project);
+  const rows = tpls.map(summarizeTemplate).sort((a, b) => a.title.localeCompare(b.title));
+  const brief = (r) => ({
+    title: r.title,
+    onMiss: r.onMiss,
+    schedule: r.schedule,
+    owner: r.fixedAssignee
+      ? `pinned: ${r.fixedAssignee}`
+      : r.assignDays
+        ? `assign: ${Object.entries(r.assignDays).map(([d, w]) => `${d}=${w}`).join(", ")}`
+        : r.opposite
+          ? `opposite: ${r.opposite}`
+          : "rotates",
+    nextDue: r.next?.[0] || null,
+  });
+  const survives = rows.filter((r) => !r.sweptWhenOverdue);
+  const swept = rows.filter((r) => r.sweptWhenOverdue);
+  return {
+    total: rows.length,
+    survivesWhenMissed: { count: survives.length, chores: survives.map(brief) },
+    sweptWhenMissed: { count: swept.length, chores: swept.map(brief) },
+  };
+}
+
+function summarizeTemplate(t) {
   const { config } = parseLabelConfig(t.labels?.nodes || []);
   const descCfg = parseDescriptionConfig(t.description);
   if ((descCfg.intervalDays || descCfg.intervalMonths) && !config.cadence && descCfg.start)
