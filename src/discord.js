@@ -97,40 +97,53 @@ function mentionFor(name, mentionMap) {
   return null;
 }
 
-// Daily digest of today's + overdue chores, grouped by assignee. Owners are
-// @-pinged in `content` (mentions only notify from content, not the embed);
-// overdue lines get a 🔴 marker.
+// Daily digest of today's + overdue chores, grouped by assignee — each person's
+// past-due work listed above what's due today. Owners are @-pinged in `content`
+// (mentions only notify from content, not the embed).
 export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = []) {
-  // Past-due work gets its own section ahead of today's, rather than sitting
-  // inside each person's list behind a small 🔴. Chores are allowed to slip —
-  // but slipping should stay visible day to day, not be noticed only when the
-  // Monday sweep makes them disappear.
-  const overdue = issues.filter((i) => i.dueDate && i.dueDate < today);
-  const current = issues.filter((i) => !i.dueDate || i.dueDate >= today);
-
-  const groups = new Map(); // owner name | "Unassigned" -> issues[]
-  for (const i of current) {
-    const key = i.assignee?.name || "Unassigned";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(i);
+  // Person-first: everything one person owns sits under their own heading, with
+  // their past-due work called out above what's due today. A single flat
+  // past-due list made it impossible to see your own share at a glance — you
+  // had to read every line's owner suffix — and it grows unreadable as older
+  // items accumulate, which they now do by design (rarer chores are no longer
+  // swept). Grouping also drops the repeated "· Name" from every line.
+  const groups = new Map(); // owner name | "Unassigned" -> { overdue[], todayish[] }
+  const bucket = (key) => {
+    if (!groups.has(key)) groups.set(key, { overdue: [], todayish: [] });
+    return groups.get(key);
+  };
+  for (const i of issues) {
+    const b = bucket(i.assignee?.name || "Unassigned");
+    if (i.dueDate && i.dueDate < today) b.overdue.push(i);
+    else b.todayish.push(i);
   }
+
+  // Deterministic order, with Unassigned last so it reads as a footer rather
+  // than a person.
+  const names = [...groups.keys()].sort((a, b) =>
+    a === "Unassigned" ? 1 : b === "Unassigned" ? -1 : a.localeCompare(b),
+  );
 
   const sections = [];
-  if (overdue.length) {
-    const od = [...overdue]
-      .sort((a, b) => a.dueDate.localeCompare(b.dueDate)) // oldest first
-      .map((i) => {
-        const days = daysBetween(i.dueDate, today);
-        const who = i.assignee?.name || "unassigned";
-        return `• [${i.title}](${i.url}) — ${days} day${days === 1 ? "" : "s"} late · ${who}`;
-      })
-      .join("\n");
-    sections.push(`⏰ **Past due**\n${od}`);
+  for (const name of names) {
+    const { overdue, todayish } = groups.get(name);
+    const parts = [`**${name}**`];
+    if (overdue.length) {
+      const od = [...overdue]
+        .sort((a, b) => a.dueDate.localeCompare(b.dueDate)) // oldest first
+        .map((i) => {
+          const days = daysBetween(i.dueDate, today);
+          return `• [${i.title}](${i.url}) — ${days} day${days === 1 ? "" : "s"} late`;
+        });
+      parts.push(`⏰ *Past due (${overdue.length})*`, ...od);
+    }
+    if (todayish.length) {
+      // Only label "today" when there's also past-due work above it to separate.
+      if (overdue.length) parts.push("📅 *Today*");
+      parts.push(...todayish.map((i) => `• [${i.title}](${i.url})`));
+    }
+    sections.push(parts.join("\n"));
   }
-  const line = (i) => `• [${i.title}](${i.url})`;
-  sections.push(
-    ...[...groups.entries()].map(([name, items]) => `**${name}**\n${items.map(line).join("\n")}`),
-  );
 
   // Unclaimed work due later this week, so someone can grab it ahead of time.
   if (unassignedSoon.length) {
