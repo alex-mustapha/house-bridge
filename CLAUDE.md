@@ -42,6 +42,12 @@ Assignment (rotation-first — changed Aug 2026):
   (falling back to creation-order history) and **updated as the plan is assigned**. That last part
   matters: reading a pre-run snapshot for every day of a bulk fill was the original bug — the same
   person got a chore for weeks straight.
+- **Sweep debt:** when the Monday sweep archives a past-due `replace` chore, the next instance is
+  forced back to whoever let it slip (`sweptOwner` → `debtTarget` in `runWeek`), overriding the
+  rotation turn for that one occurrence. Without it, missing a chore rotated it away from you and
+  onto the other person. Two paths matter — the next instance may be created by that same run
+  (handled in the assignment loop) or already materialized (reassigned after the archives), and
+  with a 14-day horizon it's usually the latter, so don't drop that branch.
 - Pin a chore to one person with an explicit **assignee on the template**; there's no `sticky`
   directive and we don't want one. To pin only *some* weekdays, use
   **`assign: monday=Kristal, friday=Alex`** — unlisted weekdays still rotate.

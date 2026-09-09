@@ -661,14 +661,51 @@ export async function runWeek(env, opts = {}) {
   // weekly-or-more-frequent ones (see defaultOnMiss). Anything rarer is left
   // standing as overdue until it's actually completed.
   const toArchive = [];
+  // Who let each swept chore go past due. Rotation would otherwise hand the next
+  // occurrence to the *other* person — so missing a chore rotated it away from
+  // you, which quietly rewards letting it slip. Instead the next instance goes
+  // back to whoever dropped it (see `debtTarget` below). Keyed by title; if
+  // several copies of one chore were swept, the most recent owner carries it.
+  const sweptOwner = {};
   if (!opts.skipCleanup) {
     for (const teamId of teamIds) {
       for (const n of ctx.spawned[teamId]) {
         if (!n.dueDate || n.dueDate >= todayYmd || !isOpen(n)) continue;
         const c = defs.find((x) => x.teamId === teamId && x.title === n.title);
-        if (c && (c.onExisting || defaultOnMiss(c)) === "replace") toArchive.push(n.id);
+        if (!c || (c.onExisting || defaultOnMiss(c)) !== "replace") continue;
+        toArchive.push(n.id);
+        // Pinned / per-weekday / `opposite:` chores already have their owner
+        // decided, so there's nothing for rotation to hand away.
+        if (!n.assignee?.id || c.assigneeId || c.opposite || c.assignDays) continue;
+        const key = `${teamId}::${n.title}`;
+        if (!sweptOwner[key] || n.dueDate > sweptOwner[key].dueDate) {
+          sweptOwner[key] = { id: n.assignee.id, dueDate: n.dueDate };
+        }
       }
     }
+  }
+
+  // Where each swept chore's "debt" lands: the single earliest upcoming instance
+  // of that title. It may be one this run is about to create, OR one that was
+  // materialized on an earlier run — with a two-week horizon the next weekly
+  // occurrence usually already exists, so handling only the create path would
+  // miss most cases. Existing copies are reassigned after the archives run.
+  const removing = new Set([...toArchive, ...toReconcile]);
+  const debtTarget = {}; // key -> { kind: "plan", entry } | { kind: "existing", node }
+  for (const key of Object.keys(sweptOwner)) {
+    const [teamId, title] = [key.slice(0, key.indexOf("::")), key.slice(key.indexOf("::") + 2)];
+    let best = null;
+    for (const n of ctx.spawned[teamId] || []) {
+      if (n.title !== title || !n.dueDate || n.dueDate < todayYmd) continue;
+      if (!isOpen(n) || n.state?.type === "started" || removing.has(n.id)) continue;
+      if (!best || n.dueDate < best.node.dueDate) best = { kind: "existing", node: n };
+    }
+    // `plan` is built in ascending date order, so the first match is earliest.
+    const planned = plan.find((e) => e.c.teamId === teamId && e.c.title === title);
+    if (planned && (!best || planned.dueDate < best.node.dueDate)) {
+      best = { kind: "plan", entry: planned };
+    }
+    if (best) debtTarget[key] = best;
   }
 
   // Rotation members available on a given day (paused users dropped).
@@ -766,6 +803,17 @@ export async function runWeek(env, opts = {}) {
       if (fixedOwnerOf(e) || e.c.opposite || e.skip) continue;
       const allowed = allowedOn(e.dueDate);
       if (!allowed.length) { e.skip = true; continue; } // everyone paused — skip
+      // Owed from a sweep: this occurrence goes back to whoever let the last one
+      // go past due, overriding the rotation turn. Skipped if they're paused
+      // that day — the cover shouldn't inherit someone else's debt.
+      const dKey = `${e.c.teamId}::${e.c.title}`;
+      const debt = debtTarget[dKey];
+      if (debt?.kind === "plan" && debt.entry === e && allowed.includes(sweptOwner[dKey].id)) {
+        e.assignee = sweptOwner[dKey].id;
+        bump(e.assignee, weightOf(e.c));
+        setLast(e.c, e.assignee); // later occurrences rotate away from them as normal
+        continue;
+      }
       let cand;
       if (allowed.length === 1) {
         cand = allowed[0]; // the other person is paused — no choice
@@ -821,6 +869,23 @@ export async function runWeek(env, opts = {}) {
   const maxCreates = Math.max(1, parseInt(env.GEN_MAX_CREATES || "40", 10) || 40);
   const budget = Math.max(0, maxCreates - archives.length);
   for (const id of archives) await archiveIssue(env, id);
+
+  // Hand each swept chore's debt to the already-materialized next instance (the
+  // create path is handled at assignment time). Only moves a chore that isn't
+  // already theirs, and never onto a day its new owner is paused.
+  let reassignedDebt = 0;
+  for (const [key, target] of Object.entries(debtTarget)) {
+    if (target.kind !== "existing") continue;
+    const owner = sweptOwner[key].id;
+    const n = target.node;
+    if (n.assignee?.id === owner) continue;
+    if (pausedUserIdsOn(n.dueDate).includes(owner)) continue;
+    const r = await assignIssue(env, n.id, owner);
+    if (r?.success) {
+      reassignedDebt++;
+      console.log(`Reassigned ${n.title} due ${n.dueDate} to the person who let the last one slip.`);
+    }
+  }
   const toCreate = plan.filter((e) => !e.skip);
   let created = 0;
   let capped = false;
@@ -846,7 +911,16 @@ export async function runWeek(env, opts = {}) {
   // produces that day; `archived` = past-due cleanup; `remaining`/`capped` flag
   // a partial fill (hit the per-run create cap — run again to finish).
   const remaining = toCreate.length - created;
-  return { created, archived: toArchive.length, moved: toReconcile.length, remaining, capped };
+  return {
+    created,
+    archived: toArchive.length,
+    moved: toReconcile.length,
+    // How many swept chores were handed back to whoever let them slip (existing
+    // copies only; ones assigned at creation time are counted in `created`).
+    reassignedDebt,
+    remaining,
+    capped,
+  };
 }
 
 // Re-balance already-materialized chores after a weight change. Reassigns
