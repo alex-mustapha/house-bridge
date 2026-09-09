@@ -450,7 +450,7 @@ export default {
     return new Response("ok", { status: 200 });
   },
 
-  // Daily: digest + cap. Mondays also generate the week + post the scoreboard.
+  // Daily: generate + reconcile, digest, cap. Mondays add the weekly recap.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(handleCron(env));
   },
@@ -524,21 +524,27 @@ function resolveWebhook(teamKey, env) {
 async function handleCron(env) {
   const isMonday = localDate(new Date()).weekday === 1;
 
-  // 1. Weekly recap (Mondays only): establish the coming week's chores up front,
-  //    before the digest so it reflects them. Not part of the daily cadence.
-  if (isMonday) {
-    try {
-      // Settle catch-ups for any pause that expired on its own first, so the
-      // make-ups exist before the digest.
-      await processExpiredPauses(env);
-    } catch (err) {
-      console.error("Expired-pause catch-up failed:", err);
-    }
-    try {
-      await runWeek(env);
-    } catch (err) {
-      console.error("Weekly generation failed:", err);
-    }
+  // 1. Generation + reconcile, DAILY, before the digest so it reflects them.
+  //    Runs every day rather than Mondays only so the horizon truly rolls (it
+  //    used to shrink to ~8 days by Sunday), template edits and pause expiries
+  //    settle within a day, and a swept chore is handed back to whoever let it
+  //    slip the next morning instead of up to a week later.
+  //
+  //    Safe daily only because the sweep now has an explicit grace window
+  //    (SWEEP_GRACE_DAYS) — its old "past due at all" test depended on running
+  //    weekly to give chores any grace at all. Generation itself is idempotent
+  //    (dedup by team+title+due date), so extra runs only fill gaps.
+  try {
+    // Settle catch-ups for any pause that expired on its own first, so the
+    // make-ups exist before the digest.
+    await processExpiredPauses(env);
+  } catch (err) {
+    console.error("Expired-pause catch-up failed:", err);
+  }
+  try {
+    await runWeek(env);
+  } catch (err) {
+    console.error("Daily generation failed:", err);
   }
 
   // 2. Due-date digest, split by owner with @-mentions.
@@ -605,8 +611,9 @@ async function handleCron(env) {
   }
 
   // 7. Auto-archive long-completed chores so the active-issue count stays under
-  //    Linear's free-tier cap. Skip Mondays (Monday's run is already heavy) to
-  //    stay under the per-invocation subrequest limit; runs the other 6 days.
+  //    Linear's free-tier cap. Skip Mondays — generation now runs daily, so the
+  //    only remaining heavy day is Monday (recap + D1 snapshot on top of it) and
+  //    that's where the per-invocation subrequest limit could bite. Other 6 days.
   if (!isMonday) {
     try {
       await archiveOldChores(env);

@@ -33,6 +33,13 @@ GEN_HORIZON_DAYS = "14"
 # Max chores created per generation run, to stay under the Worker 50-subrequest
 # limit. Only bites on a big one-time fill; run /chores sync again to continue.
 GEN_MAX_CREATES = "40"
+# How many days past due a `replace` chore must be before the sweep archives it.
+# Generation runs daily, so this — not the cron day — is what decides how long
+# something may slip. 7 gives every chore a full week regardless of which weekday
+# it falls on. Set "0" for the old behaviour (sweep as soon as it's past due).
+# Only affects chores whose on-miss resolves to `replace` (weekly or more
+# frequent by default); rarer chores are never swept.
+SWEEP_GRACE_DAYS = "7"
 # Team key used for the weekly scoreboard.
 CHORES_TEAM = "CHO"
 # Project that spawned recurring chores are created in (and tracked under).

@@ -25,9 +25,14 @@ Two entry points in one Worker:
   interactions (slash commands + menus), calendar/status/dashboard pages, and the
   keyed toolkit endpoints.
 - **`scheduled()`** — the daily cron (`0 12 * * *` UTC = 8am EDT / 7am EST).
-  Every day: digest + cap check + auto-archive. **Mondays** add the weekly recap
-  (settle expired pauses → generate the window → scoreboard → D1 snapshot).
-  **Sundays** refresh template schedule comments.
+  Every day: settle expired pauses → **generate + reconcile the window** →
+  digest → cap check → auto-archive. **Mondays** add the weekly recap
+  (scoreboard → D1 snapshot). **Sundays** refresh template schedule comments.
+  Generation runs **daily**, not weekly, so the horizon truly rolls (it used to
+  shrink to ~8 days by Sunday), pause expiries and template edits settle within
+  a day, and a swept chore is handed back to whoever dropped it the next
+  morning. It's idempotent — dedup by team+title+due date means extra runs only
+  fill gaps.
 
 All dates — "today", weekday, day-of-month, due dates, streaks — are computed in
 **America/New_York** via `Intl.DateTimeFormat`, so they reflect the household's
@@ -147,8 +152,13 @@ spawned chore.
   loses nothing. **Everything rarer defaults to `skip`** — biweekly, monthly,
   annual and the rest are **left standing as overdue until actually completed**,
   because forgiving them means skipping a whole cycle.
-- Overdue copies of `replace` chores are archived on the **Monday cron only**.
-  `/chores sync` skips this so a mid-week run never sweeps a not-yet-done chore.
+- **Grace window:** a `replace` chore is only swept once it's **`SWEEP_GRACE_DAYS`
+  (default 7) days past due**, so everything gets the same week to slip
+  regardless of which weekday it falls on. (Before, the sweep ran Mondays only
+  and tested "past due at all", so a Sunday chore got ~1 day and a Monday chore
+  got 7.) Set `"0"` to sweep as soon as something is overdue.
+- `/chores sync` skips the sweep entirely, so a manual run never archives a
+  not-yet-done chore.
 - An explicit **`skip`** / **`replace`** label on a template always wins, so any
   single chore can opt out either way. `/describe` reports `onMissSource` —
   `label` or `default (cadence)` — so you can see which applied.
@@ -391,6 +401,7 @@ app polls them and stays in sync. `/chores calendar` prints the URLs.
 **Vars** (`wrangler.toml`): `DUE_LOOKAHEAD_DAYS`, `UNASSIGNED_LOOKAHEAD_DAYS`,
 `CAP_WARN_AT`, `RECURRING_PROJECT`, `CHORES_TEAM`, `CHORES_PROJECT`,
 `ADHOC_PROJECT`, `ROTATION_WEIGHTS`, `VACATION_PREP_TITLE`, `GEN_HORIZON_DAYS`,
+`SWEEP_GRACE_DAYS`,
 `GEN_MAX_CREATES`, `PUBLIC_BASE_URL`, `DISCORD_DUE_CHANNEL_ID`,
 `CHORE_RETENTION_DAYS`, `ARCHIVE_MAX`. `ROTATION_MEMBERS` and `DISCORD_MENTIONS`
 map the two people for rotation and @-pings.

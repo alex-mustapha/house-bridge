@@ -660,6 +660,18 @@ export async function runWeek(env, opts = {}) {
   // Only chores whose policy resolves to `replace` are swept — by default that's
   // weekly-or-more-frequent ones (see defaultOnMiss). Anything rarer is left
   // standing as overdue until it's actually completed.
+  // How late a `replace` chore must be before it's swept. This is what makes a
+  // DAILY run safe: the old rule ("past due at all") only worked because it ran
+  // on Mondays alone, which also made grace depend on the weekday — a Sunday
+  // chore got ~1 day and a Monday chore got 7. An explicit threshold gives every
+  // chore the same window no matter when the sweep happens to run.
+  const sweepGrace = Math.max(0, parseInt(env.SWEEP_GRACE_DAYS ?? "7", 10) || 0);
+  const ymdUTC = (s) => {
+    const [y, m, d] = s.split("-").map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  const daysLate = (ymd) => Math.round((ymdUTC(todayYmd) - ymdUTC(ymd)) / 86_400_000);
+
   const toArchive = [];
   // Who let each swept chore go past due. Rotation would otherwise hand the next
   // occurrence to the *other* person — so missing a chore rotated it away from
@@ -671,6 +683,7 @@ export async function runWeek(env, opts = {}) {
     for (const teamId of teamIds) {
       for (const n of ctx.spawned[teamId]) {
         if (!n.dueDate || n.dueDate >= todayYmd || !isOpen(n)) continue;
+        if (daysLate(n.dueDate) < sweepGrace) continue; // still inside the grace window
         const c = defs.find((x) => x.teamId === teamId && x.title === n.title);
         if (!c || (c.onExisting || defaultOnMiss(c)) !== "replace") continue;
         toArchive.push(n.id);

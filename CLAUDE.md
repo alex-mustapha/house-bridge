@@ -74,11 +74,14 @@ Missed chores:
   `buildDefs` and the sweep both call `defaultOnMiss`.
 - An explicit `skip`/`replace`/`always` label overrides the default. `/describe` reports
   `onMissSource` so you can tell which applied.
-- **Archiving ≠ completing** — a swept chore vanishes unfinished. The sweep runs on the **Monday
-  cron only** (and manual `/run-week`); every other `runWeek` caller passes `skipCleanup: true`.
-- Grace before the sweep is **weekday-dependent**: the test is `dueDate < today` and it only runs
-  Mondays, so a Sunday chore gets ~1 day and a Monday chore gets 7. Still true for `replace`
-  chores; fix with a grace period or carry-forward if it becomes a problem again.
+- **Archiving ≠ completing** — a swept chore vanishes unfinished. `/chores sync` and every other
+  non-cron `runWeek` caller passes `skipCleanup: true`, so only the cron and `/run-week` sweep.
+- **`runWeek` runs DAILY** (changed 2026-09-08), not Mondays only. That's safe *only* because the
+  sweep now has an explicit **`SWEEP_GRACE_DAYS`** (default 7) threshold — the old
+  `dueDate < today` test relied on running weekly to give any grace at all, and running that
+  daily would archive everything one day late. Never reintroduce a daily sweep without the grace
+  check. The threshold also fixed the old weekday asymmetry (Sunday chores got ~1 day, Monday
+  chores 7); now every chore gets the same window.
 - Chores with **no matching template** (ad-hoc/one-off) are never swept and never pruned — they
   linger indefinitely.
 - The digest's **⏰ Past due** section is the pressure valve: chores may slip, but slipping must
