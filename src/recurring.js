@@ -431,7 +431,11 @@ async function buildDefs(env) {
         labelIds: passthroughLabelIds,
         description: stripDescription(t.description),
         templateUrl: t.url, // link back to the template from the spawned chore
-        onExisting: config.onExisting || "replace",
+        // Default comes from the cadence (weekly-or-more-frequent is forgiven,
+        // anything rarer stands until done); an explicit label overrides it.
+        onExisting:
+          config.onExisting ||
+          defaultOnMiss({ cadence: config.cadence, intervalDays: descCfg.intervalDays }),
         cadence: config.cadence,
         days,
         anyday,
@@ -650,15 +654,19 @@ export async function runWeek(env, opts = {}) {
   }
 
   // CLEANUP (replace policy): archive open copies whose due date is past, so
-  // missed occurrences don't pile up. Skipped on an on-demand mid-week sync so
-  // a not-yet-done chore from earlier in the week isn't swept away.
+  // frequent missed occurrences don't pile up. Skipped on an on-demand mid-week
+  // sync so a not-yet-done chore from earlier in the week isn't swept away.
+  //
+  // Only chores whose policy resolves to `replace` are swept — by default that's
+  // weekly-or-more-frequent ones (see defaultOnMiss). Anything rarer is left
+  // standing as overdue until it's actually completed.
   const toArchive = [];
   if (!opts.skipCleanup) {
     for (const teamId of teamIds) {
       for (const n of ctx.spawned[teamId]) {
         if (!n.dueDate || n.dueDate >= todayYmd || !isOpen(n)) continue;
         const c = defs.find((x) => x.teamId === teamId && x.title === n.title);
-        if (c && (c.onExisting || "replace") === "replace") toArchive.push(n.id);
+        if (c && (c.onExisting || defaultOnMiss(c)) === "replace") toArchive.push(n.id);
       }
     }
   }
@@ -1072,6 +1080,23 @@ const ymdAdd1 = (ymd) => {
 // Only monthly-and-rarer chores accumulate across a pause; anything more
 // frequent (daily through semi-monthly) is forgiven — missing one is no big deal
 // and they'll come due again soon enough.
+// Which chores are *forgiven* when missed. Only things that come round weekly
+// or more often: the next occurrence is close enough that archiving the overdue
+// copy loses nothing. Everything rarer is left standing until it's actually
+// done — forgiving a monthly or annual chore means skipping a whole cycle, and
+// "wiped without being done" is never what you want for those.
+//
+// This is the DEFAULT only; an explicit `skip` / `replace` / `always` label on
+// the template still wins, so any single chore can opt out either way.
+const SWEEP_CADENCE = new Set(["daily", "weekly"]);
+export function defaultOnMiss(c) {
+  if (SWEEP_CADENCE.has(c?.cadence)) return "replace";
+  // `every: Nd` / `every: Nw` — a period of a week or less counts as weekly-or-
+  // more-frequent. Month intervals never do.
+  if (c?.cadence === "interval" && c.intervalDays && c.intervalDays <= 7) return "replace";
+  return "skip";
+}
+
 const CATCHUP_CADENCE = new Set(["monthly", "bimonthly", "semi-annually", "annually"]);
 // Monthly-or-rarer accumulate; that includes any month-interval (`every: Nm`)
 // and day/week intervals of ~a month or longer (`every: 5w` etc.).
@@ -1264,11 +1289,13 @@ function summarizeTemplate(t) {
     title: t.title,
     rawLabels: (t.labels?.nodes || []).map((l) => l.name),
     parsedCadence: config.cadence || null,
-    // Resolved miss policy: "replace" (default) archives an unfinished overdue
-    // copy on the Monday sweep; "skip" survives until completed. Surfaced
-    // explicitly so you can verify it without eyeballing rawLabels.
-    onMiss: config.onExisting || "replace",
-    sweptWhenOverdue: (config.onExisting || "replace") === "replace",
+    // Resolved miss policy: "replace" archives an unfinished overdue copy on the
+    // Monday sweep; "skip" leaves it standing until completed. Defaults from the
+    // cadence (weekly-or-more-frequent is forgiven, rarer stands), so `source`
+    // tells you whether a label set this or it fell out of the schedule.
+    onMiss: config.onExisting || defaultOnMiss(chore),
+    onMissSource: config.onExisting ? "label" : "default (cadence)",
+    sweptWhenOverdue: (config.onExisting || defaultOnMiss(chore)) === "replace",
     // Who owns it: a template assignee pins every occurrence; `assign:` pins
     // only the weekdays listed (the rest rotate). Both make the title
     // hand-managed, so /chores reshuffle and weight leave it alone.

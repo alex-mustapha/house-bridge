@@ -74,7 +74,7 @@ active window, effort, and next dates.
 | **weekday** (any) | `monday`…`sunday` for weekly-family cadences. **Omit** to make it an "any day" chore (due Sunday, or N/week via `count:`). |
 | **month** (any) | `january`…`december`. Limits a chore to those months **every year** (all cadences — e.g. a weekly mow chore only May–Sep). For monthly-family cadences it also picks which month(s) the cycle lands on. |
 | **day-of-month** | `first` / `middle` / `last` → 1st / 15th / last day (monthly-family). |
-| **on-miss** | `replace` (default) — an overdue copy is **archived** by the Monday sweep and superseded next cycle. **`skip`** — never swept: the overdue copy **survives until completed**, and each recurrence still generates. Use `skip` for anything that can't just be missed (e.g. *Refill Olive's meds*); `replace` is right for chores where missing one is genuinely fine. |
+| **on-miss** | Overrides the cadence-derived default (below). `replace` — the overdue copy is **archived** by the Monday sweep and superseded next cycle. `skip` — never swept: it **survives until completed**, and each recurrence still generates. |
 | **paused** | Takes this one chore off-radar until removed (source of truth for seasonal pausing). Toggle from Discord with `/chores pause chore:` / `resume chore:`. Adding it also **retracts** already-generated future copies. |
 | **silent** | Generate the chore without posting it to Discord. |
 | any **room** label | Copied onto the spawned chore (e.g. `kitchen`). |
@@ -131,14 +131,21 @@ spawned chore.
   assignee, `assign:`, or `opposite:`) is skipped by `/chores reshuffle` and
   `/chores weight`, so manual arrangements are never reshuffled away.
 - `opposite:` pairs still assign the other person from the paired chore.
-- **Replace policy:** overdue copies of `replace` chores are archived (Monday
-  cron only) so misses don't pile up. `/chores sync` skips this so a mid-week run
-  never sweeps a not-yet-done chore.
-  > ⚠️ Archiving is **not** completing. A `replace` chore that was still open and
-  > past due is archived *unfinished* — it leaves active views with no record in
-  > Discord, and archived issues are excluded from the scoreboard, so it isn't
-  > even counted as missed. That's fine for genuinely forgivable chores and wrong
-  > for anything that must eventually happen — label those **`on-miss: skip`**.
+- **Miss policy — defaults from the cadence.** A missed chore is only wiped if it
+  comes round **weekly or more often** (`daily`, `weekly`, or `every: N` with a
+  period ≤ 7 days); the next one is close enough that archiving the overdue copy
+  loses nothing. **Everything rarer defaults to `skip`** — biweekly, monthly,
+  annual and the rest are **left standing as overdue until actually completed**,
+  because forgiving them means skipping a whole cycle.
+- Overdue copies of `replace` chores are archived on the **Monday cron only**.
+  `/chores sync` skips this so a mid-week run never sweeps a not-yet-done chore.
+- An explicit **`skip`** / **`replace`** label on a template always wins, so any
+  single chore can opt out either way. `/describe` reports `onMissSource` —
+  `label` or `default (cadence)` — so you can see which applied.
+  > ⚠️ Archiving is **not** completing. A `replace` chore still open and past due
+  > is archived *unfinished*: it leaves active views with no record in Discord.
+  > (The weekly recap does count it — it reads archived issues deliberately.)
+  > If a frequent chore must nonetheless survive being missed, label it `skip`.
 
 ---
 

@@ -60,10 +60,21 @@ Weekly recap:
   relabel it "N-day streak" — that read as consecutive days while actually spanning up to 30.
 
 Missed chores:
-- `on-miss: replace` (default) archives an open past-due copy on the **Monday** sweep.
-  **Archiving ≠ completing** — the work vanishes unfinished, and archived issues are excluded from
-  the scoreboard, so it isn't even logged as missed. Anything that must eventually happen
-  (meds, etc.) needs the **`on-miss: skip`** label, which is never swept.
+- **The default is cadence-derived (`defaultOnMiss`), not a constant.** Only weekly-or-more-
+  frequent chores (`daily`, `weekly`, `every: N` ≤ 7d) default to `replace` and get swept;
+  everything rarer defaults to **`skip`** and is left standing as overdue until completed.
+  Changed 2026-09-08 — the old blanket `"replace"` default meant a missed annual chore was
+  archived unfinished and didn't return for a year. Don't reintroduce a hardcoded default:
+  `buildDefs` and the sweep both call `defaultOnMiss`.
+- An explicit `skip`/`replace`/`always` label overrides the default. `/describe` reports
+  `onMissSource` so you can tell which applied.
+- **Archiving ≠ completing** — a swept chore vanishes unfinished. The sweep runs on the **Monday
+  cron only** (and manual `/run-week`); every other `runWeek` caller passes `skipCleanup: true`.
+- Grace before the sweep is **weekday-dependent**: the test is `dueDate < today` and it only runs
+  Mondays, so a Sunday chore gets ~1 day and a Monday chore gets 7. Still true for `replace`
+  chores; fix with a grace period or carry-forward if it becomes a problem again.
+- Chores with **no matching template** (ad-hoc/one-off) are never swept and never pruned — they
+  linger indefinitely.
 - The digest's **⏰ Past due** section is the pressure valve: chores may slip, but slipping must
   stay visible daily rather than being discovered by absence.
 

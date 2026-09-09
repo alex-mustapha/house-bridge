@@ -170,18 +170,22 @@ so only one can be picked at a time.
 - **`day-of-month` group** (pick one): `first` / `middle` / `last` →
   1st / 15th / last day — used by `monthly`, `bimonthly`, `semi-annually`,
   `annually`
-- **on-miss** (optional): `skip` / `replace` — default `replace`.
+- **on-miss** (optional): `skip` / `replace`. **The default comes from the
+  cadence** — chores recurring **weekly or more often** (`daily`, `weekly`,
+  `every: N` ≤ 7 days) default to `replace`; **everything rarer defaults to
+  `skip`**.
   `replace` supersedes the previous copy once it's **overdue** (so you get the
   full window to finish on time): the Monday sweep **archives** the unfinished
-  copy and the next cycle spawns a fresh one.
+  copy and the next cycle spawns a fresh one. That's fine when the chore comes
+  back in a few days.
   `skip` is **never swept** — the overdue copy survives until it's actually
   completed, and each new occurrence still generates on schedule, so genuinely
-  owed work accumulates instead of disappearing.
-  > Archiving is not completing. A swept `replace` chore leaves active views
-  > unfinished and, because archived issues are excluded from the scoreboard,
-  > isn't even counted as missed. Use `skip` for anything that must eventually
-  > happen (e.g. refilling a prescription); keep `replace` where missing one is
-  > genuinely fine. Past-due work is listed daily in the digest either way.
+  owed work stays visible instead of disappearing.
+  > Why the split: archiving is not completing. Forgiving a missed *weekly* chore
+  > costs you a few days; forgiving a missed *annual* one silently skips the
+  > whole year. Set the label explicitly to override either way — `/describe`
+  > reports `onMissSource` (`label` vs `default (cadence)`) so you can check
+  > which applied. Past-due work is listed daily in the digest regardless.
 - **`paused` label** (optional): stops generating that chore until you remove it
   — ideal for seasonal chores (pause mowing in winter, resume in spring).
 
