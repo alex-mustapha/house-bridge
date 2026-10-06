@@ -56,6 +56,19 @@ Assignment (rotation-first — changed Aug 2026):
   and `reshuffleWindow`/`rebalanceWindow` would otherwise reassign hand-managed chores depending
   on map ordering. Keep using `pinnedTitles` (assignee || opposite || assignDays) for that check.
 
+Leisure log (private to one person):
+- `/chores leisure` is Alex's personal habit tracker, deliberately **not** a household metric.
+  Keep it that way: the slash reply is EPHEMERAL, and the dashboard panel renders only when
+  `/dashboard?user=<name>` is passed. The shared pinned link has no `user`, and the rendered
+  shared page must contain **no trace** of it (the whole script block is omitted, not just
+  hidden) — there's a render test for this in the scratchpad approach: grep the shared HTML for
+  "leisure" and expect zero hits.
+- "Clear" = today's chores done. Older past-due items are counted separately on purpose, so a
+  months-old ad-hoc can't make a clear slate unreachable forever.
+- `leisure_log.source` is open ("self" now) so a presence/console writer can fill the same table
+  later without a schema or dashboard change. Discord presence would cover PC/Xbox/PlayStation
+  but not Switch, and needs an always-on process a Worker can't hold.
+
 Weekly recap:
 - Covers the **finished week ending yesterday**, not a window including today — every day is
   final, so "not completed" unambiguously means missed.

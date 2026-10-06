@@ -126,6 +126,14 @@ export const COMMANDS = [
       },
       {
         type: 1,
+        name: "leisure",
+        description: "Private: log that you're starting your own time, and whether chores were clear",
+        options: [
+          { type: 3, name: "note", description: "Optional note (what you're doing)", required: false },
+        ],
+      },
+      {
+        type: 1,
         name: "add",
         description: "Add a one-off chore",
         options: [

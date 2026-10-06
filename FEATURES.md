@@ -318,10 +318,43 @@ app polls them and stays in sync. `/chores calendar` prints the URLs.
 ## Stats dashboard
 
 - **`/dashboard`** — a mobile-friendly, dark, keyless page (Chart.js): completion
-  %, on-time %, done count, current streaks, per-person stacked bar, completion
-  trend, **effort split** (effort-adjusted minutes), and most-missed. A range bar
-  switches **7 / 30 / 90 / 365** days (`?range=`). Reads from D1, so history
-  survives Linear archiving. A link is pinned in **#recap** (`/pin-dashboard`).
+  %, on-time %, done count, current streaks, per-person stacked bar, **effort
+  split** (effort-adjusted minutes), and most-missed. A range bar switches
+  **7 / 30 / 90 / 365** days (`?range=`). Reads from D1, so history survives
+  Linear archiving. A link is pinned in **#recap** (`/pin-dashboard`).
+- **Completion trend is one line per person**, on shared buckets, with the
+  household as a faint dashed reference behind them. An individual's improvement
+  shows on their own line instead of being averaged into a single number. A
+  bucket with nothing due plots as a gap, not a misleading 0%.
+- **How late, not just late.** A lateness panel buckets every resolved chore by
+  *how many days* past due it was completed — `On time · 1 day · 2–3 · 4–7 · 8+ ·
+  Never done` — plus average / median / worst days late, and the same per person.
+  One day late and two weeks late are very different, and the old binary
+  late/on-time split treated them identically. Computed from the `due_date` and
+  `completed_date` already in D1, so existing history populates it immediately.
+
+### 🎮 Chores before leisure (private)
+
+An opt-in personal habit tracker — *was my own time earned?* — deliberately kept
+out of the shared surfaces.
+
+- **`/chores leisure [note:]`** logs that you're starting leisure. It records the
+  time, how many of **today's** chores were still open, and whether your slate
+  was clear. The reply is **ephemeral** — only you see it, nothing reaches the
+  channel.
+- **Clear** means today's chores are done. Older past-due items are counted and
+  reported separately, so a months-old one-off can't make a clear slate
+  permanently unreachable.
+- The dashboard panel renders **only** for `/dashboard?user=<name>`. The link
+  pinned in Discord has no `user`, and the shared page contains no trace of the
+  feature — not the panel, not the data, not even the script.
+- Shows clear-slate %, the current run of clear starts, a trend on the same
+  buckets as the chore trend, and recent sessions.
+- Rows carry a **`source`** column (`self` today) so an automatic writer —
+  Discord presence, a console integration — can log the same shape later with no
+  schema change or dashboard rework. Note that Discord presence covers PC, Xbox
+  and PlayStation but **not** Switch, and needs an always-on process a Worker
+  can't provide.
 
 ---
 

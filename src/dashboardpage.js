@@ -9,15 +9,33 @@ function esc(s) {
 
 const RANGE_LABEL = { 7: "7 days", 30: "30 days", 90: "90 days", 365: "1 year" };
 
-export function renderDashboardPage(data, range = 30) {
+// `leisure` is only ever passed when the page was requested for one named
+// person (/dashboard?user=…). The shared link pinned in Discord never carries
+// it, so this panel stays off the household view.
+export function renderDashboardPage(data, range = 30, leisure = null) {
   const streaks =
     Object.entries(data.streaks || {})
       .map(([n, s]) => `${esc(n)} ${s}`)
       .join(" · ") || "—";
   const rlabel = RANGE_LABEL[range] || `${range} days`;
+  const qUser = leisure ? `&user=${encodeURIComponent(leisure.person)}` : "";
   const rangeBar = [[7, "7d"], [30, "30d"], [90, "90d"], [365, "1y"]]
-    .map(([d, l]) => `<a class="rg${d === range ? " on" : ""}" href="/dashboard?range=${d}">${l}</a>`)
+    .map(([d, l]) => `<a class="rg${d === range ? " on" : ""}" href="/dashboard?range=${d}${qUser}">${l}</a>`)
     .join("");
+  const leisurePanel = leisure
+    ? `
+  <div class="panel"><h2>🎮 Chores before leisure — ${esc(leisure.person)} · last ${leisure.days}d</h2>
+    <div class="cards" style="margin-bottom:12px">
+      <div class="card"><div class="lbl">Clear slate</div><div class="val">${
+        leisure.clearPct === null ? "—" : leisure.clearPct + "%"
+      }</div></div>
+      <div class="card"><div class="lbl">🔥 In a row</div><div class="val">${leisure.streak}</div></div>
+    </div>
+    <div class="cw" style="height:170px"><canvas id="leisure"></canvas></div>
+    <ul class="missed" id="leisurelist"></ul>
+    <p class="empty" style="margin-top:8px">${leisure.clear} of ${leisure.total} sessions started with today's chores done. Private to you.</p>
+  </div>`
+    : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -67,12 +85,17 @@ export function renderDashboardPage(data, range = 30) {
     <div class="card"><div class="lbl">🔥 Streaks (current)</div><div class="val sm">${streaks}</div></div>
   </div>
   <div class="panel"><h2>Per person — ${rlabel}</h2><div class="cw"><canvas id="byperson"></canvas></div></div>
-  <div class="panel"><h2>Completion rate trend</h2><div class="cw"><canvas id="trend"></canvas></div></div>
+  <div class="panel"><h2>Completion trend — per person</h2><div class="cw"><canvas id="trend"></canvas></div></div>
+  <div class="panel"><h2>How late — ${rlabel}</h2>
+    <div class="cw" style="height:190px"><canvas id="lateness"></canvas></div>
+    <ul class="missed" id="lateby"></ul></div>${leisurePanel}
   <div class="panel"><h2>Effort split — ${rlabel}</h2><div class="cw" style="height:200px"><canvas id="effort"></canvas></div></div>
   <div class="panel"><h2>Most missed — ${rlabel}</h2><ul class="missed" id="missed"></ul></div>
   <div class="foot" id="foot"></div>
 </div>
-<script>const DATA = ${JSON.stringify(data)};</script>
+<script>const DATA = ${JSON.stringify(data)};${
+  leisure ? `\nconst DATA_LEISURE = ${JSON.stringify(leisure)};` : ""
+}</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
   const teal="#1db981", amber="#f5a524", coral="#f5683b", blue="#3b9eff", purple="#8b80ff";
@@ -92,16 +115,57 @@ export function renderDashboardPage(data, range = 30) {
       plugins:{ legend:{ position:"bottom" } } }
   });
 
-  const tr = DATA.trend || [];
+  // One line per person, so an individual's improvement is visible on its own
+  // line instead of being averaged away. Household stays as a faint dashed
+  // reference behind them.
+  const PERSON_COLORS = [blue, purple, teal, amber, coral];
+  const tbp = DATA.trendByPerson || [];
+  const tlabels = DATA.trendLabels || (DATA.trend || []).map(t => t.label);
+  const trendSets = tbp.map((p, i) => ({
+    label: p.name, data: p.points, borderColor: PERSON_COLORS[i % PERSON_COLORS.length],
+    backgroundColor: PERSON_COLORS[i % PERSON_COLORS.length], fill: false,
+    tension: 0.3, spanGaps: true, pointRadius: 3, borderWidth: 2
+  }));
+  if (trendSets.length > 1) trendSets.push({
+    label: "Household", data: (DATA.trend || []).map(t => t.pct), borderColor: "rgba(255,255,255,0.28)",
+    backgroundColor: "transparent", borderDash: [5, 4], fill: false, tension: 0.3,
+    spanGaps: true, pointRadius: 0, borderWidth: 1.5
+  });
   new Chart(document.getElementById("trend"), {
     type: "line",
-    data: { labels: tr.map(t => t.label), datasets: [
-      { label:"Completion %", data: tr.map(t => t.pct), borderColor: blue,
-        backgroundColor:"rgba(59,158,255,0.14)", fill:true, tension:0.3, spanGaps:true, pointRadius:3 } ] },
+    data: { labels: tlabels, datasets: trendSets },
     options: { responsive:true, maintainAspectRatio:false,
       scales:{ y:{ min:0, max:100, grid:{color:grid}, ticks:{ callback:v=>v+"%" } }, x:{ grid:{display:false} } },
-      plugins:{ legend:{ display:false } } }
+      plugins:{ legend:{ position:"bottom" },
+        tooltip:{ callbacks:{ label: c => c.dataset.label + ": " + (c.raw === null ? "no chores due" : c.raw + "%") } } } }
   });
+
+  // How late, not just late — one day and two weeks are different outcomes.
+  const lt = (DATA.lateness && DATA.lateness.buckets) || [];
+  if (lt.some(b => b.n)) {
+    new Chart(document.getElementById("lateness"), {
+      type: "bar",
+      data: { labels: lt.map(b => b.label), datasets: [
+        { data: lt.map(b => b.n),
+          backgroundColor: [teal, "#b9cf4a", amber, coral, "#d6453b", "#6b6b74"], borderWidth: 0 } ] },
+      options: { responsive:true, maintainAspectRatio:false,
+        scales:{ y:{ grid:{color:grid}, ticks:{precision:0} }, x:{ grid:{display:false} } },
+        plugins:{ legend:{ display:false },
+          tooltip:{ callbacks:{ label: c => c.raw + " chore" + (c.raw === 1 ? "" : "s") } } } }
+    });
+  } else {
+    document.getElementById("lateness").parentElement.innerHTML = '<p class="empty">Nothing resolved yet in this range.</p>';
+  }
+
+  const lby = document.getElementById("lateby");
+  const lp = (DATA.lateness && DATA.lateness.byPerson) || [];
+  const L = DATA.lateness || {};
+  const head = L.avgDaysLate === null || L.avgDaysLate === undefined
+    ? '' : '<li><span>Average when late</span><span class="n">' + L.avgDaysLate + ' days (worst ' + L.worstDaysLate + ')</span></li>';
+  lby.innerHTML = head + lp.map(p =>
+    '<li><span>' + p.name.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])) + '</span><span class="n">' +
+    (p.avgDaysLate === null ? 'never late' : p.avgDaysLate + 'd avg · worst ' + p.worstDaysLate + 'd') +
+    (p.missed ? ' · ' + p.missed + ' never done' : '') + '</span></li>').join("");
 
   const ef = DATA.effort || [];
   if (ef.length) {
@@ -119,6 +183,26 @@ export function renderDashboardPage(data, range = 30) {
   ml.innerHTML = (DATA.missed && DATA.missed.length)
     ? DATA.missed.map(m => '<li><span>' + m.title.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])) + '</span><span class="n">' + m.n + ' missed</span></li>').join("")
     : '<li class="empty">Nothing missed 🎉</li>';
+
+${leisure ? `
+  // Only emitted for a per-person view — the shared page carries no trace of it.
+  {
+    const LZ = DATA_LEISURE;
+    new Chart(document.getElementById("leisure"), {
+      type: "line",
+      data: { labels: LZ.labels, datasets: [
+        { label:"Clear slate %", data: LZ.points, borderColor: teal,
+          backgroundColor:"rgba(29,185,129,0.14)", fill:true, tension:0.3, spanGaps:true, pointRadius:3 } ] },
+      options: { responsive:true, maintainAspectRatio:false,
+        scales:{ y:{ min:0, max:100, grid:{color:grid}, ticks:{ callback:v=>v+"%" } }, x:{ grid:{display:false} } },
+        plugins:{ legend:{ display:false },
+          tooltip:{ callbacks:{ label: c => c.raw === null ? "no sessions logged" : c.raw + "% clear" } } } }
+    });
+    document.getElementById("leisurelist").innerHTML = (LZ.recent || []).map(r =>
+      '<li><span>' + r.date + (r.time ? ' ' + r.time : '') + '</span><span class="n">' +
+      (r.clear ? '✅ clear' : '⚠️ ' + (r.total - r.done) + ' left') + '</span></li>').join("")
+      || '<li class="empty">No sessions logged yet — run /chores leisure.</li>';
+  }` : ""}
 
   document.getElementById("foot").textContent = "updated " + new Date().toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"});
 </script>

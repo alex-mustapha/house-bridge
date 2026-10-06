@@ -18,7 +18,7 @@ import {
   postViaBot,
   postToDiscord,
 } from "./discord.js";
-import { logChores, queryStats, queryDashboard } from "./db.js";
+import { logChores, queryStats, queryDashboard, queryLeisure } from "./db.js";
 import {
   fetchDueIssues,
   fetchActiveIssueCount,
@@ -382,7 +382,12 @@ export default {
       if (!allowed.includes(range)) range = 30;
       const data = await queryDashboard(env, (title) => costMap[(title || "").toLowerCase()] ?? 15, range);
       if (!data) return new Response("D1 not configured\n", { status: 200 });
-      return new Response(renderDashboardPage(data, range), {
+      // The leisure panel is opt-in per person via ?user=. The dashboard link
+      // pinned in Discord has no `user`, so the household view never shows it —
+      // this is a personal metric, not a shared scoreboard.
+      const who = (url.searchParams.get("user") || "").trim();
+      const leisure = who ? await queryLeisure(env, who, range) : null;
+      return new Response(renderDashboardPage(data, range, leisure), {
         headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
       });
     }

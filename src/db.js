@@ -65,46 +65,122 @@ export async function logChores(env) {
 
 const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// Completion-rate trend bucketed by the range: daily (≤10d), weekly (≤120d), or
-// monthly (a year). Oldest -> newest.
-function buildTrend(rows, today, days) {
+// Trend buckets for the range: daily (≤10d), weekly (≤120d), monthly (a year).
+// Oldest -> newest. Split out from the tallying so the same buckets can be
+// scored per person as well as for the household — comparing two lines on one
+// set of buckets is the whole point.
+function trendBuckets(today, days) {
   const shift = (n) => {
     const [y, m, dd] = today.split("-").map(Number);
     return new Date(Date.UTC(y, m - 1, dd - n)).toISOString().slice(0, 10);
-  };
-  const tally = (lo, hi) => {
-    let done = 0;
-    let miss = 0;
-    for (const r of rows) {
-      if (r.due < lo || r.due > hi) continue;
-      if (r.status === "on_time" || r.status === "late") done++;
-      else if (r.status === "missed") miss++;
-    }
-    const t = done + miss;
-    return t ? Math.round((done / t) * 100) : null;
   };
   const out = [];
   if (days <= 10) {
     for (let i = days - 1; i >= 0; i--) {
       const day = shift(i);
-      out.push({ label: day.slice(5), pct: tally(day, day) });
+      out.push({ label: day.slice(5), lo: day, hi: day });
     }
   } else if (days <= 120) {
     const weeks = Math.ceil(days / 7);
-    for (let w = weeks - 1; w >= 0; w--) out.push({ label: shift(w * 7).slice(5), pct: tally(shift(w * 7 + 6), shift(w * 7)) });
+    for (let w = weeks - 1; w >= 0; w--) {
+      out.push({ label: shift(w * 7).slice(5), lo: shift(w * 7 + 6), hi: shift(w * 7) });
+    }
   } else {
     const [cy, cm] = today.split("-").map(Number);
     for (let m = 11; m >= 0; m--) {
       const idx = cm - 1 - m;
       const y = cy + Math.floor(idx / 12);
       const mo = ((idx % 12) + 12) % 12;
-      const lo = `${y}-${String(mo + 1).padStart(2, "0")}-01`;
       const last = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
-      const hi = `${y}-${String(mo + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
-      out.push({ label: MON_ABBR[mo], pct: tally(lo, hi) });
+      out.push({
+        label: MON_ABBR[mo],
+        lo: `${y}-${String(mo + 1).padStart(2, "0")}-01`,
+        hi: `${y}-${String(mo + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`,
+      });
     }
   }
   return out;
+}
+
+// Completion % for one bucket, or null when nothing was due (so the line gaps
+// rather than plotting a misleading 0%).
+function pctIn(rows, { lo, hi }) {
+  let done = 0;
+  let miss = 0;
+  for (const r of rows) {
+    if (r.due < lo || r.due > hi) continue;
+    if (r.status === "on_time" || r.status === "late") done++;
+    else if (r.status === "missed") miss++;
+  }
+  const t = done + miss;
+  return t ? Math.round((done / t) * 100) : null;
+}
+
+// Whole days between two YYYY-MM-DD dates (UTC midnights — DST can't skew it).
+function daysBetween(from, to) {
+  const ms = (s) => {
+    const [y, m, d] = s.split("-").map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((ms(to) - ms(from)) / 86_400_000);
+}
+
+// How late things actually were, rather than a binary late/on-time. One day late
+// and two weeks late are very different, and collapsing them hides whether
+// things are drifting further out or tightening up.
+const LATE_BUCKETS = [
+  { label: "On time", test: (d) => d <= 0 },
+  { label: "1 day", test: (d) => d === 1 },
+  { label: "2–3 days", test: (d) => d >= 2 && d <= 3 },
+  { label: "4–7 days", test: (d) => d >= 4 && d <= 7 },
+  { label: "8+ days", test: (d) => d >= 8 },
+];
+
+function buildLateness(rows, today) {
+  const counts = LATE_BUCKETS.map((b) => ({ label: b.label, n: 0 }));
+  let neverDone = 0;
+  const perPerson = {};
+  const allLate = [];
+  for (const r of rows) {
+    const who = r.assignee || "Unassigned";
+    const p = (perPerson[who] ||= { late: [], onTime: 0, missed: 0 });
+    if (r.status === "missed") {
+      neverDone++;
+      p.missed++;
+      continue;
+    }
+    if (!r.done) continue; // completed but no date recorded — can't measure
+    const late = Math.max(0, daysBetween(r.due, r.done));
+    const idx = LATE_BUCKETS.findIndex((b) => b.test(late));
+    if (idx >= 0) counts[idx].n++;
+    if (late > 0) {
+      allLate.push(late);
+      p.late.push(late);
+    } else p.onTime++;
+  }
+  const avg = (a) => (a.length ? Math.round((a.reduce((s, n) => s + n, 0) / a.length) * 10) / 10 : null);
+  const median = (a) => {
+    if (!a.length) return null;
+    const s = [...a].sort((x, y) => x - y);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : Math.round(((s[m - 1] + s[m]) / 2) * 10) / 10;
+  };
+  return {
+    buckets: [...counts, { label: "Never done", n: neverDone }],
+    avgDaysLate: avg(allLate),
+    medianDaysLate: median(allLate),
+    worstDaysLate: allLate.length ? Math.max(...allLate) : null,
+    byPerson: Object.entries(perPerson)
+      .map(([name, v]) => ({
+        name,
+        lateCount: v.late.length,
+        onTime: v.onTime,
+        missed: v.missed,
+        avgDaysLate: avg(v.late),
+        worstDaysLate: v.late.length ? Math.max(...v.late) : null,
+      }))
+      .sort((a, b) => (b.avgDaysLate || 0) - (a.avgDaysLate || 0)),
+  };
 }
 
 // Everything the /dashboard page needs, over the last `days` days. `estimateOf`
@@ -122,8 +198,8 @@ export async function queryDashboard(env, estimateOf, days = 30) {
   const rows =
     (
       await env.DB.prepare(
-        `SELECT title, assignee, due_date AS due, status FROM chore_log
-         WHERE due_date >= ?1 AND status != 'open'`,
+        `SELECT title, assignee, due_date AS due, completed_date AS done, status
+         FROM chore_log WHERE due_date >= ?1 AND status != 'open'`,
       )
         .bind(shift(lookback - 1))
         .all()
@@ -173,11 +249,27 @@ export async function queryDashboard(env, estimateOf, days = 30) {
     .slice(0, 5)
     .map(([title, n]) => ({ title, n }));
 
+  // One set of buckets scored per person, so each line is directly comparable —
+  // an individual's improvement shows up on their own line instead of being
+  // averaged into a single household number.
+  const inRange = rows.filter((r) => r.due >= since);
+  const buckets = trendBuckets(today, days);
+  const names = [...new Set(inRange.map((r) => r.assignee).filter(Boolean))].sort();
+  const trendByPerson = names.map((name) => {
+    const mine = inRange.filter((r) => r.assignee === name);
+    return { name, points: buckets.map((b) => pctIn(mine, b)) };
+  });
+
   return {
     days,
     summary,
     byPerson: Object.entries(byPerson).map(([name, v]) => ({ name, ...v })),
-    trend: buildTrend(rows, today, days),
+    trendLabels: buckets.map((b) => b.label),
+    trendByPerson,
+    // Household line kept for the overall shape; drawn faintly behind the
+    // per-person ones rather than instead of them.
+    trend: buckets.map((b) => ({ label: b.label, pct: pctIn(inRange, b) })),
+    lateness: buildLateness(inRange, today),
     missed,
     effort: Object.entries(effort).map(([name, minutes]) => ({ name, minutes })),
     streaks,
@@ -213,4 +305,115 @@ export async function queryStats(env, days) {
     ).results || [];
 
   return { days, byPerson, missed };
+}
+
+// ---------------------------------------------------------------------------
+// Leisure log — "were my chores done before I started my own time?"
+//
+// Personal, not a household scoreboard: rows are per person, the slash command
+// replies privately, and the dashboard only renders this when explicitly asked
+// for one person. Nothing about it reaches the shared digest or recap.
+//
+// `source` is deliberately open ("self" today) so an automatic writer — Discord
+// presence, a console integration — can log the same shape later without a
+// schema change or any dashboard rework.
+const LEISURE_SCHEMA = `CREATE TABLE IF NOT EXISTS leisure_log (
+  id TEXT PRIMARY KEY,
+  person TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  local_date TEXT NOT NULL,
+  local_time TEXT,
+  chores_total INTEGER,
+  chores_done INTEGER,
+  overdue INTEGER,
+  clear INTEGER,
+  source TEXT,
+  note TEXT
+)`;
+
+async function ensureLeisureSchema(env) {
+  await env.DB.prepare(LEISURE_SCHEMA).run();
+  await env.DB.prepare(
+    `CREATE INDEX IF NOT EXISTS leisure_person_date ON leisure_log (person, local_date)`,
+  ).run();
+}
+
+// Record the start of a leisure session. One row per session; re-logging on the
+// same day is allowed on purpose (two sittings are two data points), and the id
+// is timestamp-based so a double-tap within the same second is idempotent.
+export async function logLeisure(env, s) {
+  if (!env.DB) return null;
+  await ensureLeisureSchema(env);
+  const id = `${s.person}:${s.startedAt.slice(0, 19)}`;
+  await env.DB.prepare(
+    `INSERT INTO leisure_log
+       (id, person, started_at, local_date, local_time, chores_total, chores_done, overdue, clear, source, note)
+     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+     ON CONFLICT(id) DO UPDATE SET
+       chores_total=?6, chores_done=?7, overdue=?8, clear=?9, note=?11`,
+  )
+    .bind(
+      id,
+      s.person,
+      s.startedAt,
+      s.localDate,
+      s.localTime || null,
+      s.choresTotal ?? 0,
+      s.choresDone ?? 0,
+      s.overdue ?? 0,
+      s.clear ? 1 : 0,
+      s.source || "self",
+      s.note || null,
+    )
+    .run();
+  return id;
+}
+
+// Leisure history for one person: how often their slate was clear when they
+// started, the current run of clear starts, and the recent sessions.
+export async function queryLeisure(env, person, days = 30) {
+  if (!env.DB || !person) return null;
+  await ensureLeisureSchema(env);
+  const today = localDate(new Date()).ymd;
+  const [y, m, d] = today.split("-").map(Number);
+  const since = new Date(Date.UTC(y, m - 1, d - (days - 1))).toISOString().slice(0, 10);
+  const rows =
+    (
+      await env.DB.prepare(
+        `SELECT local_date AS date, local_time AS time, chores_total AS total,
+                chores_done AS done, overdue, clear, source, note
+         FROM leisure_log WHERE person = ?1 AND local_date >= ?2
+         ORDER BY started_at DESC`,
+      )
+        .bind(person, since)
+        .all()
+    ).results || [];
+
+  const total = rows.length;
+  const clear = rows.filter((r) => r.clear).length;
+  // Current run of clear starts, most recent first.
+  let streak = 0;
+  for (const r of rows) {
+    if (!r.clear) break;
+    streak++;
+  }
+  // Clear-rate per bucket, on the same buckets the chore trend uses, so the two
+  // charts line up and you can see whether the habit tracks completion.
+  const buckets = trendBuckets(today, days);
+  const points = buckets.map((b) => {
+    const inB = rows.filter((r) => r.date >= b.lo && r.date <= b.hi);
+    return inB.length ? Math.round((inB.filter((r) => r.clear).length / inB.length) * 100) : null;
+  });
+
+  return {
+    person,
+    days,
+    total,
+    clear,
+    clearPct: total ? Math.round((clear / total) * 100) : null,
+    streak,
+    labels: buckets.map((b) => b.label),
+    points,
+    recent: rows.slice(0, 10),
+  };
 }

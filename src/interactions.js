@@ -26,10 +26,12 @@ import {
   fetchSpawned,
   assignIssue,
   unassignIssue,
+  fetchRecentCompletedAssigned,
 } from "./linear.js";
 import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, reshuffleWindow, coverUserPause } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
+import { logLeisure, queryLeisure } from "./db.js";
 
 const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -633,6 +635,81 @@ async function choreCommand(interaction, env, ctx) {
         })(),
       );
       return { type: 5, data: { flags: EPHEMERAL } }; // deferred ephemeral reply
+    }
+    case "leisure": {
+      // Private by construction: deferred EPHEMERAL, so only the caller ever
+      // sees it and nothing lands in the shared channel. Logged per person.
+      return deferAndRun(
+        interaction,
+        ctx,
+        async () => {
+          const meId = await resolveCaller(env, interaction);
+          if (!meId) return "Couldn't match you to a Linear user.";
+          const users = await getUsers(env);
+          const me = users.find((u) => u.id === meId);
+          const person = me?.name || me?.displayName || "unknown";
+
+          const now = new Date();
+          const L = localDate(now);
+          const today = L.ymd;
+          const recurring = env.RECURRING_PROJECT || "Recurring";
+          // Everything of yours still open and due today or earlier. Overdue is
+          // counted separately: a months-old one-off shouldn't make a clear
+          // slate permanently unreachable, so "clear" means today's work is
+          // done, with the overdue count reported alongside.
+          const open = (await fetchAssignedActiveIssues(env, meId)).filter(
+            (i) => i.project?.name !== recurring && i.dueDate && i.dueDate <= today,
+          );
+          const dueToday = open.filter((i) => i.dueDate === today);
+          const overdue = open.filter((i) => i.dueDate < today);
+          const doneToday = (await fetchRecentCompletedAssigned(env, meId)).filter(
+            (i) =>
+              i.project?.name !== recurring &&
+              i.completedAt &&
+              localDate(new Date(i.completedAt)).ymd === today,
+          );
+          const total = dueToday.length + doneToday.length;
+          const clear = dueToday.length === 0;
+
+          await logLeisure(env, {
+            person,
+            startedAt: now.toISOString(),
+            localDate: today,
+            // localDate() carries no clock time, so format the Eastern hour
+            // directly — the start time is the point of the record.
+            localTime: new Intl.DateTimeFormat("en-US", {
+              timeZone: "America/New_York",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            }).format(now),
+            choresTotal: total,
+            choresDone: doneToday.length,
+            overdue: overdue.length,
+            clear,
+            source: "self",
+            note: o.note || null,
+          });
+
+          const hist = await queryLeisure(env, person, 30);
+          const lines = [
+            clear
+              ? `🎮 Logged — **chores clear** ✅  (${doneToday.length} done today)`
+              : `🎮 Logged — **${dueToday.length} still due today** ⚠️`,
+          ];
+          if (!clear) lines.push(dueToday.slice(0, 5).map((i) => `• ${i.title}`).join("\n"));
+          if (overdue.length) lines.push(`_(${overdue.length} older item${overdue.length === 1 ? "" : "s"} past due, not counted)_`);
+          if (hist) {
+            lines.push(
+              `\n📈 Last 30 days: **${hist.clear}/${hist.total}** starts with a clear slate` +
+                (hist.clearPct === null ? "" : ` (${hist.clearPct}%)`) +
+                (hist.streak ? ` · 🔥 ${hist.streak} in a row` : ""),
+            );
+          }
+          return lines.join("\n");
+        },
+        { ephemeral: true },
+      );
     }
     case "reshuffle": {
       // Repairs rotation on chores that were already materialized (generation
