@@ -422,6 +422,41 @@ export async function queryLeisure(env, person, days = 30) {
     return inB.length ? Math.round((inB.filter((r) => r.clear).length / inB.length) * 100) : null;
   });
 
+  // When the day actually wound down. Times after midnight belong to the night
+  // before, so anything before 4am is pushed past 24:00 — otherwise a 12:30am
+  // finish plots as the earliest evening of the week instead of the latest.
+  const DAY_BREAK = 4 * 60;
+  const toMinutes = (t) => {
+    if (!t || !/^\d{1,2}:\d{2}/.test(t)) return null;
+    const [h, m] = t.split(":").map(Number);
+    const mins = h * 60 + m;
+    return mins < DAY_BREAK ? mins + 24 * 60 : mins;
+  };
+  const fmt = (mins) => {
+    if (mins === null || mins === undefined) return null;
+    const wrapped = Math.round(mins) % (24 * 60);
+    const h24 = Math.floor(wrapped / 60);
+    const m = wrapped % 60;
+    const ampm = h24 >= 12 ? "pm" : "am";
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    return `${h12}:${String(m).padStart(2, "0")}${ampm}`;
+  };
+  const startTimes = [...rows]
+    .reverse() // oldest -> newest, so the chart reads left to right
+    .map((r) => ({ date: r.date, minutes: toMinutes(r.time), clear: !!r.clear }))
+    .filter((r) => r.minutes !== null);
+  const mins = startTimes.map((r) => r.minutes).sort((a, b) => a - b);
+  const median = mins.length
+    ? mins.length % 2
+      ? mins[(mins.length - 1) / 2]
+      : (mins[mins.length / 2 - 1] + mins[mins.length / 2]) / 2
+    : null;
+  // Split by outcome: does the evening start earlier when the chores are done?
+  const avgOf = (sel) => {
+    const a = startTimes.filter(sel).map((r) => r.minutes);
+    return a.length ? a.reduce((s, n) => s + n, 0) / a.length : null;
+  };
+
   return {
     person,
     days,
@@ -431,6 +466,12 @@ export async function queryLeisure(env, person, days = 30) {
     streak,
     labels: buckets.map((b) => b.label),
     points,
+    startTimes,
+    medianStart: fmt(median),
+    earliestStart: fmt(mins[0]),
+    latestStart: fmt(mins[mins.length - 1]),
+    avgStartClear: fmt(avgOf((r) => r.clear)),
+    avgStartNotClear: fmt(avgOf((r) => !r.clear)),
     recent: rows.slice(0, 10),
   };
 }

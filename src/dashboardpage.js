@@ -30,8 +30,17 @@ export function renderDashboardPage(data, range = 30, leisure = null) {
         leisure.clearPct === null ? "—" : leisure.clearPct + "%"
       }</div></div>
       <div class="card"><div class="lbl">🔥 Days in a row</div><div class="val">${leisure.streak}</div></div>
+      <div class="card"><div class="lbl">Typical wind-down</div><div class="val sm">${
+        leisure.medianStart || "—"
+      }</div></div>
+      <div class="card"><div class="lbl">Range</div><div class="val sm">${
+        leisure.earliestStart ? `${leisure.earliestStart} – ${leisure.latestStart}` : "—"
+      }</div></div>
     </div>
     <div class="cw" style="height:170px"><canvas id="leisure"></canvas></div>
+    <h2 style="margin-top:14px">When I settle down</h2>
+    <div class="cw" style="height:180px"><canvas id="leisuretime"></canvas></div>
+    <ul class="missed" id="leisuretimes"></ul>
     <ul class="missed" id="leisurelist"></ul>
     <p class="empty" style="margin-top:8px">${leisure.clear} of ${leisure.total} logged day${leisure.total === 1 ? "" : "s"} started with that day's chores done. Private to you.</p>
   </div>`
@@ -202,6 +211,40 @@ ${leisure ? `
       '<li><span>' + r.date + (r.time ? ' ' + r.time : '') + '</span><span class="n">' +
       (r.clear ? '✅ clear' : '⚠️ ' + (r.total - r.done) + ' left') + '</span></li>').join("")
       || '<li class="empty">No sessions logged yet — run /chores leisure.</li>';
+
+    // When the evening actually started. Dots are coloured by whether the
+    // chores were done, so you can see whether a clear slate means an earlier
+    // wind-down. Y is minutes past midnight, with after-midnight pushed past
+    // 24:00 so a 12:30am night plots above an 8pm one.
+    const st = LZ.startTimes || [];
+    const hhmm = (m) => {
+      const w = Math.round(m) % 1440, h = Math.floor(w / 60), mm = w % 60;
+      const ap = h >= 12 ? "pm" : "am", h12 = h % 12 === 0 ? 12 : h % 12;
+      return h12 + ":" + String(mm).padStart(2, "0") + ap;
+    };
+    if (st.length) {
+      new Chart(document.getElementById("leisuretime"), {
+        type: "line",
+        data: { labels: st.map(p => p.date.slice(5)), datasets: [
+          { label: "Start time", data: st.map(p => p.minutes),
+            borderColor: "rgba(139,128,255,0.55)", backgroundColor: st.map(p => p.clear ? teal : coral),
+            pointBackgroundColor: st.map(p => p.clear ? teal : coral),
+            pointBorderColor: st.map(p => p.clear ? teal : coral),
+            pointRadius: 5, tension: 0.25, fill: false, borderWidth: 2, spanGaps: true } ] },
+        options: { responsive:true, maintainAspectRatio:false,
+          scales:{ y:{ grid:{color:grid}, ticks:{ stepSize:60, callback: v => hhmm(v) } }, x:{ grid:{display:false} } },
+          plugins:{ legend:{ display:false },
+            tooltip:{ callbacks:{ label: c => hhmm(c.raw) + (st[c.dataIndex].clear ? " · chores clear ✅" : " · chores pending ⚠️") } } } }
+      });
+    } else {
+      document.getElementById("leisuretime").parentElement.innerHTML =
+        '<p class="empty">No start times logged yet.</p>';
+    }
+    document.getElementById("leisuretimes").innerHTML =
+      (LZ.avgStartClear || LZ.avgStartNotClear)
+        ? '<li><span>Average when chores were done</span><span class="n">' + (LZ.avgStartClear || '—') + '</span></li>' +
+          '<li><span>Average when chores were pending</span><span class="n">' + (LZ.avgStartNotClear || '—') + '</span></li>'
+        : '';
   }` : ""}
 
   document.getElementById("foot").textContent = "updated " + new Date().toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"});
