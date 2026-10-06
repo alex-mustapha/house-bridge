@@ -221,6 +221,13 @@ export default {
       ctx.waitUntil(forceReplace(env, issue));
       return new Response(`replacing ${issue}\n`, { status: 200 });
     }
+    if (url.pathname === "/digest") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      // Just reposts today's chore list. Unlike /run-cron it does no generation,
+      // no sweep, no archiving — nothing but the Discord post.
+      const r = await postDigest(env).catch((e) => ({ error: e.message }));
+      return new Response(`${JSON.stringify(r)}\n`, { status: 200 });
+    }
     if (url.pathname === "/run-week") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       ctx.waitUntil(runWeek(env));
@@ -554,24 +561,7 @@ async function handleCron(env) {
 
   // 2. Due-date digest, split by owner with @-mentions.
   try {
-    const today = localDate(new Date()).ymd;
-    const issues = await fetchDueIssues(env);
-    // Unassigned due later this week (today/overdue ones already show above).
-    const soon = (await unassignedDueSoon(env)).filter((i) => i.dueDate > today);
-    if (issues.length || soon.length) {
-      const mentions = parseMentions(env.DISCORD_MENTIONS);
-      const msg = buildDigestMessage(issues, mentions, today, soon);
-      // Bot-posted digest carries "✓ Done" buttons; falls back to the webhook
-      // (no buttons) if the bot token / channel id aren't configured.
-      if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
-        await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, {
-          ...msg,
-          components: buildDigestMenu(issues, soon),
-        });
-      } else if (env.DISCORD_WEBHOOK_DUE) {
-        await postToDiscord(env.DISCORD_WEBHOOK_DUE, msg);
-      }
-    }
+    await postDigest(env);
   } catch (err) {
     console.error("Digest failed:", err);
   }
@@ -669,6 +659,33 @@ async function botCheck(env) {
   out.canPostToChannel = post.ok;
   if (!post.ok) out.postError = `${post.status} ${(await post.text()).slice(0, 200)}`;
   return out;
+}
+
+// Build and post today's digest. Split out from the cron so it can be reposted
+// on its own via /digest — re-running the whole cron just to resend the list
+// also runs generation and the overdue sweep, which is a lot of side effect for
+// "send that message again". Read-only apart from the Discord post.
+async function postDigest(env) {
+  const today = localDate(new Date()).ymd;
+  const issues = await fetchDueIssues(env);
+  // Unassigned due later this week (today/overdue ones already show above).
+  const soon = (await unassignedDueSoon(env)).filter((i) => i.dueDate > today);
+  if (!issues.length && !soon.length) return { posted: false, count: 0 };
+  const mentions = parseMentions(env.DISCORD_MENTIONS);
+  const msg = buildDigestMessage(issues, mentions, today, soon);
+  // Bot-posted digest carries the actions dropdown; falls back to the webhook
+  // (no menu) if the bot token / channel id aren't configured.
+  if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
+    await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, {
+      ...msg,
+      components: buildDigestMenu(issues, soon),
+    });
+  } else if (env.DISCORD_WEBHOOK_DUE) {
+    await postToDiscord(env.DISCORD_WEBHOOK_DUE, msg);
+  } else {
+    return { posted: false, count: issues.length };
+  }
+  return { posted: true, count: issues.length };
 }
 
 async function archiveOldChores(env) {

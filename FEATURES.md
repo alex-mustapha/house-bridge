@@ -400,7 +400,8 @@ out of the shared surfaces.
 
 | Endpoint | Action |
 |---|---|
-| `/run-cron` | Run the full daily cron now |
+| `/digest` | **Repost today's chore list only** — no generation, no sweep, no archiving |
+| `/run-cron` | Run the full daily cron now (digest **plus** generation, sweep, archiving) |
 | `/run-week` | Generate the horizon now |
 | `/annotate` | Refresh template schedule comments (returns a report) |
 | `/archive` | Archive old completed chores now |
