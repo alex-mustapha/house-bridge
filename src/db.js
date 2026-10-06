@@ -338,19 +338,34 @@ async function ensureLeisureSchema(env) {
   ).run();
 }
 
-// Record the start of a leisure session. One row per session; re-logging on the
-// same day is allowed on purpose (two sittings are two data points), and the id
-// is timestamp-based so a double-tap within the same second is idempotent.
+// Record the day's leisure start. ONE ROW PER PERSON PER DAY, keyed on the local
+// date: the question being tracked is "did I start my own time with the day's
+// chores done", which is a daily yes/no — so the FIRST start of the day is what
+// counts and later runs can't change it. Keying per session instead would let a
+// single evening contribute several data points, and would quietly flatter the
+// percentage on days you happened to log more than once.
+//
+// Returns { created, row } so the caller can tell you it's already recorded
+// rather than silently doing nothing.
 export async function logLeisure(env, s) {
   if (!env.DB) return null;
   await ensureLeisureSchema(env);
-  const id = `${s.person}:${s.startedAt.slice(0, 19)}`;
+  const id = `${s.person}:${s.localDate}`;
+  const existing = (
+    await env.DB.prepare(
+      `SELECT local_time AS time, chores_total AS total, chores_done AS done,
+              overdue, clear, note FROM leisure_log WHERE id = ?1`,
+    )
+      .bind(id)
+      .first()
+  ) || null;
+  if (existing) return { created: false, row: existing };
+
   await env.DB.prepare(
     `INSERT INTO leisure_log
        (id, person, started_at, local_date, local_time, chores_total, chores_done, overdue, clear, source, note)
      VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
-     ON CONFLICT(id) DO UPDATE SET
-       chores_total=?6, chores_done=?7, overdue=?8, clear=?9, note=?11`,
+     ON CONFLICT(id) DO NOTHING`,
   )
     .bind(
       id,
@@ -366,7 +381,7 @@ export async function logLeisure(env, s) {
       s.note || null,
     )
     .run();
-  return id;
+  return { created: true, row: null };
 }
 
 // Leisure history for one person: how often their slate was clear when they
@@ -389,9 +404,11 @@ export async function queryLeisure(env, person, days = 30) {
         .all()
     ).results || [];
 
-  const total = rows.length;
+  const total = rows.length; // one row per day, so this is "days logged"
   const clear = rows.filter((r) => r.clear).length;
-  // Current run of clear starts, most recent first.
+  // Consecutive logged days that started clear, most recent first. Days with no
+  // entry are simply absent rather than counted against you — not logging isn't
+  // evidence of a bad day, so a gap neither breaks nor extends the run.
   let streak = 0;
   for (const r of rows) {
     if (!r.clear) break;

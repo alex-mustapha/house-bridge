@@ -671,7 +671,7 @@ async function choreCommand(interaction, env, ctx) {
           const total = dueToday.length + doneToday.length;
           const clear = dueToday.length === 0;
 
-          await logLeisure(env, {
+          const logged = await logLeisure(env, {
             person,
             startedAt: now.toISOString(),
             localDate: today,
@@ -692,18 +692,32 @@ async function choreCommand(interaction, env, ctx) {
           });
 
           const hist = await queryLeisure(env, person, 30);
-          const lines = [
-            clear
-              ? `🎮 Logged — **chores clear** ✅  (${doneToday.length} done today)`
-              : `🎮 Logged — **${dueToday.length} still due today** ⚠️`,
-          ];
-          if (!clear) lines.push(dueToday.slice(0, 5).map((i) => `• ${i.title}`).join("\n"));
-          if (overdue.length) lines.push(`_(${overdue.length} older item${overdue.length === 1 ? "" : "s"} past due, not counted)_`);
+          const lines = [];
+          if (logged && !logged.created) {
+            // Already recorded today. The first start of the day is the one that
+            // counts, so report what's on record rather than overwriting it.
+            const r = logged.row || {};
+            lines.push(
+              `🎮 **Already logged today**${r.time ? ` at ${r.time}` : ""} — ` +
+                (r.clear ? "chores were clear ✅" : `${(r.total ?? 0) - (r.done ?? 0)} still due ⚠️`),
+              "_Only the first start of the day counts, so this won't change it._",
+            );
+          } else {
+            lines.push(
+              clear
+                ? `🎮 Logged — **chores clear** ✅  (${doneToday.length} done today)`
+                : `🎮 Logged — **${dueToday.length} still due today** ⚠️`,
+            );
+            if (!clear) lines.push(dueToday.slice(0, 5).map((i) => `• ${i.title}`).join("\n"));
+            if (overdue.length) {
+              lines.push(`_(${overdue.length} older item${overdue.length === 1 ? "" : "s"} past due, not counted)_`);
+            }
+          }
           if (hist) {
             lines.push(
-              `\n📈 Last 30 days: **${hist.clear}/${hist.total}** starts with a clear slate` +
+              `\n📈 Last 30 days: **${hist.clear}/${hist.total}** day${hist.total === 1 ? "" : "s"} started clear` +
                 (hist.clearPct === null ? "" : ` (${hist.clearPct}%)`) +
-                (hist.streak ? ` · 🔥 ${hist.streak} in a row` : ""),
+                (hist.streak ? ` · 🔥 ${hist.streak} day${hist.streak === 1 ? "" : "s"} in a row` : ""),
             );
           }
           return lines.join("\n");

@@ -26,14 +26,14 @@ export function renderDashboardPage(data, range = 30, leisure = null) {
     ? `
   <div class="panel"><h2>🎮 Chores before leisure — ${esc(leisure.person)} · last ${leisure.days}d</h2>
     <div class="cards" style="margin-bottom:12px">
-      <div class="card"><div class="lbl">Clear slate</div><div class="val">${
+      <div class="card"><div class="lbl">Days started clear</div><div class="val">${
         leisure.clearPct === null ? "—" : leisure.clearPct + "%"
       }</div></div>
-      <div class="card"><div class="lbl">🔥 In a row</div><div class="val">${leisure.streak}</div></div>
+      <div class="card"><div class="lbl">🔥 Days in a row</div><div class="val">${leisure.streak}</div></div>
     </div>
     <div class="cw" style="height:170px"><canvas id="leisure"></canvas></div>
     <ul class="missed" id="leisurelist"></ul>
-    <p class="empty" style="margin-top:8px">${leisure.clear} of ${leisure.total} sessions started with today's chores done. Private to you.</p>
+    <p class="empty" style="margin-top:8px">${leisure.clear} of ${leisure.total} logged day${leisure.total === 1 ? "" : "s"} started with that day's chores done. Private to you.</p>
   </div>`
     : "";
   return `<!doctype html>
