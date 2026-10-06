@@ -277,15 +277,33 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 
 | Endpoint | What it does |
 |---|---|
-| `GET /run-cron?key=…` | Runs the daily cron now: digest + cap check (+ weekly generation & scoreboard if it's Monday). |
-| `GET /run-week?key=…` | Generates the coming week's chores immediately, any day (bootstrap/test). |
+| `GET /digest?key=…` | **Reposts today's chore list only** — no generation, sweep or archiving. Use this to resend the digest. |
+| `GET /run-cron?key=…` | Runs the full daily cron now: generation + reconcile + overdue sweep, digest, cap check, auto-archive (+ the weekly recap if it's Monday). Heavier than `/digest` — it can sweep chores. |
+| `GET /run-week?key=…` | Generates the horizon immediately, any day (bootstrap/test). Includes the overdue sweep. |
+| `GET /archive?key=…` | Archives chores completed more than `CHORE_RETENTION_DAYS` ago, to stay under Linear's free-plan cap. |
+| `GET /describe?key=…` | With `q=<title>`, what the engine parses for that template (cadence, on-miss, ownership, next dates). With **no `q`**, every template grouped by whether it survives being missed. |
+| `GET /botcheck?key=…` | Diagnoses the bot token / due-channel config behind the digest. |
+| `GET /delcomment?key=…&issue=…&id=…` | Deletes a bot-authored comment. |
+| `GET /pin-dashboard?key=…` | Posts and pins the dashboard link in #recap. |
+| `GET /register-commands?key=…` | (Re)registers the slash commands with Discord. **Run after changing `src/commands.js`.** |
 | `GET /annotate?key=…` | Refreshes the "Schedule" comment on each Recurring template (cadence + next due dates). Also runs weekly (Sundays). |
 | `GET /scoreboard?key=…` | Posts the per-person scoreboard immediately, any day. |
 | `GET /stats?key=…&days=90` | Posts a long-term stats report (done / on-time / missed / completion %, per person, most-missed chores) from the D1 log over the window. |
 | `GET /replace?key=…&issue=CHO-12` | Archives `CHO-12` and spawns a fresh copy (same title/labels/description, due today, assignee rotated to the other member). |
 | `GET /done?key=…&match=bathroom` | Marks the soonest-due active chore whose title contains the text as **Done** (excludes templates). Powers voice/shortcut "I cleaned the bathroom". |
-| `GET /status?user=Alex` | JSON `{done, remaining}` for that person's chores due today/overdue (omit `user` for whole-household). **Unauthenticated** (read-only, non-sensitive) so the phone widget needs no secret. |
 | `GET /` | Health check — returns `linear-discord-bridge ok`. |
+
+`<CRON_KEY>` is the secret set via `wrangler secret put CRON_KEY`. **Never commit
+the real value** — it guards every mutating endpoint above.
+
+**Keyless** (read-only, non-sensitive — so the phone and calendar apps need no secret):
+
+| Endpoint | Does |
+|---|---|
+| `GET /status?user=Alex` | JSON `{done, remaining, tasks, completed, streak}` for that person's chores due today/overdue. Omit `user` for the whole household. |
+| `GET /widget?user=Alex` | Styled auto-refreshing page for "Add to Home Screen". |
+| `GET /dashboard[?range=7\|30\|90\|365]` | Stats dashboard. Add `&user=<name>` for that person's private leisure panel — the shared link omits it entirely. |
+| `GET /cal/alex.ics` · `/cal/kristal.ics` · `/cal/unassigned.ics` | Calendar subscription feeds. |
 
 ### Voice / "I just cleaned the X" (Alexa, Shortcuts, etc.)
 The `/done` endpoint marks a chore done by name, so any trigger can drive it:
@@ -346,15 +364,27 @@ that command added.
 ## Discord slash commands
 
 This Worker serves a Discord **interactions endpoint** (`POST /interactions`,
-Ed25519-verified) for custom slash commands. Currently:
+Ed25519-verified) for custom slash commands.
 
-- **`/tasks [user]`** — lists a person's active (non-done) Linear tasks. Defaults
-  to you; pass a user to see theirs. Reply is ephemeral (only you see it). Maps
-  Discord users to Linear accounts via `DISCORD_MENTIONS`.
-- **`/project <project>`** — lists open issues in a project (the `project` option
-  autocompletes from your live project list), grouped by due day with assignees.
-- **`/unassigned`** — lists open issues with no assignee, excluding recurring
-  templates (the `Recurring` project).
+> **The live reference is `/chores help` in Discord**, and the full writeup is in
+> [FEATURES.md](FEATURES.md#discord-slash-commands). The summary below is grouped
+> rather than exhaustive, so it can't silently drift as subcommands are added —
+> `src/commands.js` is the source of truth.
+
+**View** — `/tasks [user]` (ephemeral), `/project <name>`, `/unassigned`.
+
+**`/chores <subcommand>`** — the day-to-day interface:
+
+| Group | Subcommands |
+|---|---|
+| Day-to-day | `done` · `claim` · `unclaim` · `snooze` · `skip` · `add` |
+| Pause / resume | `pause` (`everyone:` / `user:` / `chore:`) · `resume` · `pauses` |
+| Scheduling | `sync` (generate now) · `reshuffle` (re-rotate upcoming chores) · `calendar` |
+| Tuning | `weight` (per-person load) · `help` |
+| Private | `leisure` — logs whether the day's chores were done before your own time. Ephemeral; one entry per day, first start counts. |
+
+Autocomplete suggests real chores and people. Ownership is matched by Linear
+**user id**, never name strings.
 
 **One-time setup:**
 1. Create an app at the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**.
@@ -366,7 +396,13 @@ Ed25519-verified) for custom slash commands. Currently:
    Worker must answer (it will, once `DISCORD_PUBLIC_KEY` is set).
 6. Authorize the app in your server (scope `applications.commands`):
    `https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=applications.commands`
-7. Register the command (guild commands appear instantly):
+7. Register the commands (guild commands appear instantly). Easiest is the
+   endpoint — it uses the bot token already in Cloudflare and auto-detects the
+   guild, so no local env vars:
+   ```
+   curl "https://<your-worker>/register-commands?key=<CRON_KEY>"
+   ```
+   Local fallback if you'd rather not use the endpoint:
    ```
    $env:DISCORD_APP_ID="..."; $env:DISCORD_BOT_TOKEN="..."; $env:DISCORD_GUILD_ID="..."
    node scripts/register-commands.js
@@ -374,6 +410,9 @@ Ed25519-verified) for custom slash commands. Currently:
    (Get the server ID via Discord Developer Mode → right-click server → Copy Server ID.)
 
 Then type `/tasks` in any channel the app can see.
+
+> ⚠️ **Re-register after every change to `src/commands.js`** — deploying alone
+> doesn't update what Discord shows. New subcommands simply won't appear.
 
 ## iPhone glance widget
 iOS won't let third-party content sit in the status bar, but a **Lock Screen
