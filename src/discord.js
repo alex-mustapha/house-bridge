@@ -206,12 +206,23 @@ function fmtDue(ymd) {
 // Requires the digest to be posted by the bot (not a webhook).
 export function buildDigestMenu(issues, soon = []) {
   const options = [];
+  // "Not doing it" is a different outcome from "did it" — without it the only
+  // way to clear a chore was to mark it done, which overstates the work
+  // actually completed. It lives in its OWN menu rather than doubling the
+  // length of the primary one: a select caps at 25 options, and a busy day with
+  // 14 chores would otherwise overflow and silently drop the last few.
+  const cancels = [];
   for (const i of issues) {
     if (i.assignee?.name) {
       options.push({
         label: `✓ ${i.title}`.slice(0, 100),
         value: `done:${i.id}:${i.team?.id || ""}`,
         description: `${i.assignee.name}${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
+      });
+      cancels.push({
+        label: `✖ ${i.title}`.slice(0, 100),
+        value: `cancel:${i.id}:${i.team?.id || ""}`,
+        description: `won't count as done${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
       });
     } else {
       options.push({
@@ -230,7 +241,7 @@ export function buildDigestMenu(issues, soon = []) {
   }
   const opts = options.slice(0, 25);
   if (!opts.length) return [];
-  return [
+  const rows = [
     {
       type: 1,
       components: [
@@ -245,6 +256,23 @@ export function buildDigestMenu(issues, soon = []) {
       ],
     },
   ];
+  const cops = cancels.slice(0, 25);
+  if (cops.length) {
+    rows.push({
+      type: 1,
+      components: [
+        {
+          type: 3,
+          custom_id: "cancel-menu",
+          placeholder: "Not doing it… (skip without counting as done)",
+          min_values: 1,
+          max_values: Math.min(cops.length, 25),
+          options: cops,
+        },
+      ],
+    });
+  }
+  return rows;
 }
 
 // Post a message as the bot (Bot token) so it can carry interactive buttons.

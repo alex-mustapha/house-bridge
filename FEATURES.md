@@ -291,6 +291,9 @@ only your own. Ownership is matched by Linear **user id**, not name.
   **by the bot** with a single **actions dropdown** (multi-select, up to 25): pick
   "✓ &lt;chore&gt;" to mark an assigned chore done, or "🙋 &lt;chore&gt;" to claim an
   unassigned one. Falls back to a plain webhook digest (no menu) otherwise.
+- A second dropdown, **"Not doing it…"**, cancels a chore instead: it clears off the
+  list but is recorded as **canceled**, not done. Separate menu rather than extra rows
+  in the first one — a select caps at 25 options and a busy day would overflow.
 - *Why a menu, not emoji reactions:* reactions need a persistent Discord Gateway a
   serverless Worker can't hold; menu/button interactions arrive over the same HTTP
   path as slash commands.
@@ -363,6 +366,8 @@ out of the shared surfaces.
 - **`/status?user=<name>`** — JSON: `done`, `remaining`, today's `tasks`,
   `completed` today, `streak`. Keyless.
 - **`/widget?user=<name>`** — a styled auto-refreshing page ("Add to Home Screen").
+- With `?key=` present the widget shows **✓** (done) and a quieter **✖** (not doing it)
+  per chore. Both clear it; only ✓ counts as work completed.
 - **iOS Scriptable widget** (`scriptable-chores-widget.js`).
 - **Streak** = consecutive days where every chore due that day was completed
   (no-chore days bridge it; today-in-progress doesn't break it).
@@ -408,6 +413,7 @@ out of the shared surfaces.
 | `/scoreboard` · `/stats?days=N` | Post scoreboard / stats |
 | `/replace?issue=CHO-12` | Archive + recreate an issue (rotates assignee) |
 | `/done?match=<text>` | Mark the best-matching chore done |
+| `/cancel?match=<text>` | Cancel the best-matching chore (cleared, **not** counted as done) |
 | `/describe?q=<title>` | Diagnose what the engine parses for a template |
 | `/delcomment?issue=…&id=…` | Delete a bot-authored comment |
 | `/register-commands` | (Re)register slash commands with Discord |

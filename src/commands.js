@@ -103,6 +103,14 @@ export const COMMANDS = [
       },
       {
         type: 1,
+        name: "cancel",
+        description: "Drop a chore you've decided not to do (not counted as done)",
+        options: [
+          { type: 3, name: "chore", description: "Which chore", required: true, autocomplete: true },
+        ],
+      },
+      {
+        type: 1,
         name: "unclaim",
         description: "Drop one of your chores back to the unassigned pool",
         options: [

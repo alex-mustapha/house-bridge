@@ -69,6 +69,17 @@ Leisure log (private to one person):
   later without a schema or dashboard change. Discord presence would cover PC/Xbox/PlayStation
   but not Switch, and needs an always-on process a Worker can't hold.
 
+Done vs cancelled:
+- A chore can be resolved two ways: **done** (work happened) or **canceled** (decided not to).
+  Surfaces: the digest's second "Not doing it…" dropdown, the widget's ✖, and `/chores cancel`.
+- `statusOf` returns `canceled` as its own outcome. It is **excluded from the completion ratio**
+  (neither credit nor failure) but counted and displayed, so a rising cancel count can't pass for
+  a rising completion rate. Don't fold it into done or missed.
+- `fetchChoreHistory` must keep selecting `state { type }` and must NOT filter out canceled —
+  it used to, which would have made cancelled work vanish from stats entirely.
+- The digest has TWO select rows now (`actions-menu`, `cancel-menu`). Resolving a chore prunes it
+  from both, keyed by issue id — not by option value, since one issue appears in both rows.
+
 Weekly recap:
 - Covers the **finished week ending yesterday**, not a window including today — every day is
   final, so "not completed" unambiguously means missed.

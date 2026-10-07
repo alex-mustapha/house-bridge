@@ -76,13 +76,20 @@ export function renderWidgetPage(user, status) {
   li .open span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   li .dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.9); flex: none; }
   li .chev { margin-left: auto; opacity: .6; font-size: 18px; }
-  li .done {
+  li .done, li .cancel {
     flex: none; margin-left: 10px; width: 42px; height: 42px; border-radius: 12px;
     border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.16);
     color: #fff; font-size: 19px; line-height: 1; cursor: pointer; -webkit-appearance: none;
   }
-  li .done:active { background: rgba(255,255,255,.34); }
-  li .done:disabled { opacity: .55; }
+  /* Cancel is deliberately quieter than done: it's the exception, and it
+     shouldn't be the easy thumb-target next to a 42px primary action. */
+  li .cancel {
+    margin-left: 6px; width: 36px; height: 36px; align-self: center;
+    border-color: rgba(255,255,255,.28); background: rgba(255,255,255,.07);
+    font-size: 15px; opacity: .8;
+  }
+  li .done:active, li .cancel:active { background: rgba(255,255,255,.34); }
+  li .done:disabled, li .cancel:disabled { opacity: .55; }
   li.completing .open { opacity: .5; text-decoration: line-through; }
   .empty { margin-top: 28px; font-size: 18px; opacity: .92; }
   .donehdr { margin: 22px 0 2px; font-size: 12px; letter-spacing: .04em;
@@ -154,12 +161,15 @@ export function renderWidgetPage(user, status) {
     } else {
       badge.textContent = "📋";
       count.textContent = s.remaining + (s.remaining === 1 ? " chore left" : " chores left");
-      who.textContent = KEY ? "tap ✓ to mark done · tap a chore to open it" : "tap a chore to open it in Linear";
+      who.textContent = KEY ? "✓ done · ✖ not doing it · tap a chore to open" : "tap a chore to open it in Linear";
       list.innerHTML = tasks.map(t => {
         const t2 = esc(t.title);
         const href = esc(t.url || LINEAR_URL);
+        // ✓ = did it, ✖ = decided not to. Separate buttons so the stats can
+        // tell actual work from work that was dropped.
         const right = KEY
-          ? '<button class="done" data-title="' + t2 + '" aria-label="Mark done">✓</button>'
+          ? '<button class="done" data-title="' + t2 + '" aria-label="Mark done">✓</button>' +
+            '<button class="cancel" data-title="' + t2 + '" aria-label="Cancel — not doing this">✖</button>'
           : '';
         return '<li><a class="open" href="' + href + '"><span class="dot"></span>' +
           '<span class="t">' + t2 + '</span>' + (KEY ? '' : '<span class="chev">›</span>') +
@@ -196,24 +206,30 @@ export function renderWidgetPage(user, status) {
       ' · <a href="' + esc(LINEAR_URL) + '">open in Linear</a>';
   }
 
-  // Mark a chore done via the keyed /done endpoint (event-delegated on the list).
+  // Resolve a chore via the keyed endpoints (event-delegated on the list).
+  // ✓ -> /done (work completed), ✖ -> /cancel (decided not to do it). Both
+  // clear it off the list; only the first counts as work done.
   document.getElementById("list").addEventListener("click", async (e) => {
-    const btn = e.target.closest(".done");
+    const btn = e.target.closest(".done, .cancel");
     if (!btn) return;
     e.preventDefault();
-    btn.disabled = true;
+    const isCancel = btn.classList.contains("cancel");
+    const glyph = isCancel ? "✖" : "✓";
     const li = btn.closest("li");
+    const siblings = li.querySelectorAll("button");
+    siblings.forEach(b => { b.disabled = true; });
     li.classList.add("completing");
     try {
-      const r = await fetch("/done?match=" + encodeURIComponent(btn.dataset.title) +
+      const r = await fetch((isCancel ? "/cancel?match=" : "/done?match=") +
+        encodeURIComponent(btn.dataset.title) +
         "&key=" + encodeURIComponent(KEY), { cache: "no-store" });
       if (!r.ok) throw new Error(String(r.status));
       await refresh();
     } catch (err) {
       li.classList.remove("completing");
-      btn.disabled = false;
+      siblings.forEach(b => { b.disabled = false; });
       btn.textContent = "!";
-      setTimeout(() => { btn.textContent = "✓"; }, 1500);
+      setTimeout(() => { btn.textContent = glyph; }, 1500);
     }
   });
   async function refresh() {

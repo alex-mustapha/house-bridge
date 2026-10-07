@@ -20,7 +20,12 @@ async function ensureSchema(env) {
 
 // on_time / late / missed / open. Completion is compared in Eastern (not UTC),
 // so an evening-of-the-due-day finish counts as on time.
-function statusOf(completedYmd, dueDate, today) {
+// `canceled` is its own outcome on purpose: a chore you decided not to do is
+// neither work completed nor work missed. Folding it into either misreports
+// what happened — counting it done inflates the record, counting it missed
+// punishes a deliberate call.
+function statusOf(completedYmd, dueDate, today, stateType) {
+  if (stateType === "canceled") return "canceled";
   if (completedYmd) return completedYmd <= dueDate ? "on_time" : "late";
   return dueDate < today ? "missed" : "open";
 }
@@ -55,7 +60,7 @@ export async function logChores(env) {
       h.assignee?.name || null,
       h.dueDate,
       completedYmd,
-      statusOf(completedYmd, h.dueDate, today),
+      statusOf(completedYmd, h.dueDate, today, h.state?.type),
       now,
     );
   });
@@ -144,6 +149,7 @@ function buildLateness(rows, today) {
   for (const r of rows) {
     const who = r.assignee || "Unassigned";
     const p = (perPerson[who] ||= { late: [], onTime: 0, missed: 0 });
+    if (r.status === "canceled") continue; // deliberately dropped — not late, not missed
     if (r.status === "missed") {
       neverDone++;
       p.missed++;
@@ -208,7 +214,7 @@ export async function queryDashboard(env, estimateOf, days = 30) {
   const since = shift(days - 1);
   const est = (t) => (estimateOf ? estimateOf(t) : 15);
 
-  const summary = { done: 0, onTime: 0, late: 0, missed: 0 };
+  const summary = { done: 0, onTime: 0, late: 0, missed: 0, canceled: 0 };
   const byPerson = {};
   const effort = {};
   const missCount = {};
@@ -219,14 +225,18 @@ export async function queryDashboard(env, estimateOf, days = 30) {
     dayMap[who][r.due] = dayMap[who][r.due] || r.status === "missed";
     if (r.due < since) continue; // range window for the tallies below
     if (r.status === "missed") missCount[r.title] = (missCount[r.title] || 0) + 1;
-    const p = (byPerson[who] ||= { onTime: 0, late: 0, missed: 0 });
+    const p = (byPerson[who] ||= { onTime: 0, late: 0, missed: 0, canceled: 0 });
     if (r.status === "on_time") { summary.done++; summary.onTime++; p.onTime++; }
     else if (r.status === "late") { summary.done++; summary.late++; p.late++; }
     else if (r.status === "missed") { summary.missed++; p.missed++; }
+    else if (r.status === "canceled") { summary.canceled++; p.canceled++; }
     if ((r.status === "on_time" || r.status === "late") && r.assignee) {
       effort[r.assignee] = (effort[r.assignee] || 0) + est(r.title);
     }
   }
+  // Cancelled work is deliberately outside the completion ratio — it's neither
+  // credit nor failure. It's reported as its own number so a rising cancel
+  // count can't quietly pass for a rising completion rate.
   const resolved = summary.done + summary.missed;
   summary.completionPct = resolved ? Math.round((summary.done / resolved) * 100) : 0;
   summary.onTimePct = summary.done ? Math.round((summary.onTime / summary.done) * 100) : 0;

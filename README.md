@@ -291,6 +291,7 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 | `GET /stats?key=…&days=90` | Posts a long-term stats report (done / on-time / missed / completion %, per person, most-missed chores) from the D1 log over the window. |
 | `GET /replace?key=…&issue=CHO-12` | Archives `CHO-12` and spawns a fresh copy (same title/labels/description, due today, assignee rotated to the other member). |
 | `GET /done?key=…&match=bathroom` | Marks the soonest-due active chore whose title contains the text as **Done** (excludes templates). Powers voice/shortcut "I cleaned the bathroom". |
+| `GET /cancel?key=…&match=bathroom` | Marks the soonest-due matching chore **Canceled** — clears it without counting as work done. Powers the widget's ✖. |
 | `GET /` | Health check — returns `linear-discord-bridge ok`. |
 
 `<CRON_KEY>` is the secret set via `wrangler secret put CRON_KEY`. **Never commit

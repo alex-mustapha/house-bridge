@@ -22,6 +22,8 @@ import {
   upsertComment,
   fetchRecurringTemplates,
   getDoneStateId,
+  getCanceledStateId,
+  cancelChore,
   setIssueState,
   fetchSpawned,
   assignIssue,
@@ -137,18 +139,24 @@ async function resolveCaller(env, interaction) {
 async function handleComponent(interaction, env) {
   const cid = interaction.data?.custom_id || "";
 
-  if (cid === "actions-menu" || cid === "done-menu") {
+  if (cid === "actions-menu" || cid === "done-menu" || cid === "cancel-menu") {
     const legacy = cid === "done-menu"; // old menu: values were "<id>:<team>"
     const vals = interaction.data?.values || [];
     const clicker = vals.some((v) => v.startsWith("claim:")) ? await resolveCaller(env, interaction) : null;
-    const done = new Set();
+    // Track resolved work by ISSUE ID, not by option value: each chore now has
+    // both a "✓ done" and a "✖ cancel" entry, and acting on either must remove
+    // both from the rebuilt menu.
+    const resolvedIds = new Set();
     const claimed = new Set();
     for (const v of vals) {
       const [action, id, team] = legacy ? ["done", ...v.split(":")] : v.split(":");
       try {
         if (action === "done") {
           const stateId = team ? await getDoneStateId(env, team) : null;
-          if (stateId && id && (await setIssueState(env, id, stateId))?.success) done.add(v);
+          if (stateId && id && (await setIssueState(env, id, stateId))?.success) resolvedIds.add(id);
+        } else if (action === "cancel") {
+          const stateId = team ? await getCanceledStateId(env, team) : null;
+          if (stateId && id && (await setIssueState(env, id, stateId))?.success) resolvedIds.add(id);
         } else if (action === "claim" && clicker && id) {
           if ((await assignIssue(env, id, clicker))?.success) claimed.add(v);
         }
@@ -163,16 +171,27 @@ async function handleComponent(interaction, env) {
         ...row,
         components: (row.components || [])
           .map((c) => {
-            if (c.type === 3 && (c.custom_id === "actions-menu" || c.custom_id === "done-menu")) {
+            if (c.type === 3 && ["actions-menu", "done-menu", "cancel-menu"].includes(c.custom_id)) {
+              const isCancelRow = c.custom_id === "cancel-menu";
+              // Old "done-menu" rows stored "<id>:<team>"; current rows store
+              // "<action>:<id>:<team>". Pull the issue id from the right slot or
+              // pruning silently no-ops on an older digest.
+              const legacyRow = c.custom_id === "done-menu";
+              const optId = (v) => v.split(":")[legacyRow ? 0 : 1];
               const opts = (c.options || [])
-                .filter((o) => !done.has(o.value))
+                .filter((o) => !resolvedIds.has(optId(o.value)))
                 .map((o) => {
                   if (!claimed.has(o.value)) return o;
                   const [, id, team] = o.value.split(":");
                   return { label: o.label.replace(/^🙋\s*/, "✓ "), value: `done:${id}:${team || ""}`, description: o.description };
                 });
               return opts.length
-                ? { ...c, custom_id: "actions-menu", options: opts, max_values: Math.min(opts.length, 25) }
+                ? {
+                    ...c,
+                    custom_id: isCancelRow ? "cancel-menu" : "actions-menu",
+                    options: opts,
+                    max_values: Math.min(opts.length, 25),
+                  }
                 : null;
             }
             return c;
@@ -281,7 +300,7 @@ async function choreAutocomplete(interaction, env) {
     // claim grabs work nobody owns yet -> only suggest unassigned chores, which
     // keeps the list short (assigned recurring chores are hidden).
     const pool = sub.name === "claim" ? active.filter((i) => !i.assignee?.name) : active;
-    // snooze / skip / done / claim -> active chores in House Chores + Ad Hoc
+    // snooze / skip / done / cancel / claim -> active chores in House Chores + Ad Hoc
     return acChoices(pool.map((i) => i.title).filter(match));
   }
   return acChoices([]);
@@ -778,6 +797,13 @@ async function choreCommand(interaction, env, ctx) {
       return deferAndRun(interaction, ctx, async () => {
         const r = await markChoreDone(env, o.chore);
         return r.ok ? `✅ ${r.message}.` : r.message;
+      });
+    }
+    case "cancel": {
+      // Distinct from `done`: clears the chore without recording work.
+      return deferAndRun(interaction, ctx, async () => {
+        const r = await cancelChore(env, o.chore);
+        return r.ok ? `✖️ ${r.message} — not counted as done.` : r.message;
       });
     }
     case "claim": {

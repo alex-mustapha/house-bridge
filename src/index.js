@@ -26,6 +26,7 @@ import {
   fetchChoreHistory,
   getTeamId,
   markChoreDone,
+  cancelChore,
   getUsers,
   fetchAssignedActiveIssues,
   fetchRecentCompletedAssigned,
@@ -346,8 +347,17 @@ export default {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       const match = url.searchParams.get("match");
       if (!match) return new Response("missing ?match=<text>\n", { status: 400 });
-      const { message } = await markChoreDone(env, match);
-      return new Response(message + "\n", { status: 200 });
+      const { ok, message } = await markChoreDone(env, match);
+      return new Response(message + "\n", { status: ok ? 200 : 404 });
+    }
+    if (url.pathname === "/cancel") {
+      // Drop a chore without claiming the work was done. Powers the widget's ✖
+      // and keeps "decided not to" out of the completion numbers.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const match = url.searchParams.get("match");
+      if (!match) return new Response("missing ?match=<text>\n", { status: 400 });
+      const { ok, message } = await cancelChore(env, match);
+      return new Response(message + "\n", { status: ok ? 200 : 404 });
     }
     if (url.pathname === "/status") {
       // Read-only, non-sensitive (just done/remaining counts) — left unguarded

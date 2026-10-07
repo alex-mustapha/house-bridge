@@ -139,6 +139,42 @@ export async function getDoneStateId(env, teamId) {
   return (byName || byType)?.id || null;
 }
 
+// A team's "Canceled" workflow state id (by name, falling back to the
+// "canceled" type) — used to drop a chore you've decided not to do, as distinct
+// from one you actually did.
+export async function getCanceledStateId(env, teamId) {
+  const query = `
+    query States($teamId: ID!) {
+      workflowStates(first: 50, filter: { team: { id: { eq: $teamId } } }) {
+        nodes { id name type }
+      }
+    }`;
+  const data = await linearQuery(env, query, { teamId });
+  const nodes = data.workflowStates?.nodes || [];
+  const byName = nodes.find((s) => ["canceled", "cancelled"].includes(s.name.toLowerCase()));
+  const byType = nodes.find((s) => s.type === "canceled");
+  return (byName || byType)?.id || null;
+}
+
+// Cancel the best-matching active chore: it stops being work you owe, but is
+// recorded as "decided not to" rather than counted as done. Mirrors
+// markChoreDone so both surfaces behave the same.
+export async function cancelChore(env, match) {
+  const matches = await findActiveByTitle(env, match, [
+    env.CHORES_PROJECT || "House Chores",
+    env.ADHOC_PROJECT || "Ad Hoc",
+  ]);
+  if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };
+  matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
+  const issue = matches[0];
+  const stateId = await getCanceledStateId(env, issue.team.id);
+  if (!stateId) return { ok: false, message: "No Canceled state found on this team" };
+  const res = await setIssueState(env, issue.id, stateId);
+  return res?.success
+    ? { ok: true, title: issue.title, message: `Canceled "${issue.title}"` }
+    : { ok: false, message: "Update failed" };
+}
+
 // Active (non-done) chores across the given project(s) whose title contains
 // `text` (case-insensitive; empty matches all). Accepts a name or an array.
 export async function findActiveByTitle(env, text, projects) {
@@ -316,10 +352,9 @@ export async function fetchChoreHistory(env, teamId, since) {
         filter: {
           team: { id: { eq: $teamId } }
           dueDate: { gte: "${since}" }
-          state: { type: { neq: "canceled" } }
         }
       ) {
-        nodes { identifier title dueDate completedAt assignee { name } }
+        nodes { identifier title dueDate completedAt assignee { name } state { type } }
       }
     }`;
   const data = await linearQuery(env, query, { teamId });
