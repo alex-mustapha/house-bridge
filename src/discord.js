@@ -107,15 +107,16 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
   // had to read every line's owner suffix — and it grows unreadable as older
   // items accumulate, which they now do by design (rarer chores are no longer
   // swept). Grouping also drops the repeated "· Name" from every line.
-  const groups = new Map(); // owner name | "Unassigned" -> { overdue[], todayish[] }
+  const groups = new Map(); // owner name | "Unassigned" -> { overdue[], todayish[], week[] }
   const bucket = (key) => {
-    if (!groups.has(key)) groups.set(key, { overdue: [], todayish: [] });
+    if (!groups.has(key)) groups.set(key, { overdue: [], todayish: [], week: [] });
     return groups.get(key);
   };
   for (const i of issues) {
     const b = bucket(i.assignee?.name || "Unassigned");
     if (i.dueDate && i.dueDate < today) b.overdue.push(i);
-    else b.todayish.push(i);
+    else if (i.dueDate && i.dueDate > today) b.week.push(i); // later this week
+    else b.todayish.push(i); // today, or undated
   }
 
   // Deterministic order, with Unassigned last so it reads as a footer rather
@@ -124,9 +125,11 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
     a === "Unassigned" ? 1 : b === "Unassigned" ? -1 : a.localeCompare(b),
   );
 
+  // SECTION 1 — what's on the plate right now: past due + today, per person.
   const sections = [];
   for (const name of names) {
     const { overdue, todayish } = groups.get(name);
+    if (!overdue.length && !todayish.length) continue; // nothing today; they'll appear below
     const parts = [`**${name}**`];
     if (overdue.length) {
       const od = [...overdue]
@@ -145,20 +148,45 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
     sections.push(parts.join("\n"));
   }
 
-  // Unclaimed work due later this week, so someone can grab it ahead of time.
+  // SECTION 2 — the rest of the week, same per-person split. Kept separate from
+  // today's list so the morning read stays "what do I do now", with the week as
+  // context underneath rather than mixed in.
+  const weekNames = names.filter((n) => groups.get(n).week.length);
+  if (weekNames.length) {
+    const block = ["🗓️ **Later this week**"];
+    for (const name of weekNames) {
+      const items = [...groups.get(name).week].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+      // Unassigned work is the point of including the week — flag it as grabbable.
+      const heading = name === "Unassigned" ? "__🙋 Unassigned — up for grabs__" : `__${name}__`;
+      block.push(
+        heading,
+        ...items.map((i) => `• ${fmtDue(i.dueDate)} — [${i.title}](${i.url})`),
+      );
+    }
+    sections.push(block.join("\n"));
+  }
+
+  // Legacy arg: unclaimed work due soon. Now normally empty because the digest
+  // pulls the full week above (unassigned included), but kept so an explicit
+  // list still renders rather than being silently dropped.
   if (unassignedSoon.length) {
-    const us = unassignedSoon
-      .map((i) => `• [${i.title}](${i.url}) — due ${fmtDue(i.dueDate)}`)
-      .join("\n");
-    sections.push(`🙋 **Unassigned — due this week**\n${us}`);
+    const seen = new Set(issues.map((i) => i.id ?? i.url));
+    const extra = unassignedSoon.filter((i) => !seen.has(i.id ?? i.url));
+    if (extra.length) {
+      const us = extra.map((i) => `• [${i.title}](${i.url}) — due ${fmtDue(i.dueDate)}`).join("\n");
+      sections.push(`🙋 **Unassigned — due this week**\n${us}`);
+    }
   }
 
   // Ping counts span overdue + today's, not just `groups` (which is today-only
   // now) — otherwise a day whose only work is past due would @-mention nobody.
+  // Counts cover TODAY + past due only. The week section is context, not a
+  // to-do list — folding it in would inflate the number people glance at.
   const perOwner = new Map();
   for (const i of issues) {
     const name = i.assignee?.name;
     if (!name) continue;
+    if (i.dueDate && i.dueDate > today) continue; // later this week — not "on you now"
     perOwner.set(name, (perOwner.get(name) || 0) + 1);
   }
   const pings = [...perOwner.entries()].map(

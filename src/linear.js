@@ -22,8 +22,12 @@ async function linearQuery(env, query, variables = {}) {
 
 // Issues with a due date on or before `today + DUE_LOOKAHEAD_DAYS`,
 // excluding completed/canceled work.
-export async function fetchDueIssues(env) {
-  const lookahead = parseInt(env.DUE_LOOKAHEAD_DAYS || "3", 10);
+// `daysOverride` lets the digest pull the whole week in one query while other
+// callers keep the narrower DUE_LOOKAHEAD_DAYS window.
+export async function fetchDueIssues(env, daysOverride) {
+  const lookahead = Number.isFinite(daysOverride)
+    ? daysOverride
+    : parseInt(env.DUE_LOOKAHEAD_DAYS || "3", 10);
   const until = new Date(Date.now() + lookahead * 86_400_000)
     .toISOString()
     .slice(0, 10);

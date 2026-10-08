@@ -753,25 +753,35 @@ async function botCheck(env) {
 // "send that message again". Read-only apart from the Discord post.
 async function postDigest(env) {
   const today = localDate(new Date()).ymd;
-  const issues = await fetchDueIssues(env);
-  // Unassigned due later this week (today/overdue ones already show above).
-  const soon = (await unassignedDueSoon(env)).filter((i) => i.dueDate > today);
-  if (!issues.length && !soon.length) return { posted: false, count: 0 };
+  // Pull the whole week in one query: the digest shows today + past due per
+  // person, then the rest of the week per person underneath (unassigned work
+  // included, so it can be picked up when someone has time).
+  const week = Math.max(0, parseInt(env.WEEK_LOOKAHEAD_DAYS || "7", 10) || 0);
+  const issues = await fetchDueIssues(env, week);
+  if (!issues.length) return { posted: false, count: 0 };
   const mentions = parseMentions(env.DISCORD_MENTIONS);
-  const msg = buildDigestMessage(issues, mentions, today, soon);
+  const msg = buildDigestMessage(issues, mentions, today, []);
+
+  // The dropdown stays scoped to what's actionable now — today, past due, and
+  // any unassigned chore (claimable ahead of time). A select caps at 25
+  // options, so feeding it a full week would push the chores you actually need
+  // today off the end of the list.
+  const actionable = issues.filter(
+    (i) => !i.dueDate || i.dueDate <= today || !i.assignee?.name,
+  );
   // Bot-posted digest carries the actions dropdown; falls back to the webhook
   // (no menu) if the bot token / channel id aren't configured.
   if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
     await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, {
       ...msg,
-      components: buildDigestMenu(issues, soon),
+      components: buildDigestMenu(actionable, []),
     });
   } else if (env.DISCORD_WEBHOOK_DUE) {
     await postToDiscord(env.DISCORD_WEBHOOK_DUE, msg);
   } else {
     return { posted: false, count: issues.length };
   }
-  return { posted: true, count: issues.length };
+  return { posted: true, count: issues.length, actionable: actionable.length };
 }
 
 // Archive resolved chores older than CHORE_RETENTION_DAYS so the active count

@@ -285,9 +285,21 @@ only your own. Ownership is matched by Linear **user id**, not name.
 
 ## Daily digest & actions dropdown
 
-- The daily cron posts **today's + overdue** chores to the due channel, grouped by
-  assignee, with @-mentions. It also lists **unassigned chores due later this
-  week** (within `UNASSIGNED_LOOKAHEAD_DAYS`, default 7).
+- The daily cron posts the chore digest to the due channel, in two parts:
+  - **Today** — past due + due today, grouped by assignee (plus an *Unassigned*
+    group for unclaimed work due now).
+  - **🗓️ Later this week** — the next `WEEK_LOOKAHEAD_DAYS` (default 7), also
+    grouped by assignee, each line dated. **Unassigned work appears here as
+    "🙋 up for grabs"**, so spare-time work is visible instead of waiting until
+    it's due.
+  Keeping them separate keeps the morning read as "what do I do now", with the
+  week as context underneath rather than mixed in.
+- **@-mention counts cover today + past due only** — the week is context, not a
+  to-do list, and folding it in would inflate the number people glance at.
+- **The actions dropdown stays scoped to what's actionable now** (today, past
+  due, and any unassigned chore, claimable ahead of time). A select caps at 25
+  options, so feeding it the full week would push the chores you actually need
+  today off the end.
 - **⏰ Past due** is its own section at the top, oldest first, showing how many
   days late each chore is and who owns it. Chores are allowed to slip — the
   point is that slipping stays *visible daily*, instead of being noticed only

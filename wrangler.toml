@@ -19,6 +19,10 @@ crons = ["0 12 * * *"]
 [vars]
 # How many days ahead the daily digest looks. 0 = only today + overdue.
 DUE_LOOKAHEAD_DAYS = "0"
+# How far ahead the daily digest's "Later this week" section looks. The digest
+# shows today + past due per person first, then the rest of the week per person
+# underneath (unassigned included, so spare-time work is visible).
+WEEK_LOOKAHEAD_DAYS = "7"
 # Warn in #bot-log once active (non-archived) issues reach this count.
 # Free plan caps at 250; 220 gives you runway to archive.
 CAP_WARN_AT = "220"
