@@ -116,6 +116,8 @@ export async function handleInteraction(interaction, env, ctx) {
         return unassignedResponse(interaction, env);
       case "chores":
         return choreCommand(interaction, env, ctx);
+      case "admin":
+        return adminCommand(interaction, env, ctx);
     }
   }
   return { type: 4, data: { content: "Unsupported command.", flags: EPHEMERAL } };
@@ -243,6 +245,14 @@ async function autocompleteResponse(interaction, env) {
     return acChoices((await fetchProjectNames(env)).filter((n) => n.toLowerCase().includes(typed)));
   }
   if (interaction.data?.name === "chores") return choreAutocomplete(interaction, env);
+  if (interaction.data?.name === "admin") {
+    const sub = (interaction.data.options || [])[0];
+    const opt = (sub?.options || []).find((o) => o.focused);
+    if (opt?.name !== "chore") return acChoices([]);
+    const typed = (opt.value || "").toLowerCase();
+    const tpls = await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring");
+    return acChoices(tpls.map((t) => t.title).filter((t) => (t || "").toLowerCase().includes(typed)));
+  }
   return { type: 8, data: { choices: [] } };
 }
 
@@ -1043,4 +1053,151 @@ function choreHelp(recurringUrl) {
     "",
     "Names match loosely (partial, case-insensitive). `/tasks`, `/project`, `/unassigned` list issues.",
   ].join("\n");
+}
+
+// --- /admin -----------------------------------------------------------------
+// The keyed HTTP toolkit, reachable from Discord without looking up a key.
+//
+// These call the Worker's own endpoints rather than importing the handlers:
+// several (pin-dashboard, register-commands, capcheck) are written inline
+// against the Request object in index.js, and importing index.js from here
+// would be a circular import. Going back out over HTTP costs one subrequest and
+// reuses the exact code path the curl commands exercise, so the two can't
+// drift. Slash commands are Ed25519-verified and guild-gated, so the key never
+// leaves the Worker.
+async function callToolkit(env, path) {
+  const base = (env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+  if (!base) return { error: "PUBLIC_BASE_URL isn't set." };
+  if (!env.CRON_KEY) return { error: "CRON_KEY isn't set." };
+  const sep = path.includes("?") ? "&" : "?";
+  const res = await fetch(`${base}${path}${sep}key=${encodeURIComponent(env.CRON_KEY)}`, {
+    cache: "no-store",
+  });
+  const body = (await res.text()).trim();
+  try {
+    return { ok: res.ok, status: res.status, json: JSON.parse(body) };
+  } catch {
+    return { ok: res.ok, status: res.status, text: body };
+  }
+}
+
+const adminFail = (r) =>
+  `⚠️ ${r.error || `Endpoint returned ${r.status}`}${r.text ? ` — ${r.text.slice(0, 180)}` : ""}`;
+
+async function adminCommand(interaction, env, ctx) {
+  const sub = (interaction.data.options || [])[0];
+  const name = sub?.name;
+  const o = Object.fromEntries((sub?.options || []).map((x) => [x.name, x.value]));
+
+  return deferAndRun(
+    interaction,
+    ctx,
+    async () => {
+      switch (name) {
+        case "digest": {
+          const r = await callToolkit(env, "/digest");
+          if (!r.json) return adminFail(r);
+          return r.json.posted
+            ? `📣 Digest posted — **${r.json.count}** chore(s) in the window, ${r.json.actionable} actionable today.`
+            : "Nothing due — no digest posted.";
+        }
+        case "recap": {
+          const r = await callToolkit(env, "/scoreboard");
+          return r.ok ? "📊 Weekly recap posted." : adminFail(r);
+        }
+        case "dashboard": {
+          const r = await callToolkit(env, "/pin-dashboard");
+          return r.ok ? "📌 Dashboard link posted and pinned." : adminFail(r);
+        }
+        case "cron": {
+          const r = await callToolkit(env, "/run-cron");
+          return r.ok
+            ? "⚙️ Daily cron triggered — generation, digest, cap check and archive."
+            : adminFail(r);
+        }
+        case "register": {
+          const r = await callToolkit(env, "/register-commands");
+          return r.ok ? "🔄 Slash commands re-registered with Discord." : adminFail(r);
+        }
+        case "botcheck": {
+          const r = await callToolkit(env, "/botcheck");
+          if (!r.json) return r.ok ? (r.text || "(no output)").slice(0, 600) : adminFail(r);
+          // Only the scalar pass/fail bits — the full payload is a wall of JSON.
+          const lines = Object.entries(r.json)
+            .filter(([, v]) => v === null || typeof v !== "object")
+            .map(([k, v]) => `• ${k}: ${v === true ? "✅" : v === false ? "❌" : v}`);
+          return `🤖 **Bot check**\n${lines.join("\n").slice(0, 1500)}`;
+        }
+        case "cap": {
+          const r = await callToolkit(env, "/capcheck");
+          if (!r.json) return adminFail(r);
+          const c = r.json.counted || {};
+          const cap = r.json.freePlanCap || 250;
+          const proj = Object.entries(r.json.byProject || {})
+            .slice(0, 4)
+            .map(([n, v]) => `${n} ${v.total}`)
+            .join(" · ");
+          const filled = Math.max(0, Math.min(20, Math.round(((c.total || 0) / cap) * 20)));
+          const bar = "█".repeat(filled) + "░".repeat(20 - filled);
+          return (
+            `📦 **Linear usage** ${c.total}/${cap}  \`${bar}\`\n` +
+            `open ${c.open} · done ${c.completed} · canceled ${c.canceled} · **${cap - (c.total || 0)} free**\n` +
+            proj
+          );
+        }
+        case "templates": {
+          if (o.chore) {
+            const r = await callToolkit(env, `/describe?q=${encodeURIComponent(o.chore)}`);
+            if (!r.json) return adminFail(r);
+            const t = r.json;
+            if (t.error) return `No template matching "${o.chore}".`;
+            const owner = t.fixedAssignee
+              ? `pinned to ${t.fixedAssignee}`
+              : t.assignDays
+                ? `assign: ${Object.entries(t.assignDays)
+                    .map(([d, w]) => `${d.slice(0, 3)}=${w}`)
+                    .join(", ")}`
+                : t.opposite
+                  ? `opposite of ${t.opposite}`
+                  : "rotates";
+            return (
+              `🔁 **${t.title}**\n${t.schedule}\n` +
+              `• owner: ${owner}\n` +
+              `• on miss: **${t.onMiss}** ${t.sweptWhenOverdue ? "(wiped)" : "(stays until done)"}\n` +
+              `• next: ${(t.next || []).slice(0, 3).join(", ")}`
+            );
+          }
+          const r = await callToolkit(env, "/describe");
+          if (!r.json) return adminFail(r);
+          const j = r.json;
+          const survives = (j.survivesWhenMissed?.chores || []).map((c) => c.title);
+          return (
+            `🔁 **${j.total} recurring templates**\n` +
+            `• ${j.sweptWhenMissed?.count ?? 0} wiped when missed · ${j.survivesWhenMissed?.count ?? 0} stay until done\n` +
+            `• stay until done: ${survives.join(", ").slice(0, 900) || "none"}\n` +
+            `_Pass_ \`chore:\` _for one template's full config._`
+          );
+        }
+        case "archive": {
+          const r = await callToolkit(env, o.confirm ? "/archive" : "/archive?dry=1");
+          if (!r.json) return adminFail(r);
+          const j = r.json;
+          const by = Object.entries(j.byState || {})
+            .map(([k, v]) => `${v} ${k}`)
+            .join(", ");
+          if (!o.confirm) {
+            return j.found
+              ? `🗄️ **Dry run** — would archive **${j.found}**${by ? ` (${by})` : ""} finished over ${j.retentionDays}d ago.\nRun again with \`confirm:true\`.`
+              : `🗄️ Nothing to archive — nothing finished more than ${j.retentionDays} days ago.`;
+          }
+          return j.archived
+            ? `🗄️ Archived **${j.archived}**${by ? ` (${by})` : ""}. Run again if there's a backlog.`
+            : "🗄️ Nothing to archive.";
+        }
+        default:
+          return "Unknown admin subcommand.";
+      }
+    },
+    { ephemeral: true },
+  );
 }

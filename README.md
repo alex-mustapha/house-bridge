@@ -271,6 +271,13 @@ The cron in `wrangler.toml` is in **UTC**. Change `crons` to hit your local
 morning (the file has examples), then redeploy.
 
 ## Manual toolkit
+
+> **Most of this is reachable from Discord as `/admin`** — `digest`, `recap`,
+> `dashboard`, `cap`, `templates`, `botcheck`, `archive` (dry run unless you
+> pass `confirm:true`), `cron`, `register`. Slash commands are Ed25519-verified
+> and guild-gated, so there's no key to look up. Replies are ephemeral. The
+> endpoints below remain the full surface, including the rarer surgical ones.
+
 On-demand HTTP endpoints for intervening outside the schedule. All require
 `?key=<CRON_KEY>` and return `404` without a valid key. Trigger from a browser or
 `curl`, and watch `npx wrangler tail` to see the result.

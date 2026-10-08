@@ -152,4 +152,33 @@ export const COMMANDS = [
       },
     ],
   },
+  {
+    name: "admin",
+    description: "Operator toolkit — the keyed HTTP endpoints, without the curl",
+    options: [
+      { type: 1, name: "digest", description: "Repost today's chore list to the channel" },
+      { type: 1, name: "recap", description: "Post the weekly recap now" },
+      { type: 1, name: "dashboard", description: "Post + pin the stats dashboard link in #recap" },
+      { type: 1, name: "cap", description: "Linear free-plan issue usage and what's consuming it" },
+      {
+        type: 1,
+        name: "templates",
+        description: "What the engine parses for a recurring template (omit for all)",
+        options: [
+          { type: 3, name: "chore", description: "Template title (partial)", required: false, autocomplete: true },
+        ],
+      },
+      { type: 1, name: "botcheck", description: "Diagnose the bot token / digest channel" },
+      {
+        type: 1,
+        name: "archive",
+        description: "Archive finished chores older than the retention window (dry run by default)",
+        options: [
+          { type: 5, name: "confirm", description: "Actually archive (default: dry run)", required: false },
+        ],
+      },
+      { type: 1, name: "cron", description: "Run the full daily cron now (generates + sweeps)" },
+      { type: 1, name: "register", description: "Re-register slash commands after a deploy" },
+    ],
+  },
 ];
