@@ -376,9 +376,17 @@ out of the shared surfaces.
 
 ## Maintenance & analytics
 
-- **Auto-archive:** chores completed more than `CHORE_RETENTION_DAYS` (default 30)
-  ago are archived (≤`ARCHIVE_MAX` per run) so the active count stays under
-  Linear's free 250 cap. Manual: `/archive?key=…`.
+- **Auto-archive:** resolved chores — **completed *and* canceled** — older than
+  `CHORE_RETENTION_DAYS` (default 30, set to **7** here) are archived, across
+  **both** `CHORES_PROJECT` and `ADHOC_PROJECT`, up to `ARCHIVE_MAX` per run
+  (runs 6 days a week, not Mondays). Archiving is **not** deletion: issues stay
+  in Linear's archive and D1 keeps the stats — they just stop counting against
+  the free plan's 250 active-issue cap. Manual: `/archive?key=…`, or
+  `/archive?key=…&dry=1` to preview without touching anything.
+  > The per-run budget is **split between completed and canceled**. Completed
+  > chores always outnumber canceled ones, so taking them in order would hand
+  > the whole allowance to `completed` every run and the canceled backlog would
+  > never drain.
 - **Cap warning:** posts to the admin channel once active issues reach
   `CAP_WARN_AT` (default 220). *(The 14-day horizon keeps this comfortable; a
   longer one runs much closer to the cap.)*

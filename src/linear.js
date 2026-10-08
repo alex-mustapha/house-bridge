@@ -696,23 +696,54 @@ export async function fetchRecurringTemplates(env, projectName) {
 
 // Completed chores in `projectName` finished before `beforeIso` (auto-archive,
 // to keep the active-issue count under Linear's free-tier cap).
-export async function fetchCompletedBefore(env, projectName, beforeIso, limit) {
+// Resolved chores old enough to archive, across the given projects. Covers
+// BOTH completed and canceled work:
+//   - canceled issues have no `completedAt`, so a completedAt-only filter
+//     silently skipped them forever and they accumulated against the cap;
+//   - restricting to one project left the other's finished work stranded too.
+// Each state is queried separately because they key off different timestamps,
+// and a failure in one shouldn't take out the other.
+export async function fetchArchivableBefore(env, projectNames, beforeIso, limit) {
   const n = Math.max(1, Math.min(100, limit || 50));
-  const query = `
-    query Old($name: String!) {
-      issues(
-        first: ${n}
-        filter: {
-          project: { name: { eq: $name } }
-          state: { type: { eq: "completed" } }
-          completedAt: { lt: "${beforeIso}" }
+  const names = (Array.isArray(projectNames) ? projectNames : [projectNames]).filter(Boolean);
+  if (!names.length) return [];
+
+  const run = async (stateType, dateField) => {
+    const query = `
+      query Old($names: [String!]!) {
+        issues(
+          first: ${n}
+          filter: {
+            project: { name: { in: $names } }
+            state: { type: { eq: "${stateType}" } }
+            ${dateField}: { lt: "${beforeIso}" }
+          }
+        ) {
+          nodes { id identifier state { type } }
         }
-      ) {
-        nodes { id identifier }
-      }
-    }`;
-  const data = await linearQuery(env, query, { name: projectName });
-  return data.issues?.nodes || [];
+      }`;
+    try {
+      const data = await linearQuery(env, query, { names });
+      return data.issues?.nodes || [];
+    } catch (e) {
+      console.error(`Archivable lookup failed for ${stateType}:`, e.message);
+      return [];
+    }
+  };
+
+  const [done, canceled] = await Promise.all([
+    run("completed", "completedAt"),
+    run("canceled", "canceledAt"),
+  ]);
+  // Split the per-run budget between the two rather than concatenating and
+  // truncating: completed chores always outnumber canceled ones, so a plain
+  // slice would hand the entire allowance to `completed` every run and the
+  // canceled backlog would never drain — the exact bug this change exists to
+  // fix. Whichever list is short gives its unused share to the other.
+  const half = Math.ceil(n / 2);
+  const takeDone = done.slice(0, Math.max(half, n - canceled.length));
+  const takeCanceled = canceled.slice(0, n - takeDone.length);
+  return [...takeDone, ...takeCanceled];
 }
 
 export async function archiveIssue(env, id) {

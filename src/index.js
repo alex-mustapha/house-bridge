@@ -33,7 +33,7 @@ import {
   fetchRecentCompletedAssigned,
   fetchAssignedDueInWindow,
   getLabelNameMap,
-  fetchCompletedBefore,
+  fetchArchivableBefore,
   archiveIssue,
   fetchUnassignedActive,
   deleteComment,
@@ -302,8 +302,15 @@ export default {
     }
     if (url.pathname === "/archive") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
-      ctx.waitUntil(archiveOldChores(env));
-      return new Response("archive triggered (run repeatedly to clear a backlog)\n", { status: 200 });
+      // `?dry=1` reports what WOULD be archived without touching anything —
+      // worth checking before clearing a backlog.
+      if (url.searchParams.get("dry")) {
+        return new Response(JSON.stringify(await archiveOldChores(env, { dryRun: true }), null, 2), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const r = await archiveOldChores(env);
+      return new Response(`${JSON.stringify(r)}\nrun repeatedly to clear a backlog\n`, { status: 200 });
     }
     if (url.pathname === "/botcheck") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
@@ -753,19 +760,29 @@ async function postDigest(env) {
   return { posted: true, count: issues.length };
 }
 
-async function archiveOldChores(env) {
+// Archive resolved chores older than CHORE_RETENTION_DAYS so the active count
+// stays under Linear's free-plan cap. Covers completed AND canceled work in
+// both the chores and ad-hoc projects — archiving is not deletion: the issues
+// stay in Linear's archive and D1 keeps the stats either way.
+async function archiveOldChores(env, { dryRun = false } = {}) {
   const days = parseInt(env.CHORE_RETENTION_DAYS || "30", 10);
   const max = parseInt(env.ARCHIVE_MAX || "30", 10);
   const before = new Date(Date.now() - days * 86_400_000).toISOString();
-  const project = env.CHORES_PROJECT || "House Chores";
-  const old = await fetchCompletedBefore(env, project, before, max);
+  const projects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
+  const old = await fetchArchivableBefore(env, projects, before, max);
+  const byState = old.reduce((a, i) => {
+    const t = i.state?.type || "unknown";
+    a[t] = (a[t] || 0) + 1;
+    return a;
+  }, {});
+  if (dryRun) return { dryRun: true, retentionDays: days, projects, found: old.length, byState };
   let n = 0;
   for (const i of old) {
     const r = await archiveIssue(env, i.id);
     if (r?.success) n++;
   }
-  if (n) console.log(`Auto-archived ${n} chore(s) completed >${days}d ago.`);
-  return n;
+  if (n) console.log(`Auto-archived ${n} resolved chore(s) older than ${days}d.`, byState);
+  return { archived: n, found: old.length, byState, retentionDays: days };
 }
 
 // Posts the weekly scoreboard. On the cron it only runs Mondays; `force` (the

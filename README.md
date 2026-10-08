@@ -280,7 +280,7 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 | `GET /digest?key=…` | **Reposts today's chore list only** — no generation, sweep or archiving. Use this to resend the digest. |
 | `GET /run-cron?key=…` | Runs the full daily cron now: generation + reconcile + overdue sweep, digest, cap check, auto-archive (+ the weekly recap if it's Monday). Heavier than `/digest` — it can sweep chores. |
 | `GET /run-week?key=…` | Generates the horizon immediately, any day (bootstrap/test). Includes the overdue sweep. |
-| `GET /archive?key=…` | Archives chores completed more than `CHORE_RETENTION_DAYS` ago, to stay under Linear's free-plan cap. |
+| `GET /archive?key=…` | Archives resolved chores (completed **and** canceled, both projects) older than `CHORE_RETENTION_DAYS`, to stay under Linear's free-plan cap. Add `&dry=1` to preview. |
 | `GET /describe?key=…` | With `q=<title>`, what the engine parses for that template (cadence, on-miss, ownership, next dates). With **no `q`**, every template grouped by whether it survives being missed. |
 | `GET /botcheck?key=…` | Diagnoses the bot token / due-channel config behind the digest. |
 | `GET /delcomment?key=…&issue=…&id=…` | Deletes a bot-authored comment. |
