@@ -572,6 +572,20 @@ async function handleEvent(payload, env) {
   // Comments are no longer echoed to Discord (too noisy).
   if (type !== "Issue") return;
 
+  // Archiving a chore fires one `remove` webhook PER ISSUE, so the auto-archive
+  // sweep (up to ARCHIVE_MAX a run) would carpet the activity channel with
+  // tombstones for work that was already finished days ago. A webhook can't be
+  // batched — each event is its own request — so the per-issue events are
+  // dropped here and `archiveOldChores` posts a single summary instead.
+  //
+  // Scoped to the chore projects: a removal in a real project (a shed build,
+  // say) is still worth seeing. Set MIRROR_CHORE_REMOVALS=true to get them back.
+  if (action === "remove" && env.MIRROR_CHORE_REMOVALS !== "true") {
+    const proj = data?.project?.name;
+    const choreProjects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
+    if (proj && choreProjects.includes(proj)) return;
+  }
+
   // Skip description-only edits: only notify when a field we actually surface
   // changed (title, state, assignee, priority, due date). `updatedFrom` lists
   // the changed fields; if it's present and touches none of these, it's noise.
@@ -781,7 +795,30 @@ async function archiveOldChores(env, { dryRun = false } = {}) {
     const r = await archiveIssue(env, i.id);
     if (r?.success) n++;
   }
-  if (n) console.log(`Auto-archived ${n} resolved chore(s) older than ${days}d.`, byState);
+  if (n) {
+    console.log(`Auto-archived ${n} resolved chore(s) older than ${days}d.`, byState);
+    // One line standing in for the per-issue `remove` events suppressed in
+    // handleEvent — the sweep stays visible without burying the channel.
+    const url = resolveWebhook(env.CHORES_TEAM || "CHO", env);
+    if (url) {
+      const bits = [];
+      if (byState.completed) bits.push(`${byState.completed} done`);
+      if (byState.canceled) bits.push(`${byState.canceled} canceled`);
+      const more = old.length >= parseInt(env.ARCHIVE_MAX || "30", 10) ? " · more to come tomorrow" : "";
+      await postToDiscord(url, {
+        embeds: [
+          {
+            description:
+              `🗄️ Tidied up **${n}** finished chore${n === 1 ? "" : "s"}` +
+              (bits.length ? ` (${bits.join(", ")})` : "") +
+              ` older than ${days} days.${more}`,
+            color: 0x6b6b74,
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }).catch((e) => console.error("archive summary post failed:", e));
+    }
+  }
   return { archived: n, found: old.length, byState, retentionDays: days };
 }
 

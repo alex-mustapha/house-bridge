@@ -630,7 +630,7 @@ async function choreCommand(interaction, env, ctx) {
       );
     }
     case "help":
-      return reply(choreHelp());
+      return reply(choreHelp(env.RECURRING_PROJECT_URL));
     case "sync": {
       // Generation can outrun Discord's 3s window — defer, then edit the reply
       // with the summary. Idempotent: existing occurrences are skipped.
@@ -1007,32 +1007,40 @@ async function pausesList(env) {
   return reply(sections.join("\n\n"));
 }
 
-function choreHelp() {
+function choreHelp(recurringUrl) {
   return [
     "**`/chores` — household chore controls**",
     "",
     "__Pause / resume__ (dates are strict `YYYY-MM-DD`)",
-    "• `/chores pause user:<name> [from: to:]` — opt one person out (sick/away); their chores are reassigned to the other.",
-    "• `/chores pause chore:<name>` — take a chore off-radar (adds the `paused` label; best for variable seasons like mowing).",
-    "• `/chores pause everyone:true [from: to:]` — pause the **whole household** (vacation). Required for a global pause — it archives all chores in the window.",
-    "• `/chores resume [user:<name>|chore:<name>]` — clear holds / un-pause a chore (returning folks are rebalanced back in).",
+    "• `/chores pause user:<name> [from: to:]` — opt one person out; their chores go to the other.",
+    "• `/chores pause chore:<name>` — take one chore off-radar (seasonal, e.g. mowing).",
+    "• `/chores pause everyone:true [from: to:]` — pause the **whole household** (vacation). `everyone:` is required: it archives the window.",
+    "• `/chores resume [user:|chore:]` — clear holds / un-pause (rebalances on return).",
     "",
     "__Day-to-day__",
     "• `/chores done chore:<name>` — mark a chore done.",
-    "• `/chores claim chore:<name> [assignee:<name>]` — take ownership (default: you).",
-    "• `/chores unclaim chore:<name>` — drop one of your chores back to unassigned.",
-    "• `/chores snooze chore:<name> [days:N]` — push a chore's due date out (default 1).",
+    "• `/chores claim chore:<name> [assignee:]` — take ownership (default: you).",
+    "• `/chores unclaim chore:<name>` — drop it back to unassigned.",
+    "• `/chores snooze chore:<name> [days:N]` — push the due date out (default 1).",
     "• `/chores skip chore:<name>` — skip the current copy; it returns next cycle.",
-    "• `/chores add title:<…> [due:YYYY-MM-DD] [assignee:<name>]` — add a one-off chore (→ Ad Hoc; no due date unless given).",
+    "• `/chores add title:<…> [due:] [assignee:]` — add a one-off chore (→ Ad Hoc).",
     "",
     "__Info & tuning__",
     "• `/chores pauses` — what's currently paused (+ recent).",
-    "• `/chores weight [user:<name>] [value:<n>] [reset:true]` — view or skew the rotation load (rebalances the upcoming window).",
-    "• `/chores calendar` — links to subscribe to your chores in your calendar app.",
-    "• `/chores sync` — re-run generation now (idempotent; fills the schedule horizon).",
-    "• `/chores reshuffle` — re-rotate upcoming chores so each one alternates between you again.",
+    "• `/chores weight [user:] [value:] [reset:]` — view/skew the rotation load.",
+    "• `/chores calendar` — calendar-subscription links.",
+    "• `/chores sync` — re-run generation now (idempotent).",
+    "• `/chores reshuffle` — re-rotate upcoming chores so they alternate again.",
+    "• `/chores cancel chore:<name>` — drop a chore you're not doing (**not** counted as done).",
     "• `/chores help` — this message.",
     "",
-    "Names match loosely (partial, case-insensitive). Permanent recurring chores are defined as **templates** in Linear's _Recurring_ project; `/tasks`, `/project`, `/unassigned` list issues.",
+    // Recurring chores can't be created from Discord by design — this is the
+    // one place someone looking for "how do I add a repeating chore?" will
+    // land, so point them straight at the project rather than explaining it.
+    recurringUrl
+      ? `**Adding a repeating chore?** Those are Linear templates, not Discord — [open the Recurring project](${recurringUrl}) for the labels and directives.`
+      : "**Adding a repeating chore?** They're defined as **templates** in Linear's _Recurring_ project, not from Discord.",
+    "",
+    "Names match loosely (partial, case-insensitive). `/tasks`, `/project`, `/unassigned` list issues.",
   ].join("\n");
 }

@@ -52,6 +52,12 @@ The Worker mirrors **meaningful** Linear issue changes to Discord as they happen
 - **Comments are never echoed**, and **description-only edits are skipped** — so
   ticking a checklist box, or the bot's own schedule comments, don't spam the
   channel. (Linear's webhook `updatedFrom` tells us which fields changed.)
+- **Archive sweeps don't spam the channel.** Archiving fires one Linear
+  `remove` webhook per issue, so a 30-issue sweep would post 30 tombstones for
+  work finished days ago. Those events are dropped for the chore projects and
+  the archiver posts a **single summary** instead ("🗄️ Tidied up 30 finished
+  chores…"). Removals in other projects still post; set
+  `MIRROR_CHORE_REMOVALS="true"` to get the per-issue ones back.
 - **Recurring templates are excluded** from the mirror; any chore labeled
   **`silent`** is skipped too.
 - **Per-team routing:** events post to `DISCORD_WEBHOOK_<TEAMKEY>` (e.g.

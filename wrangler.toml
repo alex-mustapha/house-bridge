@@ -24,6 +24,10 @@ DUE_LOOKAHEAD_DAYS = "0"
 CAP_WARN_AT = "220"
 # Linear project that holds recurring-chore template tickets.
 RECURRING_PROJECT = "Recurring"
+# Deep link to the Recurring project, surfaced in `/chores help`. Recurring
+# chores are authored as Linear templates rather than from Discord, so this
+# is where someone asking "how do I add a repeating chore?" needs to land.
+RECURRING_PROJECT_URL = "https://linear.app/alex-kristal/project/recurring-11976335748e/overview"
 # How many days ahead to materialize chores (default 7). Larger = a one-time
 # fill; later weekly runs only add the new far days (dedup skips the rest).
 # Kept at two weeks: far enough to see what's coming, short enough that the
