@@ -148,9 +148,13 @@ async function dayStatus(env, userName) {
 }
 
 
-export default {
-  // Receives Linear webhooks (real-time issue/comment events).
-  async fetch(request, env, ctx) {
+// Every HTTP route: Linear webhooks, Discord interactions, the keyed toolkit
+// and the public pages. Named rather than inline in the default export so
+// /admin can dispatch to it IN-PROCESS. A Worker cannot fetch its own hostname
+// — Cloudflare rejects that with error 1042 — so the toolkit endpoints are
+// unreachable over HTTP from inside the Worker, and an internal call is the
+// only way to reuse them without duplicating the route logic.
+async function handleRequest(request, env, ctx) {
     const url = new URL(request.url);
 
     // Discord slash-command interactions (signed POST from Discord).
@@ -167,7 +171,15 @@ export default {
       } catch {
         return new Response("bad json", { status: 400 });
       }
-      const resp = await handleInteraction(interaction, env, ctx);
+      // In-process dispatcher for /admin: builds a keyed Request and runs it
+      // through this same router, so the slash command and the curl command
+      // exercise identical code with no network hop.
+      const dispatch = (path) => {
+        const sep = path.includes("?") ? "&" : "?";
+        const u = `${url.origin}${path}${sep}key=${encodeURIComponent(env.CRON_KEY || "")}`;
+        return handleRequest(new Request(u), env, ctx);
+      };
+      const resp = await handleInteraction(interaction, env, ctx, dispatch);
       return new Response(JSON.stringify(resp), {
         headers: { "Content-Type": "application/json" },
       });
@@ -532,8 +544,10 @@ export default {
     // doesn't time out and retry.
     ctx.waitUntil(handleEvent(payload, env));
     return new Response("ok", { status: 200 });
-  },
+}
 
+export default {
+  fetch: handleRequest,
   // Daily: generate + reconcile, digest, cap. Mondays add the weekly recap.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(handleCron(env));

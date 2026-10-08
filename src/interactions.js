@@ -102,7 +102,7 @@ function mentionMap(spec) {
   return map;
 }
 
-export async function handleInteraction(interaction, env, ctx) {
+export async function handleInteraction(interaction, env, ctx, dispatch) {
   if (interaction.type === 1) return { type: 1 }; // PING -> PONG
   if (interaction.type === 3) return handleComponent(interaction, env); // button click
   if (interaction.type === 4) return autocompleteResponse(interaction, env); // option autocomplete
@@ -117,7 +117,7 @@ export async function handleInteraction(interaction, env, ctx) {
       case "chores":
         return choreCommand(interaction, env, ctx);
       case "admin":
-        return adminCommand(interaction, env, ctx);
+        return adminCommand(interaction, env, ctx, dispatch);
     }
   }
   return { type: 4, data: { content: "Unsupported command.", flags: EPHEMERAL } };
@@ -1058,21 +1058,18 @@ function choreHelp(recurringUrl) {
 // --- /admin -----------------------------------------------------------------
 // The keyed HTTP toolkit, reachable from Discord without looking up a key.
 //
-// These call the Worker's own endpoints rather than importing the handlers:
-// several (pin-dashboard, register-commands, capcheck) are written inline
-// against the Request object in index.js, and importing index.js from here
-// would be a circular import. Going back out over HTTP costs one subrequest and
-// reuses the exact code path the curl commands exercise, so the two can't
-// drift. Slash commands are Ed25519-verified and guild-gated, so the key never
-// leaves the Worker.
-async function callToolkit(env, path) {
-  const base = (env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
-  if (!base) return { error: "PUBLIC_BASE_URL isn't set." };
-  if (!env.CRON_KEY) return { error: "CRON_KEY isn't set." };
-  const sep = path.includes("?") ? "&" : "?";
-  const res = await fetch(`${base}${path}${sep}key=${encodeURIComponent(env.CRON_KEY)}`, {
-    cache: "no-store",
-  });
+// Routes run through `dispatch`, an in-process call into index.js's router
+// supplied by the interactions entrypoint. Several handlers (pin-dashboard,
+// register-commands, capcheck) are written inline against the Request object,
+// so importing them here would be a circular import — and a Worker cannot
+// fetch its own hostname either (Cloudflare error 1042), which ruled out the
+// obvious HTTP call. Dispatching internally reuses the exact code path the curl
+// commands exercise, with no second implementation to drift and no network hop.
+// Slash commands are Ed25519-verified and guild-gated, so the key never leaves
+// the Worker.
+async function callToolkit(dispatch, path) {
+  if (typeof dispatch !== "function") return { error: "No internal dispatcher available." };
+  const res = await dispatch(path);
   const body = (await res.text()).trim();
   try {
     return { ok: res.ok, status: res.status, json: JSON.parse(body) };
@@ -1084,7 +1081,7 @@ async function callToolkit(env, path) {
 const adminFail = (r) =>
   `⚠️ ${r.error || `Endpoint returned ${r.status}`}${r.text ? ` — ${r.text.slice(0, 180)}` : ""}`;
 
-async function adminCommand(interaction, env, ctx) {
+async function adminCommand(interaction, env, ctx, dispatch) {
   const sub = (interaction.data.options || [])[0];
   const name = sub?.name;
   const o = Object.fromEntries((sub?.options || []).map((x) => [x.name, x.value]));
@@ -1095,32 +1092,32 @@ async function adminCommand(interaction, env, ctx) {
     async () => {
       switch (name) {
         case "digest": {
-          const r = await callToolkit(env, "/digest");
+          const r = await callToolkit(dispatch, "/digest");
           if (!r.json) return adminFail(r);
           return r.json.posted
             ? `📣 Digest posted — **${r.json.count}** chore(s) in the window, ${r.json.actionable} actionable today.`
             : "Nothing due — no digest posted.";
         }
         case "recap": {
-          const r = await callToolkit(env, "/scoreboard");
+          const r = await callToolkit(dispatch, "/scoreboard");
           return r.ok ? "📊 Weekly recap posted." : adminFail(r);
         }
         case "dashboard": {
-          const r = await callToolkit(env, "/pin-dashboard");
+          const r = await callToolkit(dispatch, "/pin-dashboard");
           return r.ok ? "📌 Dashboard link posted and pinned." : adminFail(r);
         }
         case "cron": {
-          const r = await callToolkit(env, "/run-cron");
+          const r = await callToolkit(dispatch, "/run-cron");
           return r.ok
             ? "⚙️ Daily cron triggered — generation, digest, cap check and archive."
             : adminFail(r);
         }
         case "register": {
-          const r = await callToolkit(env, "/register-commands");
+          const r = await callToolkit(dispatch, "/register-commands");
           return r.ok ? "🔄 Slash commands re-registered with Discord." : adminFail(r);
         }
         case "botcheck": {
-          const r = await callToolkit(env, "/botcheck");
+          const r = await callToolkit(dispatch, "/botcheck");
           if (!r.json) return r.ok ? (r.text || "(no output)").slice(0, 600) : adminFail(r);
           // Only the scalar pass/fail bits — the full payload is a wall of JSON.
           const lines = Object.entries(r.json)
@@ -1129,7 +1126,7 @@ async function adminCommand(interaction, env, ctx) {
           return `🤖 **Bot check**\n${lines.join("\n").slice(0, 1500)}`;
         }
         case "cap": {
-          const r = await callToolkit(env, "/capcheck");
+          const r = await callToolkit(dispatch, "/capcheck");
           if (!r.json) return adminFail(r);
           const c = r.json.counted || {};
           const cap = r.json.freePlanCap || 250;
@@ -1147,7 +1144,7 @@ async function adminCommand(interaction, env, ctx) {
         }
         case "templates": {
           if (o.chore) {
-            const r = await callToolkit(env, `/describe?q=${encodeURIComponent(o.chore)}`);
+            const r = await callToolkit(dispatch, `/describe?q=${encodeURIComponent(o.chore)}`);
             if (!r.json) return adminFail(r);
             const t = r.json;
             if (t.error) return `No template matching "${o.chore}".`;
@@ -1167,7 +1164,7 @@ async function adminCommand(interaction, env, ctx) {
               `• next: ${(t.next || []).slice(0, 3).join(", ")}`
             );
           }
-          const r = await callToolkit(env, "/describe");
+          const r = await callToolkit(dispatch, "/describe");
           if (!r.json) return adminFail(r);
           const j = r.json;
           const survives = (j.survivesWhenMissed?.chores || []).map((c) => c.title);
@@ -1179,7 +1176,7 @@ async function adminCommand(interaction, env, ctx) {
           );
         }
         case "archive": {
-          const r = await callToolkit(env, o.confirm ? "/archive" : "/archive?dry=1");
+          const r = await callToolkit(dispatch, o.confirm ? "/archive" : "/archive?dry=1");
           if (!r.json) return adminFail(r);
           const j = r.json;
           const by = Object.entries(j.byState || {})
