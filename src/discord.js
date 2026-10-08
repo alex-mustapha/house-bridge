@@ -100,7 +100,7 @@ function mentionFor(name, mentionMap) {
 // Daily digest of today's + overdue chores, grouped by assignee — each person's
 // past-due work listed above what's due today. Owners are @-pinged in `content`
 // (mentions only notify from content, not the embed).
-export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = []) {
+export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [], anytime = []) {
   // Person-first: everything one person owns sits under their own heading, with
   // their past-due work called out above what's due today. A single flat
   // past-due list made it impossible to see your own share at a glance — you
@@ -159,6 +159,17 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
       );
     }
     sections.push(parts.join("\n"));
+  }
+
+  // Undated work, oldest first. Nothing else in the digest can surface these —
+  // every other list is keyed on a due date — so without this they're invisible
+  // until someone goes looking in Linear.
+  if (anytime.length) {
+    const lines = anytime.map((i) => {
+      const bits = [i.project, i.assignee, i.ageDays != null ? `${i.ageDays}d old` : null].filter(Boolean);
+      return `• [${i.title}](${i.url})${bits.length ? ` — ${bits.join(" · ")}` : ""}`;
+    });
+    sections.push(`🧺 **Anytime** — no due date, grab one if you've got a gap\n${lines.join("\n")}`);
   }
 
   // Legacy arg: unclaimed work due soon. Now normally empty because the digest

@@ -28,6 +28,7 @@ import {
   getTeamId,
   markChoreDone,
   cancelChore,
+  fetchUndatedActive,
   findActiveByTitle,
   assignIssue,
   getUsers,
@@ -109,6 +110,36 @@ async function unassignedDueSoon(env) {
     .map((i) => ({ title: i.title, url: i.url, dueDate: i.dueDate, id: i.id, teamId: i.team?.id }));
 }
 
+// The "Anytime" pool: open work carrying no due date, oldest first. Ranked by
+// age alone — deliberately no priority field to maintain, since the whole point
+// of this system is that scheduling lives in labels and directives rather than
+// in hand-tended Linear metadata.
+async function anytimePool(env, limit = 2) {
+  const recurring = env.RECURRING_PROJECT || "Recurring";
+  const today = localDate(new Date()).ymd;
+  const [ty, tm, td] = today.split("-").map(Number);
+  const rows = (await fetchUndatedActive(env, 50).catch((e) => {
+    console.error("anytime pool lookup failed:", e.message);
+    return [];
+  })).filter((i) => i.project?.name !== recurring);
+  return rows.slice(0, limit).map((i) => {
+    const c = i.createdAt ? new Date(i.createdAt) : null;
+    const ageDays = c
+      ? Math.max(
+          0,
+          Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(c.getUTCFullYear(), c.getUTCMonth(), c.getUTCDate())) / 86_400_000),
+        )
+      : null;
+    return {
+      title: i.title,
+      url: i.url,
+      project: i.project?.name || null,
+      assignee: i.assignee?.name || null,
+      ageDays,
+    };
+  });
+}
+
 // Today's chore status for a person (or the household if no user) — powers the
 // phone widget. `remaining` counts active, non-template chores due today/overdue.
 async function dayStatus(env, userName) {
@@ -168,6 +199,7 @@ async function dayStatus(env, userName) {
       streak,
       unassignedSoon,
       others,
+      anytime: await anytimePool(env, 2),
     };
   }
   const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
@@ -835,7 +867,7 @@ async function postDigest(env) {
     (i) => !(i.dueDate && i.dueDate > today && frequent.has((i.title || "").toLowerCase())),
   );
   const mentions = parseMentions(env.DISCORD_MENTIONS);
-  const msg = buildDigestMessage(shown, mentions, today, []);
+  const msg = buildDigestMessage(shown, mentions, today, [], await anytimePool(env, 2));
 
   // The dropdown stays scoped to what's actionable now — today, past due, and
   // any unassigned chore (claimable ahead of time). A select caps at 25

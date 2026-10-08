@@ -372,6 +372,37 @@ export async function getIssueByIdentifier(env, identifier) {
   return data.issues?.nodes?.[0] || null;
 }
 
+// Open work with NO due date — the "I've got a spare hour, what's going?" pool.
+// These are invisible everywhere else: every other query filters on a due date,
+// so an undated issue never reaches the digest or the widget and simply rots.
+// Oldest first, since age is the only ranking signal available without asking
+// anyone to maintain priorities by hand.
+export async function fetchUndatedActive(env, limit = 25) {
+  const n = Math.max(1, Math.min(100, limit));
+  const query = `
+    query Undated {
+      issues(
+        first: ${n}
+        orderBy: createdAt
+        filter: {
+          dueDate: { null: true }
+          state: { type: { nin: ["completed", "canceled", "backlog"] } }
+        }
+      ) {
+        nodes {
+          id identifier title url createdAt
+          project { name }
+          assignee { name }
+          team { id key }
+        }
+      }
+    }`;
+  const data = await linearQuery(env, query);
+  return (data.issues?.nodes || []).sort((a, b) =>
+    (a.createdAt || "").localeCompare(b.createdAt || ""),
+  );
+}
+
 // Chores due on/after `since`, for the weekly recap. Archived issues are
 // INCLUDED deliberately: the Monday cron sweeps last week's unfinished chores
 // (step 1) before the recap runs (step 4), so excluding archived meant the

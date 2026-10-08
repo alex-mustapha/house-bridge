@@ -205,6 +205,19 @@ export function renderWidgetPage(user, status) {
             grab(t) + '</li>'
           ).join("") + '</ul>';
       }
+      // Undated work, oldest first — the only place it surfaces on the phone.
+      const anytime = s.anytime || [];
+      if (anytime.length) {
+        html += '<div class="donehdr">🧺 Anytime · no due date</div>' +
+          '<ul class="donelist">' + anytime.map((t) => {
+            const meta = [t.project, t.assignee, t.ageDays != null ? t.ageDays + 'd old' : null]
+              .filter(Boolean).join(' · ');
+            return '<li><a class="open" href="' + esc(t.url || LINEAR_URL) + '">' +
+              '<span class="dot"></span><span class="t">' + esc(t.title) + '</span>' +
+              (meta ? '<span class="chev">' + esc(meta) + '</span>' : '') + '</a>' +
+              grab(t) + '</li>';
+          }).join("") + '</ul>';
+      }
       if (unassigned.length) {
         html += '<div class="donehdr">🙋 Up for grabs · ' + unassigned.length + '</div>' +
           '<ul class="donelist">' + unassigned.map((t) =>

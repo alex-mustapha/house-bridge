@@ -293,6 +293,11 @@ only your own. Ownership is matched by Linear **user id**, not name.
     `WEEK_LOOKAHEAD_DAYS` (default 14).
   An *Unassigned* block carries the same structure; its upcoming list is
   labelled **"up for grabs"** so spare-time work is visible.
+- **🧺 Anytime** — the two oldest **undated** open issues, with project, owner
+  and age. Every other list in the system is keyed on a due date, so undated
+  work is otherwise invisible until someone goes looking in Linear. Ranked by
+  age alone: no priority field to hand-maintain. Appears in the digest and the
+  widget; Recurring templates and backlog items are excluded.
 - **Routine chores are filtered out of Upcoming.** Anything recurring as often
   as `PREVIEW_HIDE_CADENCES` (default `daily,weekly`) is hidden from the
   forward view — previewing *Cook Dinner* for Wed/Fri/Mon tells you nothing and
