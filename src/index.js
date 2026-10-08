@@ -47,6 +47,7 @@ import { frequentChoreTitles, runWeek, forceReplace, localDate, annotateTemplate
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
+import { recordLeisure } from "./leisure.js";
 import { COMMANDS } from "./commands.js";
 import { renderDashboardPage } from "./dashboardpage.js";
 import { buildICS } from "./calendar.js";
@@ -483,6 +484,25 @@ async function handleRequest(request, env, ctx) {
       if (!match) return new Response("missing ?match=<text>\n", { status: 400 });
       const { ok, message } = await markChoreDone(env, match);
       return new Response(message + "\n", { status: ok ? 200 : 404 });
+    }
+    if (url.pathname === "/leisure") {
+      // Widget button: log that this person is starting their own time.
+      // Shares recordLeisure with `/chores leisure`, so both write the same row.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const who = url.searchParams.get("user");
+      if (!who) return new Response("need ?user=<name>\n", { status: 400 });
+      const u = (await getUsers(env)).find((x) =>
+        [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(who.toLowerCase())),
+      );
+      if (!u) return new Response(`No Linear user matching "${who}"\n`, { status: 404 });
+      const r = await recordLeisure(env, {
+        userId: u.id,
+        person: u.name || u.displayName,
+        note: url.searchParams.get("note"),
+      });
+      return new Response(JSON.stringify(r), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
     if (url.pathname === "/claim") {
       // Take a chore onto your own plate — powers the widget's 🙋 on the other

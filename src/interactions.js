@@ -33,7 +33,7 @@ import {
 import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, reshuffleWindow, coverUserPause } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
-import { logLeisure, queryLeisure } from "./db.js";
+import { recordLeisure } from "./leisure.js";
 
 const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -666,87 +666,50 @@ async function choreCommand(interaction, env, ctx) {
       return { type: 5, data: { flags: EPHEMERAL } }; // deferred ephemeral reply
     }
     case "leisure": {
-      // Private by construction: deferred EPHEMERAL, so only the caller ever
-      // sees it and nothing lands in the shared channel. Logged per person.
+      // Private by construction: deferred EPHEMERAL, so only the caller sees it
+      // and nothing lands in the shared channel. The recording itself lives in
+      // leisure.js so the widget button writes identical rows.
       return deferAndRun(
         interaction,
         ctx,
         async () => {
           const meId = await resolveCaller(env, interaction);
           if (!meId) return "Couldn't match you to a Linear user.";
-          const users = await getUsers(env);
-          const me = users.find((u) => u.id === meId);
-          const person = me?.name || me?.displayName || "unknown";
-
-          const now = new Date();
-          const L = localDate(now);
-          const today = L.ymd;
-          const recurring = env.RECURRING_PROJECT || "Recurring";
-          // Everything of yours still open and due today or earlier. Overdue is
-          // counted separately: a months-old one-off shouldn't make a clear
-          // slate permanently unreachable, so "clear" means today's work is
-          // done, with the overdue count reported alongside.
-          const open = (await fetchAssignedActiveIssues(env, meId)).filter(
-            (i) => i.project?.name !== recurring && i.dueDate && i.dueDate <= today,
-          );
-          const dueToday = open.filter((i) => i.dueDate === today);
-          const overdue = open.filter((i) => i.dueDate < today);
-          const doneToday = (await fetchRecentCompletedAssigned(env, meId)).filter(
-            (i) =>
-              i.project?.name !== recurring &&
-              i.completedAt &&
-              localDate(new Date(i.completedAt)).ymd === today,
-          );
-          const total = dueToday.length + doneToday.length;
-          const clear = dueToday.length === 0;
-
-          const logged = await logLeisure(env, {
-            person,
-            startedAt: now.toISOString(),
-            localDate: today,
-            // localDate() carries no clock time, so format the Eastern hour
-            // directly — the start time is the point of the record.
-            localTime: new Intl.DateTimeFormat("en-US", {
-              timeZone: "America/New_York",
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            }).format(now),
-            choresTotal: total,
-            choresDone: doneToday.length,
-            overdue: overdue.length,
-            clear,
-            source: "self",
+          const me = (await getUsers(env)).find((u) => u.id === meId);
+          const r = await recordLeisure(env, {
+            userId: meId,
+            person: me?.name || me?.displayName || "unknown",
             note: o.note || null,
           });
+          if (r.error) return r.error;
 
-          const hist = await queryLeisure(env, person, 30);
           const lines = [];
-          if (logged && !logged.created) {
-            // Already recorded today. The first start of the day is the one that
-            // counts, so report what's on record rather than overwriting it.
-            const r = logged.row || {};
+          if (!r.created) {
+            // Already recorded today — the first start of the day is the one
+            // that counts, so report it rather than overwriting.
+            const e = r.existing || {};
             lines.push(
-              `🎮 **Already logged today**${r.time ? ` at ${r.time}` : ""} — ` +
-                (r.clear ? "chores were clear ✅" : `${(r.total ?? 0) - (r.done ?? 0)} still due ⚠️`),
+              `🎮 **Already logged today**${e.time ? ` at ${e.time}` : ""} — ` +
+                (e.clear ? "chores were clear ✅" : `${(e.total ?? 0) - (e.done ?? 0)} still due ⚠️`),
               "_Only the first start of the day counts, so this won't change it._",
             );
           } else {
             lines.push(
-              clear
-                ? `🎮 Logged — **chores clear** ✅  (${doneToday.length} done today)`
-                : `🎮 Logged — **${dueToday.length} still due today** ⚠️`,
+              r.clear
+                ? `🎮 Logged — **chores clear** ✅  (${r.doneToday} done today)`
+                : `🎮 Logged — **${r.dueToday.length} still due today** ⚠️`,
             );
-            if (!clear) lines.push(dueToday.slice(0, 5).map((i) => `• ${i.title}`).join("\n"));
-            if (overdue.length) {
-              lines.push(`_(${overdue.length} older item${overdue.length === 1 ? "" : "s"} past due, not counted)_`);
+            if (!r.clear) lines.push(r.dueToday.slice(0, 5).map((t) => `• ${t}`).join("\n"));
+            if (r.overdue) {
+              lines.push(`_(${r.overdue} older item${r.overdue === 1 ? "" : "s"} past due, not counted)_`);
             }
           }
-          if (hist) {
+          const h = r.history;
+          if (h) {
             lines.push(
-              `\n📈 Last 30 days: **${hist.clear}/${hist.total}** day${hist.total === 1 ? "" : "s"} started clear` +
-                (hist.clearPct === null ? "" : ` (${hist.clearPct}%)`) +
-                (hist.streak ? ` · 🔥 ${hist.streak} day${hist.streak === 1 ? "" : "s"} in a row` : ""),
+              `\n📈 Last 30 days: **${h.clear}/${h.total}** day${h.total === 1 ? "" : "s"} started clear` +
+                (h.clearPct === null ? "" : ` (${h.clearPct}%)`) +
+                (h.streak ? ` · 🔥 ${h.streak} day${h.streak === 1 ? "" : "s"} in a row` : ""),
             );
           }
           return lines.join("\n");

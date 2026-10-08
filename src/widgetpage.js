@@ -76,6 +76,15 @@ export function renderWidgetPage(user, status) {
   li .open span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   li .dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.9); flex: none; }
   li .chev { margin-left: auto; opacity: .6; font-size: 18px; }
+  #leisurewrap { margin-top: 22px; }
+  .leisurebtn {
+    width: 100%; padding: 14px; border-radius: 14px; font-size: 16px; font-weight: 600;
+    border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.13);
+    color: #fff; cursor: pointer; -webkit-appearance: none;
+  }
+  .leisurebtn:active { background: rgba(255,255,255,.28); }
+  .leisurebtn:disabled { opacity: .6; }
+  .leisuremsg { margin-top: 8px; font-size: 13px; opacity: .85; text-align: center; }
   li .claim {
     flex: none; margin-left: 8px; width: 34px; height: 34px; align-self: center;
     border-radius: 10px; border: 1px solid rgba(255,255,255,.3);
@@ -123,6 +132,7 @@ export function renderWidgetPage(user, status) {
   <div class="streak" id="streak"></div>
   <ul id="list"></ul>
   <div id="unassignedwrap"></div>
+  <div id="leisurewrap"></div>
   <div id="donewrap"></div>
   <div class="foot" id="foot"></div>
 </div>
@@ -191,6 +201,7 @@ export function renderWidgetPage(user, status) {
     // you can pull something onto your own plate without leaving the page.
     const unassigned = s.unassignedSoon || [];
     const others = s.others || [];
+    renderLeisure(s);
     const uw = document.getElementById("unassignedwrap");
     if (uw) {
       const grab = (t) => KEY
@@ -292,6 +303,53 @@ export function renderWidgetPage(user, status) {
       setTimeout(() => { btn.textContent = glyph; }, 1500);
     }
   });
+
+  // "Starting my own time" — logs today's leisure start and whether the day's
+  // chores were already done. Only the FIRST press of the day is recorded, so
+  // pressing again just reports what's on file. Needs a key and a named user:
+  // the row is per person, and the keyless widget is read-only.
+  function renderLeisure(s) {
+    const wrap = document.getElementById("leisurewrap");
+    if (!wrap || !KEY || !USER) return;
+    if (wrap.dataset.done === "1") return; // already pressed this session
+    wrap.innerHTML =
+      '<button class="leisurebtn" id="leisurebtn">🎮 Starting my own time</button>' +
+      '<div class="leisuremsg" id="leisuremsg"></div>';
+    document.getElementById("leisurebtn").addEventListener("click", async () => {
+      const btn = document.getElementById("leisurebtn");
+      const msg = document.getElementById("leisuremsg");
+      btn.disabled = true;
+      msg.textContent = "logging…";
+      try {
+        const r = await fetch("/leisure?user=" + encodeURIComponent(USER) +
+          "&key=" + encodeURIComponent(KEY), { cache: "no-store" });
+        if (!r.ok) throw new Error(String(r.status));
+        const d = await r.json();
+        wrap.dataset.done = "1";
+        const h = d.history || {};
+        const tail = h.total
+          ? " · " + h.clear + "/" + h.total + " days clear" + (h.streak ? " · 🔥" + h.streak : "")
+          : "";
+        if (!d.created) {
+          const e = d.existing || {};
+          btn.textContent = "🎮 Already logged" + (e.time ? " at " + e.time : "");
+          msg.textContent = (e.clear ? "chores were clear ✅" : "chores were pending ⚠️") +
+            " — only the first start of the day counts" + tail;
+        } else if (d.clear) {
+          btn.textContent = "✅ Logged — chores clear";
+          msg.textContent = d.doneToday + " done today" +
+            (d.overdue ? " · " + d.overdue + " older item(s) past due, not counted" : "") + tail;
+        } else {
+          btn.textContent = "⚠️ Logged — " + d.dueToday.length + " still due";
+          msg.textContent = d.dueToday.slice(0, 3).join(" · ") + tail;
+        }
+      } catch (err) {
+        btn.disabled = false;
+        msg.textContent = "couldn't log that — try again";
+      }
+    });
+  }
+
   async function refresh() {
     try {
       const r = await fetch("/status" + (USER ? "?user=" + encodeURIComponent(USER) : ""), {cache: "no-store"});
