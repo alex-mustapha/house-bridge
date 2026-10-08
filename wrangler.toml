@@ -27,11 +27,12 @@ DUE_LOOKAHEAD_DAYS = "0"
 # nothing. Capped in practice by GEN_HORIZON_DAYS for recurring chores.
 WEEK_LOOKAHEAD_DAYS = "14"
 # Which cadences are treated as "routine" and hidden from the Upcoming list.
-# Add biweekly to also hide every-other-week chores (Mop, Litterbox, Mow lawn,
-# Change sheets, Nero bath, Nero nails) and leave only monthly-and-rarer plus
-# ad-hoc/project work. Kept separate from the on-miss cadence threshold on
-# purpose — this is a display choice, not a policy one.
-PREVIEW_HIDE_CADENCES = "daily,weekly"
+# Includes biweekly: every-other-week chores (Mop, Litterbox, Mow lawn, Change
+# sheets, Nero bath, Nero nails) come round often enough to be routine, so the
+# preview is left showing monthly-and-rarer plus ad-hoc/project work. Kept
+# separate from the on-miss cadence threshold on purpose — this is a display
+# choice, not a policy one.
+PREVIEW_HIDE_CADENCES = "daily,weekly,biweekly"
 # `every: N` chores with a period at or below this many days count as routine.
 PREVIEW_HIDE_INTERVAL_DAYS = "7"
 # Warn in #bot-log once active (non-archived) issues reach this count.
