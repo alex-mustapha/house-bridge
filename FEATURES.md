@@ -387,6 +387,11 @@ out of the shared surfaces.
 - **`/widget?user=<name>`** — a styled auto-refreshing page ("Add to Home Screen").
 - With `?key=` present the widget shows **✓** (done) and a quieter **✖** (not doing it)
   per chore. Both clear it; only ✓ counts as work completed.
+- The widget also lists **the other person's outstanding chores** and anything
+  **up for grabs**, so it can answer "is there something I could take off their
+  plate?" instead of going blank once your own list is clear. With `?key=`
+  present each of those carries a **🙋 take it** button that reassigns the chore
+  to you (via `/claim`) and refreshes.
 - **iOS Scriptable widget** (`scriptable-chores-widget.js`).
 - **Streak** = consecutive days where every chore due that day was completed
   (no-chore days bridge it; today-in-progress doesn't break it).
@@ -441,6 +446,7 @@ out of the shared surfaces.
 | `/replace?issue=CHO-12` | Archive + recreate an issue (rotates assignee) |
 | `/done?match=<text>` | Mark the best-matching chore done |
 | `/cancel?match=<text>` | Cancel the best-matching chore (cleared, **not** counted as done) |
+| `/claim?match=<text>&user=<name>` | Assign the best-matching chore to that person (powers the widget's 🙋) |
 | `/describe?q=<title>` | Diagnose what the engine parses for a template |
 | `/delcomment?issue=…&id=…` | Delete a bot-authored comment |
 | `/register-commands` | (Re)register slash commands with Discord |

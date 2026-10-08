@@ -76,6 +76,16 @@ export function renderWidgetPage(user, status) {
   li .open span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   li .dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.9); flex: none; }
   li .chev { margin-left: auto; opacity: .6; font-size: 18px; }
+  li .claim {
+    flex: none; margin-left: 8px; width: 34px; height: 34px; align-self: center;
+    border-radius: 10px; border: 1px solid rgba(255,255,255,.3);
+    background: rgba(255,255,255,.1); color: #fff; font-size: 15px; line-height: 1;
+    cursor: pointer; -webkit-appearance: none;
+  }
+  li .claim:active { background: rgba(255,255,255,.3); }
+  li .claim:disabled { opacity: .5; }
+  ul.donelist li { display: flex; align-items: center; }
+  ul.donelist li .open { flex: 1; min-width: 0; }
   li .done, li .cancel {
     flex: none; margin-left: 10px; width: 42px; height: 42px; border-radius: 12px;
     border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.16);
@@ -176,18 +186,35 @@ export function renderWidgetPage(user, status) {
           '</a>' + right + '</li>';
       }).join("");
     }
-    // "Unassigned this week" — unclaimed work due soon; tap to open in Linear.
+    // Anything else going: the other person's outstanding chores, then
+    // unclaimed work. Both get a 🙋 "take it" button when a key is present, so
+    // you can pull something onto your own plate without leaving the page.
     const unassigned = s.unassignedSoon || [];
+    const others = s.others || [];
     const uw = document.getElementById("unassignedwrap");
     if (uw) {
-      uw.innerHTML = unassigned.length
-        ? '<div class="donehdr">🙋 Unassigned this week · ' + unassigned.length + '</div>' +
+      const grab = (t) => KEY
+        ? '<button class="claim" data-title="' + esc(t.title) + '" aria-label="Take this chore">🙋</button>'
+        : '';
+      let html = "";
+      for (const o of others) {
+        html += '<div class="donehdr">' + esc(o.name) + " · " + o.tasks.length + ' left</div>' +
+          '<ul class="donelist">' + o.tasks.map((t) =>
+            '<li><a class="open" href="' + esc(t.url || LINEAR_URL) + '">' +
+            '<span class="dot"></span><span class="t">' + esc(t.title) + '</span></a>' +
+            grab(t) + '</li>'
+          ).join("") + '</ul>';
+      }
+      if (unassigned.length) {
+        html += '<div class="donehdr">🙋 Up for grabs · ' + unassigned.length + '</div>' +
           '<ul class="donelist">' + unassigned.map((t) =>
             '<li><a class="open" href="' + esc(t.url || LINEAR_URL) + '">' +
             '<span class="dot"></span><span class="t">' + esc(t.title) + '</span>' +
-            '<span class="chev">' + esc(fmtDue(t.dueDate)) + '</span></a></li>'
-          ).join("") + '</ul>'
-        : "";
+            '<span class="chev">' + esc(fmtDue(t.dueDate)) + '</span></a>' +
+            grab(t) + '</li>'
+          ).join("") + '</ul>';
+      }
+      uw.innerHTML = html;
     }
 
     // "Done today" section (tap an item to reopen it in Linear if mistaken).
@@ -209,6 +236,26 @@ export function renderWidgetPage(user, status) {
   // Resolve a chore via the keyed endpoints (event-delegated on the list).
   // ✓ -> /done (work completed), ✖ -> /cancel (decided not to do it). Both
   // clear it off the list; only the first counts as work done.
+  // 🙋 Take a chore that's someone else's or unassigned: reassigns it to the
+  // user this widget is for, then refreshes so it moves into your own list.
+  document.getElementById("unassignedwrap")?.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".claim");
+    if (!btn) return;
+    e.preventDefault();
+    btn.disabled = true;
+    try {
+      const r = await fetch("/claim?match=" + encodeURIComponent(btn.dataset.title) +
+        "&user=" + encodeURIComponent(USER) +
+        "&key=" + encodeURIComponent(KEY), { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      await refresh();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "!";
+      setTimeout(() => { btn.textContent = "🙋"; }, 1500);
+    }
+  });
+
   document.getElementById("list").addEventListener("click", async (e) => {
     const btn = e.target.closest(".done, .cancel");
     if (!btn) return;

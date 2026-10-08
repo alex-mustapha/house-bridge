@@ -28,6 +28,8 @@ import {
   getTeamId,
   markChoreDone,
   cancelChore,
+  findActiveByTitle,
+  assignIssue,
   getUsers,
   fetchAssignedActiveIssues,
   fetchRecentCompletedAssigned,
@@ -114,7 +116,8 @@ async function dayStatus(env, userName) {
   const recurring = env.RECURRING_PROJECT || "Recurring";
   const unassignedSoon = await unassignedDueSoon(env);
   if (userName) {
-    const u = (await getUsers(env)).find((x) =>
+    const users = await getUsers(env);
+    const u = users.find((x) =>
       [x.displayName, x.name].some(
         (n) =>
           (n || "").toLowerCase() === userName.toLowerCase() ||
@@ -140,7 +143,32 @@ async function dayStatus(env, userName) {
       .map((i) => ({ title: i.title, url: i.url }));
     const windowIssues = await fetchAssignedDueInWindow(env, u.id, ymdMinus(today, 59), today);
     const streak = computeStreak(windowIssues, today, recurring);
-    return { done: items.length === 0, remaining: items.length, tasks, completed, streak, unassignedSoon };
+
+    // Everyone else's outstanding work, so the widget can answer "is there
+    // anything I could take off their plate?" rather than only showing your own
+    // list and going quiet the moment you're clear.
+    const others = [];
+    for (const raw of (env.ROTATION_MEMBERS || "").split(",").map((s) => s.trim()).filter(Boolean)) {
+      const other = users.find((x) =>
+        [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(raw.toLowerCase())),
+      );
+      if (!other || other.id === u.id) continue;
+      const theirs = (await fetchAssignedActiveIssues(env, other.id))
+        .filter((i) => i.project?.name !== recurring && i.dueDate && i.dueDate <= today)
+        .sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""))
+        .map((i) => ({ title: i.title, url: i.url, dueDate: i.dueDate }));
+      if (theirs.length) others.push({ name: other.name || other.displayName, tasks: theirs });
+    }
+
+    return {
+      done: items.length === 0,
+      remaining: items.length,
+      tasks,
+      completed,
+      streak,
+      unassignedSoon,
+      others,
+    };
   }
   const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
   const any = teamId ? await anyOpenDueByTeam(env, teamId, today) : false;
@@ -423,6 +451,29 @@ async function handleRequest(request, env, ctx) {
       if (!match) return new Response("missing ?match=<text>\n", { status: 400 });
       const { ok, message } = await markChoreDone(env, match);
       return new Response(message + "\n", { status: ok ? 200 : 404 });
+    }
+    if (url.pathname === "/claim") {
+      // Take a chore onto your own plate — powers the widget's 🙋 on the other
+      // person's work and on unclaimed chores.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const match = url.searchParams.get("match");
+      const who = url.searchParams.get("user");
+      if (!match || !who) return new Response("need ?match=<text>&user=<name>\n", { status: 400 });
+      const target = (await getUsers(env)).find((x) =>
+        [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(who.toLowerCase())),
+      );
+      if (!target) return new Response(`No Linear user matching "${who}"\n`, { status: 404 });
+      const hits = await findActiveByTitle(env, match, [
+        env.CHORES_PROJECT || "House Chores",
+        env.ADHOC_PROJECT || "Ad Hoc",
+      ]);
+      if (!hits.length) return new Response(`No active chore matching "${match}"\n`, { status: 404 });
+      hits.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
+      const res = await assignIssue(env, hits[0].id, target.id);
+      return new Response(
+        res?.success ? `Assigned "${hits[0].title}" to ${target.name || who}\n` : "Assign failed\n",
+        { status: res?.success ? 200 : 500 },
+      );
     }
     if (url.pathname === "/cancel") {
       // Drop a chore without claiming the work was done. Powers the widget's ✖
