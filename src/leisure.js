@@ -96,11 +96,16 @@ export async function recordLeisure(env, { userId, person, note, source = "self"
 // press always takes precedence, since logLeisure never overwrites an existing
 // row for the day.
 export async function autoLogLeisure(env) {
-  const members = (env.ROTATION_MEMBERS || "")
+  // Opt-in per person via LEISURE_PEOPLE. This is a personal habit tracker, not
+  // a household metric — auto-logging everyone in the rotation would file
+  // "missed" days against someone who never asked to be measured. Unset means
+  // nobody is tracked automatically; the slash command and widget button still
+  // work for anyone who deliberately uses them.
+  const members = (env.LEISURE_PEOPLE || "")
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
-  if (!members.length) return { logged: 0, skipped: 0 };
+  if (!members.length) return { logged: 0, skipped: 0, detail: ["LEISURE_PEOPLE not set"] };
   const users = await getUsers(env);
   let logged = 0;
   let skipped = 0;

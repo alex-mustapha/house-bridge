@@ -377,7 +377,11 @@ out of the shared surfaces.
   feature — not the panel, not the data, not even the script.
 - Shows clear-slate %, the current run of clear starts, a trend on the same
   buckets as the chore trend, and recent sessions.
-- **Every day gets a verdict, logged or not.** A second cron at **02:00 UTC**
+- **Opt-in per person** via `LEISURE_PEOPLE`. This is personal habit tracking,
+  not a household metric — the backstop never files a "missed" day against
+  someone who didn't ask to be measured. Unset means nobody is auto-logged; the
+  slash command and widget button remain available to anyone who uses them.
+- **Every day gets a verdict, logged or not** (for people in `LEISURE_PEOPLE`). A second cron at **02:00 UTC**
   (10pm EDT / 9pm EST the evening before) closes out the day for anyone who
   didn't press anything:
   - chores all done → **a win** (doing them came before leisure)

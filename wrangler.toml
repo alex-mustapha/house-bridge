@@ -48,6 +48,12 @@ RECURRING_PROJECT = "Recurring"
 # chores are authored as Linear templates rather than from Discord, so this
 # is where someone asking "how do I add a repeating chore?" needs to land.
 RECURRING_PROJECT_URL = "https://linear.app/alex-kristal/project/recurring-11976335748e/overview"
+# Who the end-of-day leisure backstop logs for. Personal habit tracking, so
+# it is opt-in by name rather than applying to everyone in the rotation —
+# auto-filing "missed" days against someone who never asked to be measured
+# would be both wrong and annoying. The slash command and widget button stay
+# available to anyone who chooses to use them.
+LEISURE_PEOPLE = "Alex"
 # How many days ahead to materialize chores (default 7). Larger = a one-time
 # fill; later weekly runs only add the new far days (dedup skips the rest).
 # Kept at two weeks: far enough to see what's coming, short enough that the
