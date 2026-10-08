@@ -12,7 +12,11 @@ account_id = "8b74b28235d1fb890e45422ca8edc2c7"
 # If you'd rather hold a steady 8am through winter, switch to "0 13 * * *"
 # when EST starts (early November) and back to "0 12 * * *" in March.
 [triggers]
-crons = ["0 12 * * *"]
+# 12:00 UTC = 8am EDT / 7am EST — the main daily run.
+# 02:00 UTC = 10pm EDT / 9pm EST the PREVIOUS evening — the leisure backstop,
+# which gives the day that is ending a verdict if nobody logged one. Computed
+# in Eastern, so it always lands on the correct calendar day either side of DST.
+crons = ["0 12 * * *", "0 2 * * *"]
 
 # Non-secret config. Secrets (API keys, webhook URLs) are set via
 # `wrangler secret put NAME` — see README.

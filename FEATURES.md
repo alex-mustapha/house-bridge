@@ -377,6 +377,21 @@ out of the shared surfaces.
   feature — not the panel, not the data, not even the script.
 - Shows clear-slate %, the current run of clear starts, a trend on the same
   buckets as the chore trend, and recent sessions.
+- **Every day gets a verdict, logged or not.** A second cron at **02:00 UTC**
+  (10pm EDT / 9pm EST the evening before) closes out the day for anyone who
+  didn't press anything:
+  - chores all done → **a win** (doing them came before leisure)
+  - chores outstanding → **a miss**
+  A manual press always wins — the log never overwrites an existing row for the
+  day. Without this an unlogged day vanished entirely (not a win, not a miss),
+  and the misses were exactly the ones most likely to go unlogged.
+- **Auto rows are timed by the last completion**, not by the cron: a day that
+  ended clear is stamped with the moment the list actually emptied, which is the
+  honest answer to "when did the evening start". A day that ended with work
+  outstanding gets no time, and the wind-down chart skips rows without one — so
+  the chart never shows an hour nobody chose. Auto rows are marked `· auto` in
+  the dashboard's recent list, and `/leisure-sweep?key=…` runs the same pass on
+  demand.
 - Rows carry a **`source`** column (`self` today) so an automatic writer —
   Discord presence, a console integration — can log the same shape later with no
   schema change or dashboard rework. Note that Discord presence covers PC, Xbox

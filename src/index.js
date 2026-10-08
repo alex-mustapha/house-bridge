@@ -47,7 +47,11 @@ import { frequentChoreTitles, runWeek, forceReplace, localDate, annotateTemplate
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
-import { recordLeisure } from "./leisure.js";
+import { recordLeisure, autoLogLeisure } from "./leisure.js";
+
+// The end-of-day leisure backstop runs on its own schedule; everything else
+// is the morning run. Keep in sync with `crons` in wrangler.toml.
+const LEISURE_CRON = "0 2 * * *";
 import { COMMANDS } from "./commands.js";
 import { renderDashboardPage } from "./dashboardpage.js";
 import { buildICS } from "./calendar.js";
@@ -485,6 +489,14 @@ async function handleRequest(request, env, ctx) {
       const { ok, message } = await markChoreDone(env, match);
       return new Response(message + "\n", { status: ok ? 200 : 404 });
     }
+    if (url.pathname === "/leisure-sweep") {
+      // Same thing the 10pm cron does — closes out today for anyone who didn't
+      // log. Exposed so it can be tested and re-run without waiting for night.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      return new Response(JSON.stringify(await autoLogLeisure(env), null, 2), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (url.pathname === "/leisure") {
       // Widget button: log that this person is starting their own time.
       // Shares recordLeisure with `/chores leisure`, so both write the same row.
@@ -651,8 +663,15 @@ async function handleRequest(request, env, ctx) {
 
 export default {
   fetch: handleRequest,
-  // Daily: generate + reconcile, digest, cap. Mondays add the weekly recap.
   async scheduled(event, env, ctx) {
+    // Two schedules. The late one (02:00 UTC = 10pm EDT the evening before)
+    // only closes the leisure log for the day that's ending; the morning one is
+    // the full daily run: generate + reconcile, digest, cap, archive, and the
+    // weekly recap on Mondays.
+    if (event?.cron === LEISURE_CRON) {
+      ctx.waitUntil(autoLogLeisure(env).catch((e) => console.error("auto leisure failed:", e)));
+      return;
+    }
     ctx.waitUntil(handleCron(env));
   },
 };

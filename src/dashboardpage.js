@@ -209,7 +209,8 @@ ${leisure ? `
     });
     document.getElementById("leisurelist").innerHTML = (LZ.recent || []).map(r =>
       '<li><span>' + r.date + (r.time ? ' ' + r.time : '') + '</span><span class="n">' +
-      (r.clear ? '✅ clear' : '⚠️ ' + (r.total - r.done) + ' left') + '</span></li>').join("")
+      (r.clear ? '✅ clear' : '⚠️ ' + (r.total - r.done) + ' left') +
+      (r.source && r.source !== 'self' ? ' · auto' : '') + '</span></li>').join("")
       || '<li class="empty">No sessions logged yet — run /chores leisure.</li>';
 
     // When the evening actually started. Dots are coloured by whether the
