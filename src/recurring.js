@@ -1184,6 +1184,38 @@ export function defaultOnMiss(c) {
   return "skip";
 }
 
+// Titles of chores that come round weekly or more often. The digest's "coming
+// up" preview hides these: listing Cook Dinner for Wed/Fri/Mon tells you
+// nothing you don't already know, and it buries the rare work the preview
+// exists for. Keyed on the same cadence threshold as defaultOnMiss — note it
+// uses the CADENCE, not the miss policy, so an explicit `on-miss` label on a
+// weekly chore doesn't accidentally promote it into the preview.
+export async function frequentChoreTitles(env) {
+  // Deliberately NOT reusing SWEEP_CADENCE: where the preview's boundary sits
+  // is a presentation choice, and tying it to the miss policy would mean you
+  // couldn't quiet the preview without also changing what gets swept. Add
+  // "biweekly" to also hide every-other-week chores.
+  const hide = new Set(
+    (env.PREVIEW_HIDE_CADENCES || "daily,weekly")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const maxDays = parseInt(env.PREVIEW_HIDE_INTERVAL_DAYS || "7", 10) || 7;
+  const out = new Set();
+  try {
+    for (const c of await buildDefs(env)) {
+      const frequent =
+        hide.has(c.cadence) ||
+        (c.cadence === "interval" && c.intervalDays && c.intervalDays <= maxDays);
+      if (frequent) out.add((c.title || "").toLowerCase());
+    }
+  } catch (e) {
+    console.error("frequentChoreTitles failed (preview will show everything):", e.message);
+  }
+  return out;
+}
+
 const CATCHUP_CADENCE = new Set(["monthly", "bimonthly", "semi-annually", "annually"]);
 // Monthly-or-rarer accumulate; that includes any month-interval (`every: Nm`)
 // and day/week intervals of ~a month or longer (`every: 5w` etc.).

@@ -40,7 +40,7 @@ import {
   fetchRecurringTemplates,
   fetchChoresForCalendar,
 } from "./linear.js";
-import { runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, describeAllTemplates, parseDuration, processExpiredPauses, choreCost } from "./recurring.js";
+import { frequentChoreTitles, runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, describeAllTemplates, parseDuration, processExpiredPauses, choreCost } from "./recurring.js";
 import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
@@ -756,17 +756,27 @@ async function postDigest(env) {
   // Pull the whole week in one query: the digest shows today + past due per
   // person, then the rest of the week per person underneath (unassigned work
   // included, so it can be picked up when someone has time).
-  const week = Math.max(0, parseInt(env.WEEK_LOOKAHEAD_DAYS || "7", 10) || 0);
-  const issues = await fetchDueIssues(env, week);
-  if (!issues.length) return { posted: false, count: 0 };
+  const week = Math.max(0, parseInt(env.WEEK_LOOKAHEAD_DAYS || "14", 10) || 0);
+  const all = await fetchDueIssues(env, week);
+  if (!all.length) return { posted: false, count: 0 };
+
+  // The preview is for work you could otherwise forget: ad-hoc tasks, project
+  // work, and chores that only come round every few months. Routine
+  // weekly-or-more-often chores are dropped from it — they're already in
+  // today's list on the day, and listing them ahead just buries the rest.
+  // Today and past due are untouched; this only filters the forward view.
+  const frequent = await frequentChoreTitles(env);
+  const shown = all.filter(
+    (i) => !(i.dueDate && i.dueDate > today && frequent.has((i.title || "").toLowerCase())),
+  );
   const mentions = parseMentions(env.DISCORD_MENTIONS);
-  const msg = buildDigestMessage(issues, mentions, today, []);
+  const msg = buildDigestMessage(shown, mentions, today, []);
 
   // The dropdown stays scoped to what's actionable now — today, past due, and
   // any unassigned chore (claimable ahead of time). A select caps at 25
   // options, so feeding it a full week would push the chores you actually need
   // today off the end of the list.
-  const actionable = issues.filter(
+  const actionable = all.filter(
     (i) => !i.dueDate || i.dueDate <= today || !i.assignee?.name,
   );
   // Bot-posted digest carries the actions dropdown; falls back to the webhook
@@ -779,9 +789,9 @@ async function postDigest(env) {
   } else if (env.DISCORD_WEBHOOK_DUE) {
     await postToDiscord(env.DISCORD_WEBHOOK_DUE, msg);
   } else {
-    return { posted: false, count: issues.length };
+    return { posted: false, count: all.length };
   }
-  return { posted: true, count: issues.length, actionable: actionable.length };
+  return { posted: true, count: all.length, shown: shown.length, actionable: actionable.length };
 }
 
 // Archive resolved chores older than CHORE_RETENTION_DAYS so the active count

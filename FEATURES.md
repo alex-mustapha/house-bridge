@@ -285,21 +285,22 @@ only your own. Ownership is matched by Linear **user id**, not name.
 
 ## Daily digest & actions dropdown
 
-- The daily cron posts the chore digest to the due channel, in two parts:
-  - **Today** — past due + due today, grouped by assignee (plus an *Unassigned*
-    group for unclaimed work due now).
-  - **🗓️ Later this week** — the next `WEEK_LOOKAHEAD_DAYS` (default 7), also
-    grouped by assignee, each line dated. **Unassigned work appears here as
-    "🙋 up for grabs"**, so spare-time work is visible instead of waiting until
-    it's due.
-  Keeping them separate keeps the morning read as "what do I do now", with the
-  week as context underneath rather than mixed in.
-- **@-mention counts cover today + past due only** — the week is context, not a
-  to-do list, and folding it in would inflate the number people glance at.
-- **The actions dropdown stays scoped to what's actionable now** (today, past
-  due, and any unassigned chore, claimable ahead of time). A select caps at 25
-  options, so feeding it the full week would push the chores you actually need
-  today off the end.
+- The daily cron posts the chore digest to the due channel as **one block per
+  person**, each with up to three parts:
+  - **⏰ Past due** — oldest first, with days late.
+  - **📅 Today** — what's due now.
+  - **🔜 Upcoming** — what's coming for them, dated, within
+    `WEEK_LOOKAHEAD_DAYS` (default 14).
+  An *Unassigned* block carries the same structure; its upcoming list is
+  labelled **"up for grabs"** so spare-time work is visible.
+- **Routine chores are filtered out of Upcoming.** Anything recurring as often
+  as `PREVIEW_HIDE_CADENCES` (default `daily,weekly`) is hidden from the
+  forward view — previewing *Cook Dinner* for Wed/Fri/Mon tells you nothing and
+  buries the rest. What's left is what you'd otherwise forget: **ad-hoc tasks,
+  project work, and chores that come round every few months.** Add `biweekly`
+  to also hide every-other-week chores. Today and past due are never filtered.
+  > This threshold is deliberately **separate** from the on-miss cadence rule,
+  > so quieting the preview doesn't change what the sweep archives.
 - **⏰ Past due** is its own section at the top, oldest first, showing how many
   days late each chore is and who owns it. Chores are allowed to slip — the
   point is that slipping stays *visible daily*, instead of being noticed only

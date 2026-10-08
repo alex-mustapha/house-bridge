@@ -125,11 +125,13 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
     a === "Unassigned" ? 1 : b === "Unassigned" ? -1 : a.localeCompare(b),
   );
 
-  // SECTION 1 — what's on the plate right now: past due + today, per person.
+  // One block per person: past due, today, then what's coming for them. Keeping
+  // upcoming inside the person's own block means you read your whole picture in
+  // one place instead of scrolling to a separate list and re-finding your name.
   const sections = [];
   for (const name of names) {
-    const { overdue, todayish } = groups.get(name);
-    if (!overdue.length && !todayish.length) continue; // nothing today; they'll appear below
+    const { overdue, todayish, week } = groups.get(name);
+    if (!overdue.length && !todayish.length && !week.length) continue;
     const parts = [`**${name}**`];
     if (overdue.length) {
       const od = [...overdue]
@@ -141,29 +143,22 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
       parts.push(`⏰ *Past due (${overdue.length})*`, ...od);
     }
     if (todayish.length) {
-      // Only label "today" when there's also past-due work above it to separate.
-      if (overdue.length) parts.push("📅 *Today*");
+      // Label "today" only when another group sits alongside it to separate from.
+      if (overdue.length || week.length) parts.push("📅 *Today*");
       parts.push(...todayish.map((i) => `• [${i.title}](${i.url})`));
     }
-    sections.push(parts.join("\n"));
-  }
-
-  // SECTION 2 — the rest of the week, same per-person split. Kept separate from
-  // today's list so the morning read stays "what do I do now", with the week as
-  // context underneath rather than mixed in.
-  const weekNames = names.filter((n) => groups.get(n).week.length);
-  if (weekNames.length) {
-    const block = ["🗓️ **Later this week**"];
-    for (const name of weekNames) {
-      const items = [...groups.get(name).week].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-      // Unassigned work is the point of including the week — flag it as grabbable.
-      const heading = name === "Unassigned" ? "__🙋 Unassigned — up for grabs__" : `__${name}__`;
-      block.push(
-        heading,
-        ...items.map((i) => `• ${fmtDue(i.dueDate)} — [${i.title}](${i.url})`),
+    if (week.length) {
+      // Routine weekly chores are filtered out upstream, so what lands here is
+      // the stuff worth a heads-up: ad-hoc, project work, and chores that come
+      // round every few months.
+      parts.push(
+        name === "Unassigned" ? "🔜 *Upcoming — up for grabs*" : "🔜 *Upcoming*",
+        ...[...week]
+          .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+          .map((i) => `• ${fmtDue(i.dueDate)} — [${i.title}](${i.url})`),
       );
     }
-    sections.push(block.join("\n"));
+    sections.push(parts.join("\n"));
   }
 
   // Legacy arg: unclaimed work due soon. Now normally empty because the digest
