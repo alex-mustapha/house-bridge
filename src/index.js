@@ -22,6 +22,7 @@ import { logChores, queryStats, queryDashboard, queryLeisure } from "./db.js";
 import {
   fetchDueIssues,
   fetchActiveIssueCount,
+  fetchActiveBreakdown,
   anyOpenDueByTeam,
   fetchChoreHistory,
   getTeamId,
@@ -221,6 +222,60 @@ export default {
       if (!issue) return new Response("missing ?issue=<ID>\n", { status: 400 });
       ctx.waitUntil(forceReplace(env, issue));
       return new Response(`replacing ${issue}\n`, { status: 200 });
+    }
+    if (url.pathname === "/capcheck") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      // Where the free-plan cap is going, and which lever to pull: future
+      // chores (GEN_HORIZON_DAYS), completed-but-unarchived ones
+      // (CHORE_RETENTION_DAYS), or work that isn't chores at all.
+      const { rows, capped } = await fetchActiveBreakdown(env);
+      const today = localDate(new Date()).ymd;
+      const b = { total: rows.length, open: 0, completed: 0, canceled: 0, future: 0, pastDue: 0, undated: 0 };
+      const byProject = {};
+      const futureByWeek = {};
+      for (const r of rows) {
+        const t = r.state?.type;
+        const proj = r.project?.name || "(no project)";
+        (byProject[proj] ||= { total: 0, open: 0, completed: 0 }).total++;
+        if (t === "completed") { b.completed++; byProject[proj].completed++; }
+        else if (t === "canceled") b.canceled++;
+        else {
+          b.open++;
+          byProject[proj].open++;
+          if (!r.dueDate) b.undated++;
+          else if (r.dueDate > today) {
+            b.future++;
+            const wk = Math.floor(
+              (Date.UTC(...r.dueDate.split("-").map((n, i) => (i === 1 ? +n - 1 : +n))) -
+                Date.UTC(...today.split("-").map((n, i) => (i === 1 ? +n - 1 : +n)))) /
+                86_400_000 / 7,
+            );
+            futureByWeek[`+${wk}w`] = (futureByWeek[`+${wk}w`] || 0) + 1;
+          } else if (r.dueDate < today) b.pastDue++;
+        }
+      }
+      return new Response(
+        JSON.stringify(
+          {
+            capWarnAt: parseInt(env.CAP_WARN_AT || "220", 10),
+            freePlanCap: 250,
+            counted: b,
+            truncated: capped,
+            levers: {
+              GEN_HORIZON_DAYS: env.GEN_HORIZON_DAYS || "7 (default)",
+              CHORE_RETENTION_DAYS: env.CHORE_RETENTION_DAYS || "30 (default)",
+              ARCHIVE_MAX: env.ARCHIVE_MAX || "30 (default)",
+            },
+            futureOpenByWeek: futureByWeek,
+            byProject: Object.fromEntries(
+              Object.entries(byProject).sort((x, y) => y[1].total - x[1].total),
+            ),
+          },
+          null,
+          2,
+        ),
+        { headers: { "Content-Type": "application/json" } },
+      );
     }
     if (url.pathname === "/digest") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });

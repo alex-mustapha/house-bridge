@@ -61,6 +61,36 @@ export async function fetchDueIssues(env) {
 // Counts active (non-archived) issues — the figure that matters for the free
 // plan's 250 cap. Linear's `issues` query excludes archived issues by default.
 // Pages until exhausted or `hardCap` is reached so we never loop unbounded.
+// What's actually consuming Linear's free-plan active-issue cap, broken down by
+// project and state. Linear's `issues` query excludes archived by default, so
+// this counts exactly what the 250 limit counts — including COMPLETED issues
+// that haven't been archived yet, which are easy to forget and often the
+// biggest single bucket.
+export async function fetchActiveBreakdown(env, hardCap = 600) {
+  const rows = [];
+  let after = null;
+  let hasNext = true;
+  while (hasNext && rows.length < hardCap) {
+    const query = `
+      query Breakdown($after: String) {
+        issues(first: 100, after: $after) {
+          nodes {
+            identifier dueDate completedAt
+            state { type }
+            project { name }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`;
+    const data = await linearQuery(env, query, { after });
+    const conn = data.issues;
+    rows.push(...(conn?.nodes || []));
+    hasNext = !!conn?.pageInfo?.hasNextPage;
+    after = conn?.pageInfo?.endCursor;
+  }
+  return { rows, capped: hasNext };
+}
+
 export async function fetchActiveIssueCount(env, hardCap = 500) {
   let count = 0;
   let after = null;

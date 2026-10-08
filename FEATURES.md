@@ -418,6 +418,7 @@ out of the shared surfaces.
 | `/delcomment?issue=…&id=…` | Delete a bot-authored comment |
 | `/register-commands` | (Re)register slash commands with Discord |
 | `/pin-dashboard` | Post + pin the dashboard link in #recap |
+| `/capcheck` | Breakdown of what's consuming Linear's free-plan active-issue cap |
 | `/botcheck` | Diagnose the bot token / channel for the digest |
 
 **Keyless (read-only, non-sensitive):** `/status`, `/widget`, `/dashboard`,
