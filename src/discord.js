@@ -350,7 +350,7 @@ export function buildDigestMenu(issues, soon = []) {
 
   return [
     row("actions-menu", "✅ Mark done…", dones),
-    row("claim-menu", "🙋 Take over a chore…", takeovers),
+    row("claim-menu", "🙋 Claim a chore (unassigned or take over)…", takeovers),
     row("cancel-menu", "❌ Not doing it… (skip without counting as done)", cancels),
   ].filter(Boolean);
 }

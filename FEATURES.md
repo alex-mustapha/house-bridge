@@ -338,15 +338,15 @@ only your own. Ownership is matched by Linear **user id**, not name.
 - A second dropdown, **"Not doing it…"**, cancels a chore instead: it clears off the
   list but is recorded as **canceled**, not done. Separate menu rather than extra rows
   in the first one — a select caps at 25 options and a busy day would overflow.
-- **Three dropdowns, one job each:** **✅ Mark done…**, **🙋 Take over a
-  chore…**, **❌ Not doing it…**. All claiming lives in the middle row —
+- **Three dropdowns, one job each:** **✅ Mark done…**, **🙋 Claim a chore…**, **❌ Not doing it…**. All claiming lives in the middle row —
   unclaimed work *and* chores currently assigned to someone — so picking
   something up is always in the same place rather than depending on whether
   anyone happened to own it. A select's options are fixed when the message
   posts, so one list serves both people; the handler assigns to whoever
   clicked. Rows appear independently, so a day of only unassigned work still
-  gets a claim row. Claiming something **promotes it into Mark done** on the
-  same message, so you can tick it off without waiting for tomorrow's digest.
+  gets a claim row. Claiming only **assigns** — it never completes anything. It does add a
+  `✓` entry to **Mark done** on the same message, so the chore can be ticked
+  off later without waiting for tomorrow's digest.
 - **Claiming always announces in the due channel**, wherever it happened —
   digest dropdown, `/chores claim` in any channel, or the widget's 🙋. Taking
   someone's chore @-mentions them (`🙋 **Kristal** claimed **X** from @Alex`);
