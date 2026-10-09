@@ -109,8 +109,6 @@ export function renderWidgetPage(user, status) {
   }
   li .claim:active { background: rgba(255,255,255,.3); }
   li .claim:disabled { opacity: .5; }
-  ul.donelist li { display: flex; align-items: center; }
-  ul.donelist li .open { flex: 1; min-width: 0; }
   li .done, li .cancel {
     flex: none; margin-left: 10px; width: 42px; height: 42px; border-radius: 12px;
     border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.16);
@@ -129,6 +127,12 @@ export function renderWidgetPage(user, status) {
   .empty { margin-top: 28px; font-size: 18px; opacity: .92; }
   .donehdr { margin: 22px 0 2px; font-size: 12px; letter-spacing: .04em;
     text-transform: uppercase; opacity: .75; }
+  /* Secondary lists of ACTIVE work — the other person's chores, up-for-grabs,
+     Anytime. Same compact layout as the done list, but emphatically NOT struck
+     through: these are outstanding, and donelist's line-through made them read
+     as already finished. */
+  ul.sublist li { display: flex; align-items: center; }
+  ul.sublist li a { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
   ul.donelist li a { opacity: .7; }
   ul.donelist li a .t { text-decoration: line-through; }
   ul.donelist li .check { color: #fff; opacity: .85; flex: none; }
@@ -240,7 +244,7 @@ export function renderWidgetPage(user, status) {
       let html = "";
       for (const o of others) {
         html += '<div class="donehdr">' + esc(o.name) + " · " + o.tasks.length + ' left</div>' +
-          '<ul class="donelist">' + o.tasks.map((t) =>
+          '<ul class="sublist">' + o.tasks.map((t) =>
             '<li><a class="open" href="' + esc(t.url || LINEAR_URL) + '">' +
             '<span class="dot"></span><span class="t">' + esc(t.title) + '</span></a>' +
             grab(t) + '</li>'
@@ -250,7 +254,7 @@ export function renderWidgetPage(user, status) {
       const anytime = s.anytime || [];
       if (anytime.length) {
         html += '<div class="donehdr">🧺 Anytime · no due date</div>' +
-          '<ul class="donelist">' + anytime.map((t) => {
+          '<ul class="sublist">' + anytime.map((t) => {
             const meta = [t.project, t.assignee, t.ageDays != null ? t.ageDays + 'd old' : null]
               .filter(Boolean).join(' · ');
             return '<li><a class="open" href="' + esc(t.url || LINEAR_URL) + '">' +
@@ -261,7 +265,7 @@ export function renderWidgetPage(user, status) {
       }
       if (unassigned.length) {
         html += '<div class="donehdr">🙋 Up for grabs · ' + unassigned.length + '</div>' +
-          '<ul class="donelist">' + unassigned.map((t) =>
+          '<ul class="sublist">' + unassigned.map((t) =>
             '<li><a class="open" href="' + esc(t.url || LINEAR_URL) + '">' +
             '<span class="dot"></span><span class="t">' + esc(t.title) + '</span>' +
             '<span class="chev">' + esc(fmtDue(t.dueDate)) + '</span></a>' +
