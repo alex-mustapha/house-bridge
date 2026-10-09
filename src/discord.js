@@ -283,105 +283,78 @@ function fmtDue(ymd) {
 // one (assigns it to whoever picked it). Option values encode action:id:team.
 // Requires the digest to be posted by the bot (not a webhook).
 export function buildDigestMenu(issues, soon = []) {
-  const options = [];
-  // "Not doing it" is a different outcome from "did it" — without it the only
-  // way to clear a chore was to mark it done, which overstates the work
-  // actually completed. It lives in its OWN menu rather than doubling the
-  // length of the primary one: a select caps at 25 options, and a busy day with
-  // 14 chores would otherwise overflow and silently drop the last few.
-  const cancels = [];
+  // Three rows, one job each. Claiming used to be split — unassigned work in
+  // the "mark done" row, taking over someone else's in its own — which meant
+  // picking something up lived in two different places depending on whether
+  // anyone happened to own it. All claiming is now in one row.
+  const dones = [];
   const takeovers = [];
+  const cancels = [];
+
   for (const i of issues) {
+    const team = i.team?.id || "";
     if (i.assignee?.name) {
-      options.push({
+      dones.push({
         label: `✓ ${i.title}`.slice(0, 100),
-        value: `done:${i.id}:${i.team?.id || ""}`,
+        value: `done:${i.id}:${team}`,
         description: `${i.assignee.name}${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
       });
       cancels.push({
         label: `✖ ${i.title}`.slice(0, 100),
-        value: `cancel:${i.id}:${i.team?.id || ""}`,
+        value: `cancel:${i.id}:${team}`,
         description: `won't count as done${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
       });
-      // Taking over someone else's chore. The widget has had a 🙋 on the other
-      // person's work for a while; without this the digest could only claim
-      // work nobody owned, so whoever lives in the digest couldn't offer to
-      // pick up their partner's. Listed for everyone because a select's
-      // options are fixed when the message is posted — the handler assigns to
-      // whoever actually clicked, so one list serves both people.
+      // Options are fixed when the message is posted, so one list serves both
+      // people — the handler assigns to whoever actually clicked.
       takeovers.push({
         label: `🙋 ${i.title}`.slice(0, 100),
-        value: `claim:${i.id}:${i.team?.id || ""}`,
+        value: `claim:${i.id}:${team}`,
         description: `currently ${i.assignee.name} — take it on`.slice(0, 100),
       });
     } else {
-      options.push({
+      takeovers.push({
         label: `🙋 ${i.title}`.slice(0, 100),
-        value: `claim:${i.id}:${i.team?.id || ""}`,
+        value: `claim:${i.id}:${team}`,
         description: `unassigned${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
       });
     }
   }
+  // Unclaimed work due later in the week — grabbable ahead of time.
   for (const i of soon) {
-    options.push({
+    takeovers.push({
       label: `🙋 ${i.title}`.slice(0, 100),
       value: `claim:${i.id}:${i.teamId || ""}`,
       description: `unassigned${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
     });
   }
-  const opts = options.slice(0, 25);
-  if (!opts.length) return [];
-  const rows = [
-    {
+
+  // Each row stands alone: a day with only unassigned work still gets a claim
+  // row even though there's nothing to mark done.
+  const row = (id, placeholder, opts) => {
+    const o = opts.slice(0, 25);
+    if (!o.length) return null;
+    return {
       type: 1,
       components: [
         {
           type: 3,
-          custom_id: "actions-menu",
-          placeholder: "Mark done · claim a chore…",
+          custom_id: id,
+          placeholder,
           min_values: 1,
-          max_values: Math.min(opts.length, 25),
-          options: opts,
+          max_values: Math.min(o.length, 25),
+          options: o,
         },
       ],
-    },
-  ];
-  const tops = takeovers.slice(0, 25);
-  if (tops.length) {
-    rows.push({
-      type: 1,
-      components: [
-        {
-          type: 3,
-          custom_id: "claim-menu",
-          placeholder: "🙋 Take over a chore…",
-          min_values: 1,
-          max_values: Math.min(tops.length, 25),
-          options: tops,
-        },
-      ],
-    });
-  }
-  const cops = cancels.slice(0, 25);
-  if (cops.length) {
-    rows.push({
-      type: 1,
-      components: [
-        {
-          type: 3,
-          custom_id: "cancel-menu",
-          placeholder: "Not doing it… (skip without counting as done)",
-          min_values: 1,
-          max_values: Math.min(cops.length, 25),
-          options: cops,
-        },
-      ],
-    });
-  }
-  return rows;
+    };
+  };
+
+  return [
+    row("actions-menu", "✅ Mark done…", dones),
+    row("claim-menu", "🙋 Take over a chore…", takeovers),
+    row("cancel-menu", "❌ Not doing it… (skip without counting as done)", cancels),
+  ].filter(Boolean);
 }
 
-// Post a message as the bot (Bot token) so it can carry interactive buttons.
 export async function postViaBot(env, channelId, payload) {
   const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
     method: "POST",

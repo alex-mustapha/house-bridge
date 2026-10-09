@@ -196,8 +196,26 @@ async function handleComponent(interaction, env) {
       }
     }
 
-    // Rebuild: drop completed options; turn claimed ones into "done" options.
+    // Rebuild. Claiming now happens in its own row, so a chore picked up there
+    // has to be PROMOTED into the "mark done" row — otherwise you'd take
+    // something on and then have no way to tick it off from the same message.
     const msg = interaction.message || {};
+    const promoted = [];
+    for (const row of msg.components || []) {
+      for (const c of row.components || []) {
+        if (c.type !== 3 || c.custom_id !== "claim-menu") continue;
+        for (const o of c.options || []) {
+          if (!claimed.has(o.value)) continue;
+          const [, id, team] = o.value.split(":");
+          promoted.push({
+            label: o.label.replace(/^🙋\s*/, "✓ "),
+            value: `done:${id}:${team || ""}`,
+            description: "just claimed by you",
+          });
+        }
+      }
+    }
+    let promotedPlaced = false;
     const components = (msg.components || [])
       .map((row) => ({
         ...row,
@@ -218,14 +236,13 @@ async function handleComponent(interaction, env) {
               // pruning silently no-ops on an older digest.
               const legacyRow = c.custom_id === "done-menu";
               const optId = (v) => v.split(":")[legacyRow ? 0 : 1];
-              const opts = (c.options || [])
+              let opts = (c.options || [])
                 .filter((o) => !resolvedIds.has(optId(o.value)))
-                .filter((o) => !(isClaimRow && claimed.has(o.value)))
-                .map((o) => {
-                  if (isClaimRow || !claimed.has(o.value)) return o;
-                  const [, id, team] = o.value.split(":");
-                  return { label: o.label.replace(/^🙋\s*/, "✓ "), value: `done:${id}:${team || ""}`, description: o.description };
-                });
+                .filter((o) => !(isClaimRow && claimed.has(o.value)));
+              if (rowId === "actions-menu" && promoted.length && !promotedPlaced) {
+                opts = [...opts, ...promoted].slice(0, 25);
+                promotedPlaced = true;
+              }
               return opts.length
                 ? { ...c, custom_id: rowId, options: opts, max_values: Math.min(opts.length, 25) }
                 : null;
@@ -235,6 +252,24 @@ async function handleComponent(interaction, env) {
           .filter(Boolean),
       }))
       .filter((row) => (row.components || []).length);
+
+    // Nothing was assigned when the digest posted, so there was no "mark done"
+    // row to promote into — add one.
+    if (promoted.length && !promotedPlaced) {
+      components.unshift({
+        type: 1,
+        components: [
+          {
+            type: 3,
+            custom_id: "actions-menu",
+            placeholder: "✅ Mark done…",
+            min_values: 1,
+            max_values: Math.min(promoted.length, 25),
+            options: promoted.slice(0, 25),
+          },
+        ],
+      });
+    }
     return {
       type: 7,
       data: { content: msg.content || "", embeds: msg.embeds || [], components, allowed_mentions: { parse: [] } },
