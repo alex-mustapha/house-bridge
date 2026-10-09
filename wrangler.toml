@@ -23,12 +23,13 @@ crons = ["0 12 * * *", "0 2 * * *"]
 [vars]
 # How many days ahead the daily digest looks. 0 = only today + overdue.
 DUE_LOOKAHEAD_DAYS = "0"
-# How far ahead the digest's per-person "Upcoming" list looks. Routine chores
-# that recur weekly or more often are filtered OUT of it — they're already in
-# today's list on the day, and previewing them buries everything else. What
-# shows is ad-hoc tasks, project work, and chores that come round every few
-# months. 14 days because that work is sparse; a 7-day window often showed
-# nothing. Capped in practice by GEN_HORIZON_DAYS for recurring chores.
+# Ceiling on the digest's per-person "Upcoming" list. The window itself ends
+# at the end of the CURRENT calendar week (Mon-Sun), so Monday shows Mon-Sun
+# and Sunday shows only Sunday — a rolling 7 days would put next Monday's
+# chores in front of you on the quietest day of the week. Set this lower to
+# see less than the rest of the week; it can never show more.
+# Routine chores (PREVIEW_HIDE_CADENCES) are filtered out of Upcoming
+# regardless, so what shows is ad-hoc, project, and monthly-or-rarer work.
 WEEK_LOOKAHEAD_DAYS = "14"
 # Which cadences are treated as "routine" and hidden from the Upcoming list.
 # Includes biweekly: every-other-week chores (Mop, Litterbox, Mow lawn, Change

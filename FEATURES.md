@@ -289,8 +289,12 @@ only your own. Ownership is matched by Linear **user id**, not name.
   person**, each with up to three parts:
   - **⏰ Past due** — oldest first, with days late.
   - **📅 Today** — what's due now.
-  - **🔜 Upcoming** — what's coming for them, dated, within
-    `WEEK_LOOKAHEAD_DAYS` (default 14).
+  - **🔜 Upcoming** — what's coming for them, dated, to the **end of the
+    current calendar week** (Mon–Sun). Monday shows Mon–Sun, Friday shows
+    Fri–Sun, Sunday shows only Sunday. A rolling 7-day window put next
+    Monday's chores in front of you on the quietest day of the week and
+    blurred where one week ended and the next began. `WEEK_LOOKAHEAD_DAYS`
+    is a ceiling on this, not the window itself.
   An *Unassigned* block carries the same structure; its upcoming list is
   labelled **"up for grabs"** so spare-time work is visible.
 - **Warning marks on chore lines.** Both are derived, so there's nothing to add

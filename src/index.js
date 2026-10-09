@@ -915,7 +915,18 @@ async function postDigest(env) {
   // Pull the whole week in one query: the digest shows today + past due per
   // person, then the rest of the week per person underneath (unassigned work
   // included, so it can be picked up when someone has time).
-  const week = Math.max(0, parseInt(env.WEEK_LOOKAHEAD_DAYS || "14", 10) || 0);
+  // Upcoming stops at the end of THIS calendar week (Mon–Sun) rather than
+  // rolling 7 days forward. A rolling window means Sunday shows you next
+  // Monday's chores, which is noise on the quietest day of the week — and it
+  // blurs where one week ends and the next begins. Monday shows Mon–Sun,
+  // Friday shows Fri–Sun, Sunday shows only Sunday.
+  //
+  // WEEK_LOOKAHEAD_DAYS is now a ceiling rather than the window itself: set it
+  // lower to see less than the rest of the week, never more.
+  const weekday = localDate(new Date()).weekday; // 0 = Sunday
+  const toWeekEnd = weekday === 0 ? 0 : 7 - weekday;
+  const cap = Math.max(0, parseInt(env.WEEK_LOOKAHEAD_DAYS || "14", 10) || 0);
+  const week = Math.min(toWeekEnd, cap);
   const all = await fetchDueIssues(env, week);
   if (!all.length) return { posted: false, count: 0 };
 
