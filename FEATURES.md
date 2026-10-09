@@ -338,7 +338,7 @@ only your own. Ownership is matched by Linear **user id**, not name.
 - A second dropdown, **"Not doing it…"**, cancels a chore instead: it clears off the
   list but is recorded as **canceled**, not done. Separate menu rather than extra rows
   in the first one — a select caps at 25 options and a busy day would overflow.
-- **Three dropdowns, one job each:** **✅ Mark done…**, **🙋 Claim a chore…**, **❌ Not doing it…**. All claiming lives in the middle row —
+- **Three dropdowns, one job each:** **✅ Mark done…**, **🙋 Claim a chore…**, **❌ Cancel a chore…**. All claiming lives in the middle row —
   unclaimed work *and* chores currently assigned to someone — so picking
   something up is always in the same place rather than depending on whether
   anyone happened to own it. A select's options are fixed when the message
