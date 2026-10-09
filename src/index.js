@@ -167,7 +167,16 @@ async function dayStatus(env, userName) {
     );
     // Soonest-due first so the widget's short list shows the most pressing.
     items.sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
-    const tasks = items.map((i) => ({ title: i.title, url: i.url }));
+    // `steps` powers the widget's expandable checklist: the chore's own copied
+    // description, minus the trailing template backlink the generator appends
+    // (useful in Linear, noise on a phone).
+    const steps = (d) =>
+      (d || "")
+        .split(/\r?\n/)
+        .filter((l) => !/^\s*—\s*\[recurring template/.test(l))
+        .join("\n")
+        .trim() || null;
+    const tasks = items.map((i) => ({ title: i.title, url: i.url, steps: steps(i.description) }));
     // What they finished today (Eastern completion date), most recent first.
     const completed = (await fetchRecentCompletedAssigned(env, u.id))
       .filter(

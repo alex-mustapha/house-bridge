@@ -100,6 +100,7 @@ export function renderDashboardPage(data, range = 30, leisure = null) {
     <ul class="missed" id="lateby"></ul></div>${leisurePanel}
   <div class="panel"><h2>Effort split — ${rlabel}</h2><div class="cw" style="height:200px"><canvas id="effort"></canvas></div></div>
   <div class="panel"><h2>Most missed — ${rlabel}</h2><ul class="missed" id="missed"></ul></div>
+  <div class="panel"><h2>🔍 Needed another pass — ${rlabel}</h2><ul class="missed" id="needswork"></ul></div>
   <div class="foot" id="foot"></div>
 </div>
 <script>const DATA = ${JSON.stringify(data)};${
@@ -186,6 +187,20 @@ export function renderDashboardPage(data, range = 30, leisure = null) {
     });
   } else {
     document.getElementById("effort").parentElement.innerHTML = '<p class="empty">No completed chores yet this week.</p>';
+  }
+
+  // Chores that got marked done but came up short. Counts every time it was
+  // raised, not just whether a note is currently outstanding.
+  const nw = DATA.needsWork || {};
+  const nwl = document.getElementById("needswork");
+  const esc2 = s => String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  if (nwl) {
+    const rows = (nw.byTitle || []).map(r =>
+      '<li><span>' + esc2(r.title) + '</span><span class="n">' + r.n + '×</span></li>').join("");
+    const who = (nw.byPerson || []).map(r => esc2(r.person) + ' ' + r.n).join(' · ');
+    nwl.innerHTML = rows
+      ? rows + (who ? '<li><span class="n">' + who + '</span><span class="n">' + (nw.total || 0) + ' total</span></li>' : "")
+      : '<li class="empty">Nothing flagged 👌</li>';
   }
 
   const ml = document.getElementById("missed");

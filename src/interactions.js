@@ -1073,6 +1073,7 @@ function choreHelp(recurringUrl) {
     "• `/chores sync` — re-run generation now (idempotent).",
     "• `/chores reshuffle` — re-rotate upcoming chores so they alternate again.",
     "• `/chores cancel chore:<name>` — drop a chore you're not doing (**not** counted as done).",
+    "• `/chores needswork chore:<name> [note:]` — done, but a detail was missed. Reminds whoever did it to check the checklist next time it's theirs. Stays marked done.",
     "• `/chores help` — this message.",
     "",
     // Recurring chores can't be created from Discord by design — this is the

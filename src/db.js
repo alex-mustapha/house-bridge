@@ -280,6 +280,10 @@ export async function queryDashboard(env, estimateOf, days = 30) {
     // per-person ones rather than instead of them.
     trend: buckets.map((b) => ({ label: b.label, pct: pctIn(inRange, b) })),
     lateness: buildLateness(inRange, today),
+    // How often chores have needed another pass — the counterpart to
+    // completion %, which can't see work that was finished but not finished
+    // properly.
+    needsWork: await detailFlagStats(env, since).catch(() => null),
     missed,
     effort: Object.entries(effort).map(([name, minutes]) => ({ name, minutes })),
     streaks,
@@ -487,73 +491,80 @@ export async function queryLeisure(env, person, days = 30) {
 }
 
 // ---------------------------------------------------------------------------
-// "Missed a detail" flags — keyed by CHORE *and* PERSON.
+// "Missed a detail" notes — APPEND-ONLY.
 //
 // Raised when someone notices the last pass of a chore left something out. The
-// reminder is aimed at whoever did it: the next time that person is assigned
-// this chore they're told to check the checklist. If the chore rotates to
-// someone else in the meantime they see nothing, because they didn't miss it.
+// reminder is aimed at whoever did it: the next time that chore falls to them
+// they're told to check the checklist. The chore itself stays done.
 //
-// Per (chore, person) rather than per chore so both people can carry their own
-// outstanding note on the same chore without overwriting each other.
-//
-// Nothing clears these by hand. A flag is spent once that person completes that
-// chore again — decided in marks.js against their last completion — so the row
-// can sit here harmlessly and re-flagging just moves the timestamp.
-const DETAIL_FLAG_SCHEMA = `CREATE TABLE IF NOT EXISTS chore_detail_flags (
+// Every raise is kept as its own row rather than upserting one row per
+// (chore, person). An upsert answers "is there an outstanding note?" but
+// destroys "how often has this chore needed another pass?", which is the more
+// interesting question once there's a few months of it. The outstanding note
+// is simply the most recent row for that pair.
+const DETAIL_LOG_SCHEMA = `CREATE TABLE IF NOT EXISTS chore_detail_log (
+  id TEXT PRIMARY KEY,
   title_key TEXT NOT NULL,
   person_key TEXT NOT NULL,
   title TEXT,
   person TEXT,
   flagged_at TEXT NOT NULL,
   flagged_by TEXT,
-  note TEXT,
-  PRIMARY KEY (title_key, person_key)
+  note TEXT
 )`;
 
-async function ensureDetailFlags(env) {
-  await env.DB.prepare(DETAIL_FLAG_SCHEMA).run();
+async function ensureDetailLog(env) {
+  await env.DB.prepare(DETAIL_LOG_SCHEMA).run();
+  await env.DB.prepare(
+    `CREATE INDEX IF NOT EXISTS detail_log_pair ON chore_detail_log (title_key, person_key)`,
+  ).run();
 }
 
 export async function flagChoreDetail(env, { title, person, by, note } = {}) {
   if (!env.DB || !title || !person) return null;
-  await ensureDetailFlags(env);
+  await ensureDetailLog(env);
   const at = new Date().toISOString();
+  const titleKey = title.toLowerCase();
+  const personKey = person.toLowerCase();
   await env.DB.prepare(
-    `INSERT INTO chore_detail_flags
-       (title_key, person_key, title, person, flagged_at, flagged_by, note)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-     ON CONFLICT(title_key, person_key) DO UPDATE SET
-       title = ?3, person = ?4, flagged_at = ?5, flagged_by = ?6, note = ?7`,
+    `INSERT INTO chore_detail_log
+       (id, title_key, person_key, title, person, flagged_at, flagged_by, note)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+     ON CONFLICT(id) DO NOTHING`,
   )
-    .bind(title.toLowerCase(), person.toLowerCase(), title, person, at, by || null, note || null)
+    .bind(`${titleKey}::${personKey}::${at}`, titleKey, personKey, title, person, at, by || null, note || null)
     .run();
   return { title, person, flaggedAt: at };
 }
 
+// Removes the most recent note for a chore (optionally for one person) — for
+// retracting one raised by mistake. Older entries are left alone so the
+// frequency history stays intact.
 export async function clearChoreDetail(env, title, person) {
   if (!env.DB || !title) return 0;
-  await ensureDetailFlags(env);
-  const sql = person
-    ? `DELETE FROM chore_detail_flags WHERE title_key = ?1 AND person_key = ?2`
-    : `DELETE FROM chore_detail_flags WHERE title_key = ?1`;
-  const stmt = env.DB.prepare(sql);
-  const r = await (person
-    ? stmt.bind(title.toLowerCase(), person.toLowerCase())
-    : stmt.bind(title.toLowerCase())
-  ).run();
+  await ensureDetailLog(env);
+  const where = person ? `title_key = ?1 AND person_key = ?2` : `title_key = ?1`;
+  const binds = person ? [title.toLowerCase(), person.toLowerCase()] : [title.toLowerCase()];
+  const r = await env.DB.prepare(
+    `DELETE FROM chore_detail_log WHERE id = (
+       SELECT id FROM chore_detail_log WHERE ${where} ORDER BY flagged_at DESC LIMIT 1
+     )`,
+  )
+    .bind(...binds)
+    .run();
   return r?.meta?.changes ?? 0;
 }
 
-// "<titleKey>::<personKey>" -> { person, flaggedAt }. Whether a flag still
-// applies is decided in marks.js, which knows when that person last completed
-// the chore.
+// "<titleKey>::<personKey>" -> { person, flaggedAt } for the LATEST note on
+// each pair. Whether it still applies is decided in marks.js, which knows when
+// that person last completed the chore.
 export async function activeDetailFlags(env) {
   const out = new Map();
   if (!env.DB) return out;
-  await ensureDetailFlags(env);
+  await ensureDetailLog(env);
   const r = await env.DB.prepare(
-    `SELECT title_key, person_key, person, flagged_at FROM chore_detail_flags`,
+    `SELECT title_key, person_key, person, MAX(flagged_at) AS flagged_at
+     FROM chore_detail_log GROUP BY title_key, person_key`,
   ).all();
   for (const row of r.results || []) {
     out.set(`${row.title_key}::${row.person_key}`, { person: row.person, flaggedAt: row.flagged_at });
@@ -561,13 +572,43 @@ export async function activeDetailFlags(env) {
   return out;
 }
 
-// Full rows, for listing what's currently outstanding.
-export async function listDetailFlags(env) {
+// Recent notes, newest first — for listing what's been raised.
+export async function listDetailFlags(env, limit = 20) {
   if (!env.DB) return [];
-  await ensureDetailFlags(env);
+  await ensureDetailLog(env);
   const r = await env.DB.prepare(
     `SELECT title, person, flagged_at, flagged_by, note
-     FROM chore_detail_flags ORDER BY flagged_at DESC`,
-  ).all();
+     FROM chore_detail_log ORDER BY flagged_at DESC LIMIT ?1`,
+  )
+    .bind(Math.max(1, Math.min(100, limit)))
+    .all();
   return r.results || [];
+}
+
+// How often chores have needed another pass over a window — which chores, and
+// who they landed on. Powers the dashboard breakdown.
+export async function detailFlagStats(env, sinceYmd) {
+  if (!env.DB) return null;
+  await ensureDetailLog(env);
+  const since = `${sinceYmd}T00:00:00.000Z`;
+  const byTitle =
+    (
+      await env.DB.prepare(
+        `SELECT title, COUNT(*) n FROM chore_detail_log
+         WHERE flagged_at >= ?1 GROUP BY title_key ORDER BY n DESC, title LIMIT 8`,
+      )
+        .bind(since)
+        .all()
+    ).results || [];
+  const byPerson =
+    (
+      await env.DB.prepare(
+        `SELECT person, COUNT(*) n FROM chore_detail_log
+         WHERE flagged_at >= ?1 GROUP BY person_key ORDER BY n DESC`,
+      )
+        .bind(since)
+        .all()
+    ).results || [];
+  const total = byTitle.reduce((t, r) => t + r.n, 0);
+  return { total, byTitle, byPerson };
 }

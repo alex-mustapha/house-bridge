@@ -360,6 +360,11 @@ app polls them and stays in sync. `/chores calendar` prints the URLs.
 
 ## Stats dashboard
 
+- **🔍 Needed another pass** — how often each chore was flagged as done-but-
+  incomplete, and who it landed on. Notes are stored **append-only**, so this
+  counts every time it was raised rather than only whether one is currently
+  outstanding — completion % can't see work that was finished but not finished
+  properly, and this is the counterpart.
 - **`/dashboard`** — a mobile-friendly, dark, keyless page (Chart.js): completion
   %, on-time %, done count, current streaks, per-person stacked bar, **effort
   split** (effort-adjusted minutes), and most-missed. A range bar switches
@@ -432,6 +437,11 @@ out of the shared surfaces.
   plate?" instead of going blank once your own list is clear. With `?key=`
   present each of those carries a **🙋 take it** button that reassigns the chore
   to you (via `/claim`) and refreshes.
+- **Tap a chore on the widget page to expand its checklist** in place, instead
+  of opening Linear to find out what "done" actually means. Markdown checkboxes
+  render as a list (ticked items shown struck through), other lines as notes,
+  with an "open in Linear ↗" link inside the panel. Chores with no checklist
+  keep the old straight-to-Linear behaviour.
 - **iOS Scriptable widget** (`scriptable-chores-widget.js`).
 - **Streak** = consecutive days where every chore due that day was completed
   (no-chore days bridge it; today-in-progress doesn't break it).

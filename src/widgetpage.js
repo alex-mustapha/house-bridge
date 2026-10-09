@@ -85,6 +85,22 @@ export function renderWidgetPage(user, status) {
   .leisurebtn:active { background: rgba(255,255,255,.28); }
   .leisurebtn:disabled { opacity: .6; }
   .leisuremsg { margin-top: 8px; font-size: 13px; opacity: .85; text-align: center; }
+  li.taskrow { flex-wrap: wrap; }
+  .steps-toggle {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px;
+    background: none; border: 0; padding: 0; margin: 0; text-align: left;
+    color: inherit; font: inherit; cursor: pointer; -webkit-appearance: none;
+  }
+  .caret { margin-left: auto; opacity: .6; font-size: 13px; }
+  .steps {
+    flex-basis: 100%; margin: 8px 0 2px; padding: 10px 12px; border-radius: 12px;
+    background: rgba(0,0,0,.18); font-size: 14px;
+  }
+  ul.steplist { list-style: none; margin: 0; padding: 0; }
+  ul.steplist li { padding: 3px 0; opacity: .95; }
+  ul.steplist li.sdone { opacity: .55; text-decoration: line-through; }
+  .stepnote { margin: 4px 0; opacity: .8; }
+  .steplink { display: inline-block; margin-top: 8px; font-size: 13px; opacity: .8; color: #fff; }
   li .claim {
     flex: none; margin-left: 8px; width: 34px; height: 34px; align-self: center;
     border-radius: 10px; border: 1px solid rgba(255,255,255,.3);
@@ -182,7 +198,7 @@ export function renderWidgetPage(user, status) {
       badge.textContent = "📋";
       count.textContent = s.remaining + (s.remaining === 1 ? " chore left" : " chores left");
       who.textContent = KEY ? "✓ done · ✖ not doing it · tap a chore to open" : "tap a chore to open it in Linear";
-      list.innerHTML = tasks.map(t => {
+      list.innerHTML = tasks.map((t, idx) => {
         const t2 = esc(t.title);
         const href = esc(t.url || LINEAR_URL);
         // ✓ = did it, ✖ = decided not to. Separate buttons so the stats can
@@ -191,9 +207,23 @@ export function renderWidgetPage(user, status) {
           ? '<button class="done" data-title="' + t2 + '" aria-label="Mark done">✓</button>' +
             '<button class="cancel" data-title="' + t2 + '" aria-label="Cancel — not doing this">✖</button>'
           : '';
-        return '<li><a class="open" href="' + href + '"><span class="dot"></span>' +
-          '<span class="t">' + t2 + '</span>' + (KEY ? '' : '<span class="chev">›</span>') +
-          '</a>' + right + '</li>';
+        // Tapping the title expands the chore's own checklist in place, rather
+        // than bouncing out to Linear to find out what "done" actually means.
+        // The ↗ keeps the old behaviour available for anyone who wants the
+        // full issue.
+        const hasSteps = !!t.steps;
+        const head = hasSteps
+          ? '<button class="open steps-toggle" data-steps="' + idx + '" aria-expanded="false">' +
+              '<span class="dot"></span><span class="t">' + t2 + '</span>' +
+              '<span class="caret">▾</span></button>'
+          : '<a class="open" href="' + href + '"><span class="dot"></span>' +
+              '<span class="t">' + t2 + '</span>' +
+              (KEY ? '' : '<span class="chev">›</span>') + '</a>';
+        const body = hasSteps
+          ? '<div class="steps" id="steps-' + idx + '" hidden>' + renderSteps(t.steps) +
+              '<a class="steplink" href="' + href + '">open in Linear ↗</a></div>'
+          : '';
+        return '<li class="taskrow">' + head + right + body + '</li>';
       }).join("");
     }
     // Anything else going: the other person's outstanding chores, then
@@ -349,6 +379,46 @@ export function renderWidgetPage(user, status) {
       }
     });
   }
+
+
+  // Render a chore's own description as a compact checklist. Markdown checkbox
+  // lines become bullets; everything else is kept as plain text so notes and
+  // instructions survive. Escaped throughout — this is issue content.
+  function renderSteps(raw) {
+    const lines = String(raw).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    let out = "";
+    let open = false;
+    for (const line of lines) {
+      const box = line.match(/^[-*]\s*\[( |x|X)\]\s*(.+)$/);
+      const bullet = line.match(/^[-*]\s+(.+)$/);
+      if (box || bullet) {
+        if (!open) { out += '<ul class="steplist">'; open = true; }
+        const done = box && box[1].toLowerCase() === "x";
+        const text = esc(box ? box[2] : bullet[1]);
+        out += '<li' + (done ? ' class="sdone"' : '') + '>' + (done ? "☑" : "☐") + " " + text + "</li>";
+      } else {
+        if (open) { out += "</ul>"; open = false; }
+        out += '<p class="stepnote">' + esc(line) + "</p>";
+      }
+    }
+    if (open) out += "</ul>";
+    return out || '<p class="stepnote">No checklist on this one.</p>';
+  }
+
+  // Expand/collapse a chore's checklist. Event-delegated so it survives the
+  // list being re-rendered on every refresh.
+  document.getElementById("list").addEventListener("click", (e) => {
+    const btn = e.target.closest(".steps-toggle");
+    if (!btn) return;
+    e.preventDefault();
+    const panel = document.getElementById("steps-" + btn.dataset.steps);
+    if (!panel) return;
+    const nowOpen = panel.hidden;
+    panel.hidden = !nowOpen;
+    btn.setAttribute("aria-expanded", String(nowOpen));
+    const caret = btn.querySelector(".caret");
+    if (caret) caret.textContent = nowOpen ? "▴" : "▾";
+  });
 
   async function refresh() {
     try {
