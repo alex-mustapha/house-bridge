@@ -90,6 +90,44 @@ export function formatCommentEmbed(payload) {
 }
 
 // Match a Linear assignee name to a Discord mention from the name->id map.
+// Resolve a person's name to a Discord @-mention straight from env, for
+// callers outside the digest builder that don't already hold a parsed map.
+export function mentionTag(env, name) {
+  const map = {};
+  for (const pair of (env.DISCORD_MENTIONS || "").split(",")) {
+    const [k, v] = pair.split(":").map((x) => x.trim());
+    if (k && v) map[k.toLowerCase()] = v;
+  }
+  return mentionFor(name, map) || name || "someone";
+}
+
+// One canonical "someone picked this up" notice, always posted to the
+// due-today channel. Claims can happen from the digest dropdown, /chores claim
+// in any channel, or the widget button — without this the announcement landed
+// wherever the command was typed, so the person losing the chore might never
+// see it. Taking over someone else's work @-mentions them; picking up
+// unclaimed work doesn't, since there's nobody to tell.
+export async function announceClaim(env, { taker, title, from } = {}) {
+  if (!taker || !title) return false;
+  const content = from
+    ? `🙋 **${taker}** claimed **${title}** from ${mentionTag(env, from)}.`
+    : `🙋 **${taker}** claimed **${title}**.`;
+  const body = { content, allowed_mentions: { parse: ["users"] } };
+  try {
+    if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
+      await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, body);
+      return true;
+    }
+    if (env.DISCORD_WEBHOOK_DUE) {
+      await postToDiscord(env.DISCORD_WEBHOOK_DUE, body);
+      return true;
+    }
+  } catch (e) {
+    console.error("claim notice failed:", e.message);
+  }
+  return false;
+}
+
 function mentionFor(name, mentionMap) {
   if (!name || !mentionMap) return null;
   const n = name.toLowerCase();
@@ -252,6 +290,7 @@ export function buildDigestMenu(issues, soon = []) {
   // length of the primary one: a select caps at 25 options, and a busy day with
   // 14 chores would otherwise overflow and silently drop the last few.
   const cancels = [];
+  const takeovers = [];
   for (const i of issues) {
     if (i.assignee?.name) {
       options.push({
@@ -263,6 +302,17 @@ export function buildDigestMenu(issues, soon = []) {
         label: `✖ ${i.title}`.slice(0, 100),
         value: `cancel:${i.id}:${i.team?.id || ""}`,
         description: `won't count as done${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
+      });
+      // Taking over someone else's chore. The widget has had a 🙋 on the other
+      // person's work for a while; without this the digest could only claim
+      // work nobody owned, so whoever lives in the digest couldn't offer to
+      // pick up their partner's. Listed for everyone because a select's
+      // options are fixed when the message is posted — the handler assigns to
+      // whoever actually clicked, so one list serves both people.
+      takeovers.push({
+        label: `🙋 ${i.title}`.slice(0, 100),
+        value: `claim:${i.id}:${i.team?.id || ""}`,
+        description: `currently ${i.assignee.name} — take it on`.slice(0, 100),
       });
     } else {
       options.push({
@@ -296,6 +346,22 @@ export function buildDigestMenu(issues, soon = []) {
       ],
     },
   ];
+  const tops = takeovers.slice(0, 25);
+  if (tops.length) {
+    rows.push({
+      type: 1,
+      components: [
+        {
+          type: 3,
+          custom_id: "claim-menu",
+          placeholder: "🙋 Take over a chore…",
+          min_values: 1,
+          max_values: Math.min(tops.length, 25),
+          options: tops,
+        },
+      ],
+    });
+  }
   const cops = cancels.slice(0, 25);
   if (cops.length) {
     rows.push({

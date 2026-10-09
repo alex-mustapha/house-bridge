@@ -28,12 +28,14 @@ import {
   fetchSpawned,
   assignIssue,
   unassignIssue,
+  fetchIssueBrief,
   fetchRecentCompletedAssigned,
   fetchChoreHistory,
 } from "./linear.js";
 import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, reshuffleWindow, coverUserPause } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
+import { announceClaim } from "./discord.js";
 import { recordLeisure } from "./leisure.js";
 import { flagChoreDetail, clearChoreDetail } from "./db.js";
 
@@ -143,7 +145,7 @@ async function resolveCaller(env, interaction) {
 async function handleComponent(interaction, env) {
   const cid = interaction.data?.custom_id || "";
 
-  if (cid === "actions-menu" || cid === "done-menu" || cid === "cancel-menu") {
+  if (["actions-menu", "done-menu", "cancel-menu", "claim-menu"].includes(cid)) {
     const legacy = cid === "done-menu"; // old menu: values were "<id>:<team>"
     const vals = interaction.data?.values || [];
     const clicker = vals.some((v) => v.startsWith("claim:")) ? await resolveCaller(env, interaction) : null;
@@ -152,6 +154,7 @@ async function handleComponent(interaction, env) {
     // both from the rebuilt menu.
     const resolvedIds = new Set();
     const claimed = new Set();
+    const tookOver = [];
     for (const v of vals) {
       const [action, id, team] = legacy ? ["done", ...v.split(":")] : v.split(":");
       try {
@@ -162,12 +165,37 @@ async function handleComponent(interaction, env) {
           const stateId = team ? await getCanceledStateId(env, team) : null;
           if (stateId && id && (await setIssueState(env, id, stateId))?.success) resolvedIds.add(id);
         } else if (action === "claim" && clicker && id) {
-          if ((await assignIssue(env, id, clicker))?.success) claimed.add(v);
+          // Read the current owner first: the mutation only reports the new
+          // state, and the notification needs to name who it came off.
+          const before = await fetchIssueBrief(env, id);
+          if ((await assignIssue(env, id, clicker))?.success) {
+            claimed.add(v);
+            const prev = before?.assignee;
+            // Re-claiming your own changes nothing, so stays quiet. Taking
+            // someone else's names them; picking up unclaimed work doesn't.
+            if (!prev?.id || prev.id !== clicker) {
+              tookOver.push({
+                title: before?.title || "a chore",
+                from: prev?.id ? prev.name : null,
+              });
+            }
+          }
         }
       } catch {
         /* skip this one */
       }
     }
+    // Always announce in the due channel, never wherever the click happened —
+    // the point is that the person who no longer owns it finds out.
+    if (tookOver.length) {
+      const users = await getUsers(env).catch(() => []);
+      const who = users.find((u) => u.id === clicker);
+      const taker = who?.name || who?.displayName || "Someone";
+      for (const t of tookOver) {
+        ctx?.waitUntil?.(announceClaim(env, { taker, title: t.title, from: t.from }));
+      }
+    }
+
     // Rebuild: drop completed options; turn claimed ones into "done" options.
     const msg = interaction.message || {};
     const components = (msg.components || [])
@@ -175,8 +203,16 @@ async function handleComponent(interaction, env) {
         ...row,
         components: (row.components || [])
           .map((c) => {
-            if (c.type === 3 && ["actions-menu", "done-menu", "cancel-menu"].includes(c.custom_id)) {
-              const isCancelRow = c.custom_id === "cancel-menu";
+            if (
+              c.type === 3 &&
+              ["actions-menu", "done-menu", "cancel-menu", "claim-menu"].includes(c.custom_id)
+            ) {
+              const rowId = c.custom_id === "done-menu" ? "actions-menu" : c.custom_id;
+              // The take-over row lists chores belonging to someone else. Once
+              // one is claimed it's no longer a take-over for anybody, so it's
+              // dropped — unlike the main row, where a claimed chore becomes a
+              // "✓ done" option for its new owner.
+              const isClaimRow = c.custom_id === "claim-menu";
               // Old "done-menu" rows stored "<id>:<team>"; current rows store
               // "<action>:<id>:<team>". Pull the issue id from the right slot or
               // pruning silently no-ops on an older digest.
@@ -184,18 +220,14 @@ async function handleComponent(interaction, env) {
               const optId = (v) => v.split(":")[legacyRow ? 0 : 1];
               const opts = (c.options || [])
                 .filter((o) => !resolvedIds.has(optId(o.value)))
+                .filter((o) => !(isClaimRow && claimed.has(o.value)))
                 .map((o) => {
-                  if (!claimed.has(o.value)) return o;
+                  if (isClaimRow || !claimed.has(o.value)) return o;
                   const [, id, team] = o.value.split(":");
                   return { label: o.label.replace(/^🙋\s*/, "✓ "), value: `done:${id}:${team || ""}`, description: o.description };
                 });
               return opts.length
-                ? {
-                    ...c,
-                    custom_id: isCancelRow ? "cancel-menu" : "actions-menu",
-                    options: opts,
-                    max_values: Math.min(opts.length, 25),
-                  }
+                ? { ...c, custom_id: rowId, options: opts, max_values: Math.min(opts.length, 25) }
                 : null;
             }
             return c;
@@ -865,10 +897,18 @@ async function choreCommand(interaction, env, ctx) {
           if (!userId) return "Couldn't match you to a Linear user — pass `assignee:` to claim for a named person.";
           who = users.find((x) => x.id === userId)?.name || "you";
         }
+        const prev = issue.assignee;
         const res = await assignIssue(env, issue.id, userId);
         if (!res?.success) return "Couldn't assign that chore.";
-        return `🙋 **${who}** claimed **${issue.title}**.`;
-      });
+        // Announce in the due channel rather than wherever this was typed, so
+        // it reaches the person who had it regardless of where you ran it.
+        const announced = await announceClaim(env, {
+          taker: who,
+          title: issue.title,
+          from: prev?.id && prev.id !== userId ? prev.name : null,
+        });
+        return `🙋 You claimed **${issue.title}**.${announced ? " Posted in the chores channel." : ""}`;
+      }, { ephemeral: true });
     }
     case "unclaim": {
       return deferAndRun(interaction, ctx, async () => {

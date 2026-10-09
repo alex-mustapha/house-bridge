@@ -781,6 +781,23 @@ export async function fetchArchivableBefore(env, projectNames, beforeIso, limit)
   return [...takeDone, ...takeCanceled];
 }
 
+// Title + current assignee for one issue. Used before a take-over so the
+// notification can name who it was taken from — the mutation only reports the
+// new state, so the previous owner has to be read first.
+export async function fetchIssueBrief(env, id) {
+  const query = `
+    query Brief($id: String!) {
+      issue(id: $id) { identifier title url assignee { id name } }
+    }`;
+  try {
+    const data = await linearQuery(env, query, { id });
+    return data.issue || null;
+  } catch (e) {
+    console.error("issue brief lookup failed:", e.message);
+    return null;
+  }
+}
+
 export async function archiveIssue(env, id) {
   const mutation = `
     mutation Archive($id: String!) {

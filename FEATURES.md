@@ -334,6 +334,16 @@ only your own. Ownership is matched by Linear **user id**, not name.
 - A second dropdown, **"Not doing it…"**, cancels a chore instead: it clears off the
   list but is recorded as **canceled**, not done. Separate menu rather than extra rows
   in the first one — a select caps at 25 options and a busy day would overflow.
+- A third dropdown, **"🙋 Take over a chore…"**, lists work currently assigned
+  to someone — so a chore can be picked up off your partner from the digest,
+  not just claimed when unowned. Options are fixed when the message is posted,
+  so one list serves both people; the handler assigns to whoever clicked.
+- **Claiming always announces in the due channel**, wherever it happened —
+  digest dropdown, `/chores claim` in any channel, or the widget's 🙋. Taking
+  someone's chore @-mentions them (`🙋 **Kristal** claimed **X** from @Alex`);
+  picking up unclaimed work doesn't, since there's nobody to tell. `/chores
+  claim` replies ephemerally and lets that one notice be the public record,
+  rather than posting into whichever channel you happened to type in.
 - *Why a menu, not emoji reactions:* reactions need a persistent Discord Gateway a
   serverless Worker can't hold; menu/button interactions arrive over the same HTTP
   path as slash commands.

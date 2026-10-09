@@ -17,6 +17,7 @@ import {
   buildDigestMenu,
   postViaBot,
   postToDiscord,
+  announceClaim,
 } from "./discord.js";
 import { logChores, queryStats, queryDashboard, queryLeisure } from "./db.js";
 import {
@@ -543,7 +544,19 @@ async function handleRequest(request, env, ctx) {
       ]);
       if (!hits.length) return new Response(`No active chore matching "${match}"\n`, { status: 404 });
       hits.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
+      const prev = hits[0].assignee;
       const res = await assignIssue(env, hits[0].id, target.id);
+      if (res?.success) {
+        // The same notice the slash command and the digest dropdown post, in
+        // the same channel — however the chore happened to be picked up.
+        ctx.waitUntil(
+          announceClaim(env, {
+            taker: target.name || who,
+            title: hits[0].title,
+            from: prev?.id && prev.id !== target.id ? prev.name : null,
+          }),
+        );
+      }
       return new Response(
         res?.success ? `Assigned "${hits[0].title}" to ${target.name || who}\n` : "Assign failed\n",
         { status: res?.success ? 200 : 500 },
