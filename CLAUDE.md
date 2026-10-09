@@ -80,6 +80,16 @@ Done vs cancelled:
 - The digest has TWO select rows now (`actions-menu`, `cancel-menu`). Resolving a chore prunes it
   from both, keyed by issue id — not by option value, since one issue appears in both rows.
 
+Widget page (`src/widgetpage.js`):
+- The whole page is a **JS template literal**, so any backslash meant for the browser must be
+  written **doubled**. A single `\s` or `\n` is consumed when the page is built, and the served
+  regex ends up unterminated — that's a SyntaxError in the only inline script, so the entire
+  page renders blank. It fails silently: the endpoint still returns 200 with full-looking HTML.
+  Applies to comments as well as code.
+- Verify by rendering and PARSING the output, not by eyeballing the source:
+  extract `<script>` from `renderWidgetPage(...)` and run `node --check` on it. A syntax check of
+  `widgetpage.js` itself passes regardless, since the broken code is inside a string.
+
 Weekly recap:
 - Covers the **finished week ending yesterday**, not a window including today — every day is
   final, so "not completed" unambiguously means missed.

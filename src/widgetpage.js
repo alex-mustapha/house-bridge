@@ -385,12 +385,17 @@ export function renderWidgetPage(user, status) {
   // lines become bullets; everything else is kept as plain text so notes and
   // instructions survive. Escaped throughout — this is issue content.
   function renderSteps(raw) {
-    const lines = String(raw).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    // NOTE: this whole page is a JS template literal, so any backslash meant
+    // for the browser must be written DOUBLED here. Written singly, the escape
+    // is consumed when the page is built and the served regex ends up
+    // unterminated — which takes the entire script, and so the whole page,
+    // down. (Mind this in comments too, not just code.)
+    const lines = String(raw).split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
     let out = "";
     let open = false;
     for (const line of lines) {
-      const box = line.match(/^[-*]\s*\[( |x|X)\]\s*(.+)$/);
-      const bullet = line.match(/^[-*]\s+(.+)$/);
+      const box = line.match(/^[-*]\\s*\\[( |x|X)\\]\\s*(.+)$/);
+      const bullet = line.match(/^[-*]\\s+(.+)$/);
       if (box || bullet) {
         if (!open) { out += '<ul class="steplist">'; open = true; }
         const done = box && box[1].toLowerCase() === "x";
