@@ -1,6 +1,8 @@
 // Builds Discord messages/embeds (issue events, daily digest, cap warning,
 // "all done" celebration, weekly scoreboard) and posts them to webhooks.
 
+import { markPrefix } from "./marks.js";
+
 const COLORS = {
   created: 0x2ecc71, // green
   done: 0x2ecc71, // green
@@ -100,7 +102,7 @@ function mentionFor(name, mentionMap) {
 // Daily digest of today's + overdue chores, grouped by assignee — each person's
 // past-due work listed above what's due today. Owners are @-pinged in `content`
 // (mentions only notify from content, not the embed).
-export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [], anytime = []) {
+export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [], anytime = [], marks = null) {
   // Person-first: everything one person owns sits under their own heading, with
   // their past-due work called out above what's due today. A single flat
   // past-due list made it impossible to see your own share at a glance — you
@@ -128,6 +130,10 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
   // One block per person: past due, today, then what's coming for them. Keeping
   // upcoming inside the person's own block means you read your whole picture in
   // one place instead of scrolling to a separate list and re-finding your name.
+  // Warning marks (repeatedly put off, or a detail was missed last pass). Only
+  // flagged chores carry anything, so an ordinary day reads exactly as before.
+  const mk = (i) => markPrefix(marks?.byId?.get(i.id));
+
   const sections = [];
   for (const name of names) {
     const { overdue, todayish, week } = groups.get(name);
@@ -138,14 +144,14 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
         .sort((a, b) => a.dueDate.localeCompare(b.dueDate)) // oldest first
         .map((i) => {
           const days = daysBetween(i.dueDate, today);
-          return `• [${i.title}](${i.url}) — ${days} day${days === 1 ? "" : "s"} late`;
+          return `• [${i.title}](${i.url}) — ${days} day${days === 1 ? "" : "s"} late${mk(i)}`;
         });
       parts.push(`⏰ *Past due (${overdue.length})*`, ...od);
     }
     if (todayish.length) {
       // Label "today" only when another group sits alongside it to separate from.
       if (overdue.length || week.length) parts.push("📅 *Today*");
-      parts.push(...todayish.map((i) => `• [${i.title}](${i.url})`));
+      parts.push(...todayish.map((i) => `• [${i.title}](${i.url})${mk(i)}`));
     }
     if (week.length) {
       // Routine weekly chores are filtered out upstream, so what lands here is

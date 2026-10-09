@@ -103,6 +103,16 @@ export const COMMANDS = [
       },
       {
         type: 1,
+        name: "needswork",
+        description: "Done, but a detail was missed — remind whoever did it next time it's theirs",
+        options: [
+          { type: 3, name: "chore", description: "Which chore", required: true, autocomplete: true },
+          { type: 3, name: "note", description: "What was missed (optional)", required: false },
+          { type: 5, name: "clear", description: "Remove the note instead", required: false },
+        ],
+      },
+      {
+        type: 1,
         name: "cancel",
         description: "Drop a chore you've decided not to do (not counted as done)",
         options: [

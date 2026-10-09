@@ -29,11 +29,13 @@ import {
   assignIssue,
   unassignIssue,
   fetchRecentCompletedAssigned,
+  fetchChoreHistory,
 } from "./linear.js";
 import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, reshuffleWindow, coverUserPause } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
 import { recordLeisure } from "./leisure.js";
+import { flagChoreDetail, clearChoreDetail } from "./db.js";
 
 const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -293,6 +295,19 @@ async function choreAutocomplete(interaction, env) {
         .filter((t) => (t.labels?.nodes || []).some((l) => (l.name || "").toLowerCase() === "paused"))
         .map((t) => t.title);
       return acChoices(paused.filter(match));
+    }
+    if (sub.name === "needswork") {
+      // You flag a chore after it's been done, so suggest recent completions
+      // rather than the active list.
+      const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+      if (!teamId) return acChoices([]);
+      const since = localDate(new Date(Date.now() - 30 * 86_400_000)).ymd;
+      const hist = await fetchChoreHistory(env, teamId, since);
+      const titles = hist
+        .filter((h) => h.completedAt)
+        .sort((a2, b2) => (b2.completedAt || "").localeCompare(a2.completedAt || ""))
+        .map((h) => h.title);
+      return acChoices(titles.filter(match));
     }
     if (sub.name === "unclaim") {
       // unclaim drops one of *your* chores -> suggest only chores you own,
@@ -771,6 +786,59 @@ async function choreCommand(interaction, env, ctx) {
         const r = await markChoreDone(env, o.chore);
         return r.ok ? `✅ ${r.message}.` : r.message;
       });
+    }
+    case "needswork": {
+      // "Done, but a detail got overlooked." The completed chore is left
+      // completely alone — it stays done, because it was done. This only
+      // records a note against the person who did it, which surfaces the next
+      // time that chore lands on them: check the checklist, finish it fully.
+      return deferAndRun(
+        interaction,
+        ctx,
+        async () => {
+          if (!env.DB) return "Flag storage unavailable (no DB).";
+          const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+          if (!teamId) return "Chores team not found.";
+
+          if (o.clear) {
+            const n = await clearChoreDetail(env, o.chore);
+            return n
+              ? `✅ Cleared the note on **${o.chore}**.`
+              : `No outstanding note on **${o.chore}**.`;
+          }
+
+          // Who last actually did it — that's who the reminder is for.
+          const since = localDate(new Date(Date.now() - 120 * 86_400_000)).ymd;
+          const history = await fetchChoreHistory(env, teamId, since);
+          const want = (o.chore || "").toLowerCase();
+          const done = history
+            .filter((h) => (h.title || "").toLowerCase().includes(want) && h.completedAt && h.assignee?.name)
+            .sort((a, b) => b.completedAt.localeCompare(a.completedAt));
+          if (!done.length) {
+            return `Couldn't find a recently completed **${o.chore}** to attach that to.`;
+          }
+          const target = done[0];
+          const person = target.assignee.name;
+
+          const me = await resolveCaller(env, interaction);
+          const byUser = me ? (await getUsers(env)).find((u) => u.id === me) : null;
+
+          await flagChoreDetail(env, {
+            title: target.title,
+            person,
+            by: byUser?.name || byUser?.displayName || null,
+            note: o.note || null,
+          });
+
+          return (
+            `🔍 Noted on **${target.title}** for **${person}**.\n` +
+            `It stays marked done — they'll just get a reminder to check the checklist ` +
+            `the next time it's assigned to them.` +
+            (o.note ? `\n_"${o.note}"_` : "")
+          );
+        },
+        { ephemeral: true },
+      );
     }
     case "cancel": {
       // Distinct from `done`: clears the chore without recording work.

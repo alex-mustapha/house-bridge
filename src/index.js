@@ -48,6 +48,7 @@ import { computeStats } from "./stats.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
 import { recordLeisure, autoLogLeisure } from "./leisure.js";
+import { choreMarks } from "./marks.js";
 
 // The end-of-day leisure backstop runs on its own schedule; everything else
 // is the morning run. Keep in sync with `crons` in wrangler.toml.
@@ -905,8 +906,18 @@ async function postDigest(env) {
   const shown = all.filter(
     (i) => !(i.dueDate && i.dueDate > today && frequent.has((i.title || "").toLowerCase())),
   );
+  // Warning marks: repeatedly put off, or a detail was missed last pass.
+  const marks = await choreMarks(
+    env,
+    await getTeamId(env, env.CHORES_TEAM || "CHO"),
+    shown,
+    today,
+  ).catch((e) => {
+    console.error("chore marks failed:", e.message);
+    return null;
+  });
   const mentions = parseMentions(env.DISCORD_MENTIONS);
-  const msg = buildDigestMessage(shown, mentions, today, [], await anytimePool(env, 2));
+  const msg = buildDigestMessage(shown, mentions, today, [], await anytimePool(env, 2), marks);
 
   // The dropdown stays scoped to what's actionable now — today, past due, and
   // any unassigned chore (claimable ahead of time). A select caps at 25

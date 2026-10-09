@@ -485,3 +485,89 @@ export async function queryLeisure(env, person, days = 30) {
     recent: rows.slice(0, 10),
   };
 }
+
+// ---------------------------------------------------------------------------
+// "Missed a detail" flags — keyed by CHORE *and* PERSON.
+//
+// Raised when someone notices the last pass of a chore left something out. The
+// reminder is aimed at whoever did it: the next time that person is assigned
+// this chore they're told to check the checklist. If the chore rotates to
+// someone else in the meantime they see nothing, because they didn't miss it.
+//
+// Per (chore, person) rather than per chore so both people can carry their own
+// outstanding note on the same chore without overwriting each other.
+//
+// Nothing clears these by hand. A flag is spent once that person completes that
+// chore again — decided in marks.js against their last completion — so the row
+// can sit here harmlessly and re-flagging just moves the timestamp.
+const DETAIL_FLAG_SCHEMA = `CREATE TABLE IF NOT EXISTS chore_detail_flags (
+  title_key TEXT NOT NULL,
+  person_key TEXT NOT NULL,
+  title TEXT,
+  person TEXT,
+  flagged_at TEXT NOT NULL,
+  flagged_by TEXT,
+  note TEXT,
+  PRIMARY KEY (title_key, person_key)
+)`;
+
+async function ensureDetailFlags(env) {
+  await env.DB.prepare(DETAIL_FLAG_SCHEMA).run();
+}
+
+export async function flagChoreDetail(env, { title, person, by, note } = {}) {
+  if (!env.DB || !title || !person) return null;
+  await ensureDetailFlags(env);
+  const at = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO chore_detail_flags
+       (title_key, person_key, title, person, flagged_at, flagged_by, note)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT(title_key, person_key) DO UPDATE SET
+       title = ?3, person = ?4, flagged_at = ?5, flagged_by = ?6, note = ?7`,
+  )
+    .bind(title.toLowerCase(), person.toLowerCase(), title, person, at, by || null, note || null)
+    .run();
+  return { title, person, flaggedAt: at };
+}
+
+export async function clearChoreDetail(env, title, person) {
+  if (!env.DB || !title) return 0;
+  await ensureDetailFlags(env);
+  const sql = person
+    ? `DELETE FROM chore_detail_flags WHERE title_key = ?1 AND person_key = ?2`
+    : `DELETE FROM chore_detail_flags WHERE title_key = ?1`;
+  const stmt = env.DB.prepare(sql);
+  const r = await (person
+    ? stmt.bind(title.toLowerCase(), person.toLowerCase())
+    : stmt.bind(title.toLowerCase())
+  ).run();
+  return r?.meta?.changes ?? 0;
+}
+
+// "<titleKey>::<personKey>" -> { person, flaggedAt }. Whether a flag still
+// applies is decided in marks.js, which knows when that person last completed
+// the chore.
+export async function activeDetailFlags(env) {
+  const out = new Map();
+  if (!env.DB) return out;
+  await ensureDetailFlags(env);
+  const r = await env.DB.prepare(
+    `SELECT title_key, person_key, person, flagged_at FROM chore_detail_flags`,
+  ).all();
+  for (const row of r.results || []) {
+    out.set(`${row.title_key}::${row.person_key}`, { person: row.person, flaggedAt: row.flagged_at });
+  }
+  return out;
+}
+
+// Full rows, for listing what's currently outstanding.
+export async function listDetailFlags(env) {
+  if (!env.DB) return [];
+  await ensureDetailFlags(env);
+  const r = await env.DB.prepare(
+    `SELECT title, person, flagged_at, flagged_by, note
+     FROM chore_detail_flags ORDER BY flagged_at DESC`,
+  ).all();
+  return r.results || [];
+}

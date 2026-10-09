@@ -293,6 +293,22 @@ only your own. Ownership is matched by Linear **user id**, not name.
     `WEEK_LOOKAHEAD_DAYS` (default 14).
   An *Unassigned* block carries the same structure; its upcoming list is
   labelled **"up for grabs"** so spare-time work is visible.
+- **Warning marks on chore lines.** Both are derived, so there's nothing to add
+  at generation time and nothing to clean up:
+  - **⚠️ slipped last time** / **🔴 slipped N×** — the previous occurrence(s)
+    went unfinished. Independent of the on-miss policy: a `replace` chore's
+    missed copy was archived and a `skip` chore's is still open, but either way
+    it's being put off. Escalates on repeats, because one slip is normal and
+    two in a row is the actual problem. **Canceled doesn't count** — deciding
+    not to do something is a choice, and treating it as a slip would punish
+    using ✖ honestly.
+  - **🔍 check the checklist** — someone noticed the last pass left a detail
+    out. Raised with `/chores needswork chore:<name> [note:]`, which looks up
+    who last *completed* that chore and aims the reminder at them. **The chore
+    stays done** — nothing reopens. It shows only on that person's next
+    occurrence (if the chore rotates away, the other person sees nothing) and
+    clears when **they** complete it again; their partner doing it doesn't
+    discharge it. Only the soonest matching occurrence carries it.
 - **🧺 Anytime** — the two oldest **undated** open issues, with project, owner
   and age. Every other list in the system is keyed on a due date, so undated
   work is otherwise invisible until someone goes looking in Linear. Ranked by
