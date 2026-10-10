@@ -31,15 +31,25 @@ export function renderWidgetPage(user, status) {
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
+  /* min-height, not height: the body has to be free to grow past the viewport
+     once there are enough chores, or the page simply can't scroll. */
+  html, body { min-height: 100%; }
   body {
     font: 16px -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
-    display: flex; align-items: center; justify-content: center;
-    padding: max(16px, env(safe-area-inset-top)) 16px;
+    display: flex; justify-content: center;
+    /* Vertical centring is done with an auto margin on the card rather than
+       align-items:center. Centring an overflowing flex item pushes its top
+       edge above the scroll origin, so the first chores become unreachable —
+       auto margins collapse to 0 instead of overflowing.
+       (No backticks in here: the page is a template literal.) */
+    align-items: flex-start;
+    padding: max(16px, env(safe-area-inset-top)) 16px
+             max(16px, env(safe-area-inset-bottom)) 16px;
     background: #0b0b0f;
   }
   .card {
     width: 100%; max-width: 420px; min-height: 60vh;
+    margin: auto; /* centres when it fits, scrolls cleanly when it doesn't */
     border-radius: 28px; padding: 26px 24px;
     color: #fff; text-decoration: none;
     display: flex; flex-direction: column;
