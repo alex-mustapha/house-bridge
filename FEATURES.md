@@ -104,7 +104,7 @@ Parsed from the template description, then stripped from the spawned copy.
 | `effort: 1..5` | **Difficulty** (1 easiest, 5 hardest, default 3 = neutral). Multiplies the time-based balance cost (`0.5×`…`2×`), so a long-but-easy chore counts less and a short-but-hard one more. |
 | `week: even`/`odd` (biweekly) or `0`/`1`/`2` (triweekly) | Which cycle. |
 | `dueafter: 2` | Due N days out instead of today. |
-| `opposite: Cook Dinner` | Assign the *other* person from that chore's owner on the same day. |
+| `opposite: Cook Dinner` | Assign the *other* person from that chore's owner on the same day. **Re-checked every run**, not just at generation: a claim, pause cover or debt reassignment on either side used to leave both halves on one person with nothing to notice. A chore someone deliberately claimed (`claimed` label) is never re-split. |
 | `assign: monday=Kristal, friday=Alex` | **Per-weekday fixed owner.** Splits one chore across people by day, so a single template can cover "Kristal cooks Mon/Wed, Alex cooks Fri" without duplicating it. Weekdays you don't list fall through to normal rotation, so `assign: friday=Alex` pins only Fridays. A template-level **assignee** pins *every* occurrence and wins outright. Names match loosely, same as elsewhere. |
 
 Anything else in the description (e.g. a `- [ ]` checklist) is copied onto each
@@ -515,6 +515,7 @@ out of the shared surfaces.
 | `/replace?issue=CHO-12` | Archive + recreate an issue (rotates assignee) |
 | `/done?match=<text>` | Mark the best-matching chore done |
 | `/cancel?match=<text>` | Cancel the best-matching chore (cleared, **not** counted as done) |
+| `/unarchive?issue=CHO-123` | Bring an issue back out of the archive — the undo for a wrong sweep |
 | `/claim?match=<text>&user=<name>` | Assign the best-matching chore to that person (powers the widget's 🙋) |
 | `/describe?q=<title>` | Diagnose what the engine parses for a template |
 | `/delcomment?issue=…&id=…` | Delete a bot-authored comment |

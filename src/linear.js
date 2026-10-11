@@ -637,7 +637,7 @@ export async function fetchSpawned(env, teamId, projectName) {
         first: 250
         filter: { team: { id: { eq: $teamId } }, project: { name: { eq: $project } } }
       ) {
-        nodes { id title dueDate assignee { id } state { type } }
+        nodes { id title dueDate assignee { id } state { type } labels { nodes { name } } }
       }
     }`;
   const data = await linearQuery(env, query, { teamId, project: projectName });
@@ -787,7 +787,7 @@ export async function fetchArchivableBefore(env, projectNames, beforeIso, limit)
 export async function fetchIssueBrief(env, id) {
   const query = `
     query Brief($id: String!) {
-      issue(id: $id) { identifier title url assignee { id name } }
+      issue(id: $id) { identifier title url assignee { id name } labels { nodes { id name } } }
     }`;
   try {
     const data = await linearQuery(env, query, { id });
@@ -796,6 +796,36 @@ export async function fetchIssueBrief(env, id) {
     console.error("issue brief lookup failed:", e.message);
     return null;
   }
+}
+
+// Bring an issue back out of the archive. The overdue sweep archives work
+// unfinished, so a mistake there (or a chore moved to a date the generator
+// doesn't produce) silently removes something real — this is the undo.
+// Tag a chore as deliberately taken on. Automatic rebalancing — notably the
+// opposite-pair repair — skips anything carrying this, so "I'll do both halves
+// today" sticks instead of being undone by the next run. Best-effort: a failed
+// tag must never fail the claim itself.
+export async function markClaimed(env, id) {
+  try {
+    const brief = await fetchIssueBrief(env, id);
+    const existing = (brief?.labels?.nodes || []).map((l) => l.id);
+    const [claimedId] = await getLabelIds(env, ["claimed"]);
+    if (!claimedId || existing.includes(claimedId)) return false;
+    const r = await updateIssueLabels(env, id, [...existing, claimedId]);
+    return !!r?.success;
+  } catch (e) {
+    console.error("markClaimed failed:", e.message);
+    return false;
+  }
+}
+
+export async function unarchiveIssue(env, id) {
+  const mutation = `
+    mutation Unarchive($id: String!) {
+      issueUnarchive(id: $id) { success }
+    }`;
+  const data = await linearQuery(env, mutation, { id });
+  return data.issueUnarchive;
 }
 
 export async function archiveIssue(env, id) {

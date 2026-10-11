@@ -90,6 +90,17 @@ Widget page (`src/widgetpage.js`):
   extract `<script>` from `renderWidgetPage(...)` and run `node --check` on it. A syntax check of
   `widgetpage.js` itself passes regardless, since the broken code is inside a string.
 
+Markers that protect manual intent (labels on the generated chore, not the template):
+- **`snoozed`** — set by `/chores snooze`. A snoozed chore sits on a date its template never
+  generates, which is indistinguishable from a stale copy left by a schedule change, so the
+  reconcile pass would archive it. Generation runs DAILY now, so without this a snooze was
+  usually destroyed within 24h. Reconcile skips anything carrying it.
+- **`claimed`** — set by every claim path (digest dropdown, `/chores claim`, widget `/claim`).
+  Exempts the chore from automatic rebalancing, notably the `opposite:` re-split: taking on both
+  halves of a pair is a legitimate choice and must stick.
+- `opposite:` is re-checked on every run, not just at generation — the pairing is decided once at
+  creation and anything moving either side afterwards used to break it silently.
+
 Weekly recap:
 - Covers the **finished week ending yesterday**, not a window including today — every day is
   final, so "not completed" unambiguously means missed.

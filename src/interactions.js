@@ -29,6 +29,7 @@ import {
   assignIssue,
   unassignIssue,
   fetchIssueBrief,
+  markClaimed,
   fetchRecentCompletedAssigned,
   fetchChoreHistory,
 } from "./linear.js";
@@ -170,6 +171,7 @@ async function handleComponent(interaction, env) {
           const before = await fetchIssueBrief(env, id);
           if ((await assignIssue(env, id, clicker))?.success) {
             claimed.add(v);
+            await markClaimed(env, id); // deliberate: exempt from auto re-split
             const prev = before?.assignee;
             // Re-claiming your own changes nothing, so stays quiet. Taking
             // someone else's names them; picking up unclaimed work doesn't.
@@ -836,7 +838,31 @@ async function choreCommand(interaction, env, ctx) {
         const newDue = addDays(issue.dueDate || localDate(new Date()).ymd, days);
         const res = await updateIssueDueDate(env, issue.id, newDue);
         if (!res?.success) return "Couldn't update the due date.";
-        return `😴 Snoozed **${issue.title}** ${days} day${days === 1 ? "" : "s"} → due ${newDue}.`;
+
+        // Mark it snoozed. A pushed-out chore now sits on a date its template
+        // doesn't generate, which looks exactly like a stale copy left behind
+        // by a schedule change — so the next reconcile would archive it. The
+        // label is what tells those two apart, and it rides along on this one
+        // occurrence, disappearing with it when it's completed.
+        let marked = true;
+        try {
+          const brief = await fetchIssueBrief(env, issue.id);
+          const existing = (brief?.labels?.nodes || []).map((l) => l.id);
+          const [snoozeId] = await getLabelIds(env, ["snoozed"]);
+          if (!snoozeId) marked = false;
+          else if (!existing.includes(snoozeId)) {
+            const r = await updateIssueLabels(env, issue.id, [...existing, snoozeId]);
+            marked = !!r?.success;
+          }
+        } catch (e) {
+          console.error("snooze label failed:", e.message);
+          marked = false;
+        }
+
+        return (
+          `😴 Snoozed **${issue.title}** ${days} day${days === 1 ? "" : "s"} → due ${newDue}.` +
+          (marked ? "" : "\n⚠️ Couldn't tag it as snoozed — it may be tidied up by tomorrow's sync.")
+        );
       });
     }
     case "skip": {
@@ -935,6 +961,7 @@ async function choreCommand(interaction, env, ctx) {
         const prev = issue.assignee;
         const res = await assignIssue(env, issue.id, userId);
         if (!res?.success) return "Couldn't assign that chore.";
+        await markClaimed(env, issue.id); // deliberate: exempt from auto re-split
         // Announce in the due channel rather than wherever this was typed, so
         // it reaches the person who had it regardless of where you ran it.
         const announced = await announceClaim(env, {

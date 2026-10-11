@@ -29,6 +29,8 @@ import {
   getTeamId,
   markChoreDone,
   cancelChore,
+  unarchiveIssue,
+  markClaimed,
   fetchUndatedActive,
   findActiveByTitle,
   assignIssue,
@@ -527,6 +529,16 @@ async function handleRequest(request, env, ctx) {
         headers: { "Content-Type": "application/json" },
       });
     }
+    if (url.pathname === "/unarchive") {
+      // Undo an archive — the sweep removes unfinished work, so a wrong call
+      // there needs a way back. Takes an issue identifier, e.g. CHO-359.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const issue = url.searchParams.get("issue");
+      if (!issue) return new Response("need ?issue=CHO-123\n", { status: 400 });
+      const r = await unarchiveIssue(env, issue).catch((e) => ({ error: e.message }));
+      return new Response(`${JSON.stringify(r)}
+`, { status: r?.success ? 200 : 500 });
+    }
     if (url.pathname === "/claim") {
       // Take a chore onto your own plate — powers the widget's 🙋 on the other
       // person's work and on unclaimed chores.
@@ -547,6 +559,7 @@ async function handleRequest(request, env, ctx) {
       const prev = hits[0].assignee;
       const res = await assignIssue(env, hits[0].id, target.id);
       if (res?.success) {
+        await markClaimed(env, hits[0].id); // deliberate: exempt from auto re-split
         // The same notice the slash command and the digest dropdown post, in
         // the same channel — however the chore happened to be picked up.
         ctx.waitUntil(

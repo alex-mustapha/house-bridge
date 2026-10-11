@@ -649,6 +649,11 @@ export async function runWeek(env, opts = {}) {
       if (pausedTitles.has(key)) { toReconcile.push(n.id); continue; } // template now paused
       if (!titlesWithDef.has(key)) continue; // no template -> leave it
       if (accumulatingTitles.has(key)) continue; // may be a make-up
+      // Deliberately moved by `/chores snooze`. A snoozed chore sits on a date
+      // its template never generates, which is indistinguishable from a stale
+      // copy left behind by a schedule change — so without this marker the next
+      // reconcile archives the very thing someone just asked to postpone.
+      if ((n.labels?.nodes || []).some((l) => (l.name || "").toLowerCase() === "snoozed")) continue;
       if (!correctKeys.has(`${teamId}::${n.title}@${n.dueDate}`)) toReconcile.push(n.id);
     }
   }
@@ -845,9 +850,21 @@ export async function runWeek(env, opts = {}) {
       if (!e.c.opposite || e.skip) continue;
       const allowed = allowedOn(e.dueDate);
       if (!allowed.length) { e.skip = true; continue; }
-      const sib = plan.find(
+      // The partner may be in this run's plan, or may already have been
+      // materialized by an earlier one — in which case it isn't in `plan` at
+      // all. Only checking the plan meant the pairing silently degraded to
+      // load-balancing whenever the two were generated on different days.
+      const sibPlanned = plan.find(
         (x) => x.c.teamId === e.c.teamId && x.c.title === e.c.opposite && x.dueDate === e.dueDate,
       );
+      const sibExisting = (ctx.spawned[e.c.teamId] || []).find(
+        (n) => n.title === e.c.opposite && n.dueDate === e.dueDate && n.assignee?.id,
+      );
+      const sib = sibPlanned?.assignee != null
+        ? sibPlanned
+        : sibExisting
+          ? { assignee: sibExisting.assignee.id }
+          : sibPlanned;
       let cand;
       if (sib?.assignee != null) {
         const other = rotation.find((id) => id !== sib.assignee);
@@ -882,6 +899,56 @@ export async function runWeek(env, opts = {}) {
   const maxCreates = Math.max(1, parseInt(env.GEN_MAX_CREATES || "40", 10) || 40);
   const budget = Math.max(0, maxCreates - archives.length);
   for (const id of archives) await archiveIssue(env, id);
+
+
+  // REPAIR `opposite:` PAIRS.
+  //
+  // The pairing is decided once, when the chore is generated. Anything that
+  // moves either side afterwards — a claim, a take-over, pause cover, the
+  // sweep-debt rule, or an edit straight in Linear — leaves both chores on the
+  // same person with nothing to notice. Both halves then land on one of us on
+  // the same day, which is exactly what the pairing exists to prevent.
+  //
+  // So re-check it every run rather than trusting the decision made at
+  // creation. Only the `opposite:` side moves; its partner is left alone, so
+  // this can't fight with whatever deliberately set the partner.
+  let repaired = 0;
+  if (rotation.length >= 2) {
+    const [A, B] = rotation;
+    for (const c of defs) {
+      if (!c.opposite || !c.teamId) continue;
+      const mine = (ctx.spawned[c.teamId] || []).filter(
+        (n) =>
+          n.title === c.title &&
+          n.dueDate &&
+          n.dueDate >= todayYmd &&
+          isOpen(n) &&
+          n.state?.type !== "started" &&
+          n.assignee?.id,
+      );
+      for (const n of mine) {
+        const partner = (ctx.spawned[c.teamId] || []).find(
+          (x) => x.title === c.opposite && x.dueDate === n.dueDate && x.assignee?.id,
+        );
+        if (!partner || partner.assignee.id !== n.assignee.id) continue; // already split
+        // Someone chose this. Taking on both halves of a pair is a legitimate
+        // thing to do, so a deliberate claim on either side wins over the
+        // automatic re-split.
+        const claimedEither = [n, partner].some((x) =>
+          (x.labels?.nodes || []).some((l) => (l.name || "").toLowerCase() === "claimed"),
+        );
+        if (claimedEither) continue;
+        const other = [A, B].find((id) => id !== partner.assignee.id);
+        if (!other) continue;
+        if (pausedUserIdsOn(n.dueDate).includes(other)) continue; // they're away; leave it
+        const r = await assignIssue(env, n.id, other).catch(() => null);
+        if (r?.success) {
+          repaired++;
+          console.log(`Re-split ${c.title} on ${n.dueDate}: both were on the same person.`);
+        }
+      }
+    }
+  }
 
   // Hand each swept chore's debt to the already-materialized next instance (the
   // create path is handled at assignment time). Only moves a chore that isn't
@@ -926,6 +993,7 @@ export async function runWeek(env, opts = {}) {
   const remaining = toCreate.length - created;
   return {
     created,
+    repairedPairs: repaired,
     archived: toArchive.length,
     moved: toReconcile.length,
     // How many swept chores were handed back to whoever let them slip (existing
