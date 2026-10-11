@@ -567,3 +567,20 @@ key), `LINEAR_WEBHOOK_SECRET`, `DISCORD_PUBLIC_KEY`, `DISCORD_BOT_TOKEN`,
 
 > **After changing slash commands**, hit `/register-commands?key=…` so Discord
 > picks them up. **After deploying**, commit and push.
+
+### Snoozing and rescheduling
+
+Pushing a chore out puts it on a date its template never generates — which is
+exactly what a stale copy left by a schedule change looks like. Reconcile would
+archive it, so a moved chore is tagged **`snoozed`** and reconcile skips it.
+
+- **`/chores snooze`** tags it, and warns in its reply if the tag fails.
+- **A due date changed by hand in Linear** is tagged too, via the webhook — a
+  dragged date is just as deliberate as a commanded one.
+- The overdue sweep measures lateness from the **new** due date, so snoozing
+  genuinely buys time rather than just deferring the axe.
+
+It will still be removed if you **pause the chore's template** (its future
+copies are retracted by design), if a **global pause** covers the new date, or
+— for weekly-or-more-frequent chores — if it ends up more than
+`SWEEP_GRACE_DAYS` past the date you moved it to.

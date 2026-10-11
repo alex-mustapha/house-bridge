@@ -31,6 +31,7 @@ import {
   cancelChore,
   unarchiveIssue,
   markClaimed,
+  markSnoozed,
   fetchUndatedActive,
   findActiveByTitle,
   assignIssue,
@@ -756,6 +757,18 @@ async function handleEvent(payload, env) {
     const proj = data?.project?.name;
     const choreProjects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
     if (proj && choreProjects.includes(proj)) return;
+  }
+
+  // A due date changed by hand — in Linear, or by anything other than the
+  // generator — is a deliberate reschedule. Tag it so the reconcile pass
+  // doesn't mistake it for a stale copy and archive it overnight. Our own
+  // /chores snooze tags it too; this is idempotent.
+  if (action === "update" && payload.updatedFrom && "dueDate" in payload.updatedFrom) {
+    const proj = data?.project?.name;
+    const choreProjects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
+    if (proj && choreProjects.includes(proj) && data?.id) {
+      await markSnoozed(env, data.id).catch((e) => console.error("auto-snooze tag failed:", e));
+    }
   }
 
   // Skip description-only edits: only notify when a field we actually surface

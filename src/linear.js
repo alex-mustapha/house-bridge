@@ -805,6 +805,24 @@ export async function fetchIssueBrief(env, id) {
 // opposite-pair repair — skips anything carrying this, so "I'll do both halves
 // today" sticks instead of being undone by the next run. Best-effort: a failed
 // tag must never fail the claim itself.
+// Tag a chore as deliberately rescheduled, so the reconcile pass leaves it
+// where it was put. Applied by `/chores snooze` and — via the webhook — by any
+// due-date change made straight in Linear, because a date dragged by hand is
+// just as deliberate as one moved by the command.
+export async function markSnoozed(env, id) {
+  try {
+    const brief = await fetchIssueBrief(env, id);
+    const existing = (brief?.labels?.nodes || []).map((l) => l.id);
+    const [snoozeId] = await getLabelIds(env, ["snoozed"]);
+    if (!snoozeId || existing.includes(snoozeId)) return false;
+    const r = await updateIssueLabels(env, id, [...existing, snoozeId]);
+    return !!r?.success;
+  } catch (e) {
+    console.error("markSnoozed failed:", e.message);
+    return false;
+  }
+}
+
 export async function markClaimed(env, id) {
   try {
     const brief = await fetchIssueBrief(env, id);
