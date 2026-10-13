@@ -107,12 +107,11 @@ export function mentionTag(env, name) {
 // wherever the command was typed, so the person losing the chore might never
 // see it. Taking over someone else's work @-mentions them; picking up
 // unclaimed work doesn't, since there's nobody to tell.
-export async function announceClaim(env, { taker, title, from } = {}) {
-  if (!taker || !title) return false;
-  const content = from
-    ? `🙋 **${taker}** claimed **${title}** from ${mentionTag(env, from)}.`
-    : `🙋 **${taker}** claimed **${title}**.`;
-  const body = { content, allowed_mentions: { parse: ["users"] } };
+// Post to the chores channel using the bot (falling back to the webhook).
+// Deliberately independent of Discord's interaction token: a dropdown action
+// confirms here even if the interaction response is late, lost, or the token
+// has expired, so an action never completes invisibly.
+export async function postToDue(env, body) {
   try {
     if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
       await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, body);
@@ -123,9 +122,17 @@ export async function announceClaim(env, { taker, title, from } = {}) {
       return true;
     }
   } catch (e) {
-    console.error("claim notice failed:", e.message);
+    console.error("due-channel post failed:", e.message);
   }
   return false;
+}
+
+export async function announceClaim(env, { taker, title, from } = {}) {
+  if (!taker || !title) return false;
+  const content = from
+    ? `🙋 **${taker}** claimed **${title}** from ${mentionTag(env, from)}.`
+    : `🙋 **${taker}** claimed **${title}**.`;
+  return postToDue(env, { content, allowed_mentions: { parse: ["users"] } });
 }
 
 function mentionFor(name, mentionMap) {

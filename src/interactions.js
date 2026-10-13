@@ -36,7 +36,7 @@ import {
 import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, reshuffleWindow, coverUserPause } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
-import { announceClaim } from "./discord.js";
+import { announceClaim, postToDue } from "./discord.js";
 import { recordLeisure } from "./leisure.js";
 import { flagChoreDetail, clearChoreDetail } from "./db.js";
 
@@ -1254,22 +1254,43 @@ async function runMenuAction(interaction, env, ctx, cid) {
 
     const legacy = cid === "done-menu"; // old menu: values were "<id>:<team>"
     const vals = interaction.data?.values || [];
-    const clicker = vals.some((v) => v.startsWith("claim:")) ? await resolveCaller(env, interaction) : null;
+    // Resolve once: claims need it to assign, and done/cancel need it to name
+    // who acted in the channel confirmation.
+    const clicker = await resolveCaller(env, interaction).catch(() => null);
     // Track resolved work by ISSUE ID, not by option value: each chore now has
     // both a "✓ done" and a "✖ cancel" entry, and acting on either must remove
     // both from the rebuilt menu.
     const resolvedIds = new Set();
     const claimed = new Set();
     const tookOver = [];
+    const didDone = [];
+    const didCancel = [];
+    // Option labels carry the chore title (minus its ✓/✖/🙋 marker), so the
+    // confirmation can name chores without another Linear lookup.
+    const titleOf = (value) => {
+      for (const row of interaction.message?.components || []) {
+        for (const c of row.components || []) {
+          const hit = (c.options || []).find((o) => o.value === value);
+          if (hit) return hit.label.replace(/^[^\s]+\s*/, "").trim();
+        }
+      }
+      return "a chore";
+    };
     for (const v of vals) {
       const [action, id, team] = legacy ? ["done", ...v.split(":")] : v.split(":");
       try {
         if (action === "done") {
           const stateId = team ? await getDoneStateId(env, team) : null;
-          if (stateId && id && (await setIssueState(env, id, stateId))?.success) resolvedIds.add(id);
+          if (stateId && id && (await setIssueState(env, id, stateId))?.success) {
+            resolvedIds.add(id);
+            didDone.push(titleOf(v));
+          }
         } else if (action === "cancel") {
           const stateId = team ? await getCanceledStateId(env, team) : null;
-          if (stateId && id && (await setIssueState(env, id, stateId))?.success) resolvedIds.add(id);
+          if (stateId && id && (await setIssueState(env, id, stateId))?.success) {
+            resolvedIds.add(id);
+            didCancel.push(titleOf(v));
+          }
         } else if (action === "claim" && clicker && id) {
           // Read the current owner first: the mutation only reports the new
           // state, and the notification needs to name who it came off.
@@ -1292,6 +1313,21 @@ async function runMenuAction(interaction, env, ctx, cid) {
         /* skip this one */
       }
     }
+    // Confirm in the chores channel. This is the durable record of what the
+    // dropdown did: it goes through the bot token, so it lands even if the
+    // interaction response is late or its token has expired — which is exactly
+    // the case that made a successful claim look like a failure. Claims are
+    // announced separately just below, with the previous owner @-mentioned.
+    if (didDone.length || didCancel.length) {
+      const users = await getUsers(env).catch(() => []);
+      const me = users.find((u) => u.id === clicker);
+      const who = me?.name || me?.displayName || "Someone";
+      const bits = [];
+      if (didDone.length) bits.push(`✅ **${who}** marked **${didDone.join("**, **")}** done`);
+      if (didCancel.length) bits.push(`❌ **${who}** cancelled **${didCancel.join("**, **")}**`);
+      ctx?.waitUntil?.(postToDue(env, { content: bits.join("\n"), allowed_mentions: { parse: [] } }));
+    }
+
     // Always announce in the due channel, never wherever the click happened —
     // the point is that the person who no longer owns it finds out.
     if (tookOver.length) {

@@ -353,6 +353,12 @@ only your own. Ownership is matched by Linear **user id**, not name.
   picking up unclaimed work doesn't, since there's nobody to tell. `/chores
   claim` replies ephemerally and lets that one notice be the public record,
   rather than posting into whichever channel you happened to type in.
+- **Every dropdown action confirms in the chores channel** when it completes —
+  `✅ Kristal marked Clean the Kitchen done`, `❌ Alex cancelled Trash`, and the
+  existing claim notice. Posted with the bot token, so it is **independent of
+  the interaction**: it lands even if the interaction response is late, lost, or
+  its token has expired. That's the durable record of what happened; the message
+  rewrite is just the convenience.
 - **Dropdown actions are acknowledged immediately, then done in the
   background.** A single claim costs roughly seven Linear round-trips (resolve
   the caller, read the issue, assign, tag it `claimed`, look up names to
