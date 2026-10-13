@@ -49,7 +49,7 @@ import {
 } from "./linear.js";
 import { frequentChoreTitles, runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, describeAllTemplates, parseDuration, processExpiredPauses, choreCost } from "./recurring.js";
 import { computeStats } from "./stats.js";
-import { byDayFromIssues, choreStreak } from "./streak.js";
+import { byDayFromIssues, choreStreak, STREAK_WINDOW_DAYS } from "./streak.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
 import { recordLeisure, autoLogLeisure } from "./leisure.js";
@@ -179,7 +179,11 @@ async function dayStatus(env, userName) {
       )
       .sort((a, b) => (b.completedAt || "").localeCompare(a.completedAt || ""))
       .map((i) => ({ title: i.title, url: i.url }));
-    const windowIssues = await fetchAssignedDueInWindow(env, u.id, ymdMinus(today, 59), today);
+    // Only as far back as the streak actually walks — now that archived issues
+    // are included, a 60-day window risks the 250-node cap.
+    const windowIssues = await fetchAssignedDueInWindow(
+      env, u.id, ymdMinus(today, STREAK_WINDOW_DAYS + 1), today,
+    );
     const streak = computeStreak(windowIssues, today, recurring);
 
     // Everyone else's outstanding work, so the widget can answer "is there

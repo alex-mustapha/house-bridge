@@ -519,15 +519,25 @@ export async function fetchAssignedActiveIssues(env, assigneeId) {
 
 // All of a user's dated chores (open + completed, excluding canceled) due within
 // [since, until] (YYYY-MM-DD). Used to compute the daily completion streak.
+// Feeds the widget/`/status` streak and nothing else, so it must see exactly
+// what the streak counts (see ./streak.js):
+//   * `includeArchived: true` — the sweep archives missed chores, so without it
+//     the walk couldn't see the very misses that should break a run, and days
+//     whose issues had all been archived looked chore-free and got bridged. Same
+//     trap as `fetchChoreHistory`.
+//   * **No `canceled` filter.** Excluding cancelled issues in the *query* meant a
+//     day whose only chore was cancelled arrived here with zero issues and was
+//     bridged as chore-free instead of counted as resolved — which is why the
+//     widget read 4 while the dashboard read 5 for the same person.
 export async function fetchAssignedDueInWindow(env, assigneeId, since, until) {
   const query = `
     query DueWindow($id: ID!) {
       issues(
         first: 250
+        includeArchived: true
         filter: {
           assignee: { id: { eq: $id } }
           dueDate: { gte: "${since}", lte: "${until}" }
-          state: { type: { neq: "canceled" } }
         }
       ) {
         nodes { dueDate completedAt project { name } state { type } }
