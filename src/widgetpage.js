@@ -200,7 +200,9 @@ export function renderWidgetPage(user, status) {
       return;
     }
     const n = s.streak || 0;
-    streak.textContent = n > 0 ? "🔥 " + n + "-day streak" : "";
+    // "N-day streak" overclaimed: chore-free days are bridged, so this can
+    // span more calendar days than it counts. Same wording as the recap.
+    streak.textContent = n > 0 ? "🔥 " + n + " clear day" + (n === 1 ? "" : "s") : "";
     streak.className = "streak" + (n > 0 ? " show" : "") + (s.done && n > 0 ? " big" : "");
     const tasks = s.tasks || [];
     if (s.done) {

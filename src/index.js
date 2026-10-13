@@ -49,6 +49,7 @@ import {
 } from "./linear.js";
 import { frequentChoreTitles, runWeek, forceReplace, localDate, annotateTemplates, describeTemplate, describeAllTemplates, parseDuration, processExpiredPauses, choreCost } from "./recurring.js";
 import { computeStats } from "./stats.js";
+import { byDayFromIssues, choreStreak } from "./streak.js";
 import { verifyDiscordSignature, handleInteraction } from "./interactions.js";
 import { renderWidgetPage } from "./widgetpage.js";
 import { recordLeisure, autoLogLeisure } from "./leisure.js";
@@ -84,28 +85,15 @@ function ymdMinus(ymd, n) {
   return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10);
 }
 
-// Consecutive-day streak: walking back from `today`, count days where every
-// chore due that day is completed. Days with no chores bridge the streak (don't
-// count, don't break). Today not-yet-finished doesn't break it; a missed past
-// day does.
+// Per-user streak for the widget / `/status`. Definition lives in ./streak.js.
 function computeStreak(issues, today, recurringName) {
-  const byDay = new Map();
-  for (const i of issues) {
-    if (!i.dueDate || i.project?.name === recurringName) continue;
-    const e = byDay.get(i.dueDate) || { total: 0, done: 0 };
-    e.total++;
-    if (i.state?.type === "completed") e.done++;
-    byDay.set(i.dueDate, e);
-  }
-  let streak = 0;
-  for (let d = 0; d < 60; d++) {
-    const e = byDay.get(ymdMinus(today, d));
-    if (!e || e.total === 0) continue; // no chores that day — bridge
-    if (e.done === e.total) { streak++; continue; } // cleared the day
-    if (d === 0) continue; // today still in progress — don't break
-    break; // a past day was missed
-  }
-  return streak;
+  // Shared definition — see ./streak.js. This used to walk 60 days, count today,
+  // and treat a cancelled chore as a broken day, none of which matched the
+  // recap or the dashboard.
+  const byDay = byDayFromIssues(
+    issues.filter((i) => i.project?.name !== recurringName),
+  ).all;
+  return choreStreak(byDay || {}, today);
 }
 
 // Unassigned, non-template chores due within UNASSIGNED_LOOKAHEAD_DAYS (default

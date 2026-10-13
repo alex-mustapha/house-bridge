@@ -2,6 +2,7 @@
 // snapshots recent chore outcomes (upsert by issue id); /stats queries them.
 
 import { getTeamId, fetchChoreHistory } from "./linear.js";
+import { choreStreak, statusResolved } from "./streak.js";
 import { localDate } from "./recurring.js";
 
 const SCHEMA = `CREATE TABLE IF NOT EXISTS chore_log (
@@ -218,11 +219,13 @@ export async function queryDashboard(env, estimateOf, days = 30) {
   const byPerson = {};
   const effort = {};
   const missCount = {};
-  const dayMap = {}; // person -> { due -> hasMiss }  (full lookback, for streaks)
+  const dayMap = {}; // person -> { due -> {total,resolved} }  (for streaks)
   for (const r of rows) {
     const who = r.assignee || "Unassigned";
-    (dayMap[who] ||= {});
-    dayMap[who][r.due] = dayMap[who][r.due] || r.status === "missed";
+    const dm = (dayMap[who] ||= {});
+    const de = (dm[r.due] ||= { total: 0, resolved: 0 });
+    de.total++;
+    if (statusResolved(r.status)) de.resolved++;
     if (r.due < since) continue; // range window for the tallies below
     if (r.status === "missed") missCount[r.title] = (missCount[r.title] || 0) + 1;
     const p = (byPerson[who] ||= { onTime: 0, late: 0, missed: 0, canceled: 0 });
@@ -241,17 +244,13 @@ export async function queryDashboard(env, estimateOf, days = 30) {
   summary.completionPct = resolved ? Math.round((summary.done / resolved) * 100) : 0;
   summary.onTimePct = summary.done ? Math.round((summary.onTime / summary.done) * 100) : 0;
 
-  // Per-person streak (range-independent): walk back from yesterday.
+  // Per-person streak (range-independent). Shared definition — see ./streak.js.
+  // This used to walk 41 days and break only on `missed`, so it was the one
+  // implementation that (correctly) survived a cancellation while the widget and
+  // the recap were both zeroed by one.
   const streaks = {};
   for (const who of Object.keys(dayMap)) {
-    let s = 0;
-    for (let n = 1; n <= 41; n++) {
-      const hasMiss = dayMap[who][shift(n)];
-      if (hasMiss === undefined) continue;
-      if (hasMiss) break;
-      s++;
-    }
-    streaks[who] = s;
+    streaks[who] = choreStreak(dayMap[who], today);
   }
 
   const missed = Object.entries(missCount)

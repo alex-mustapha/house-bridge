@@ -2,6 +2,7 @@
 // "all done" celebration, weekly scoreboard) and posts them to webhooks.
 
 import { markPrefix } from "./marks.js";
+import { STREAK_FOOTNOTE } from "./streak.js";
 
 const COLORS = {
   created: 0x2ecc71, // green
@@ -375,14 +376,18 @@ export async function postViaBot(env, channelId, payload) {
   return res.ok;
 }
 
-// A single weekly-recap embed. One card rather than one per person, so the two
-// are directly comparable; each line leads with how much of their own load they
-// cleared (done / assigned), since a raw "done" count says nothing without the
-// denominator — 2 of 2 and 2 of 12 are very different weeks.
+// Weekly recap embed. Leads with **on-time %** because that's the number that
+// actually moves week to week; completion % was structurally pinned near the
+// same value and made every recap look identical. Cancellations get their own
+// count so they can't quietly inflate anything, lateness carries magnitude, and
+// there's exactly one actionable line at the bottom.
+//
+// Deliberately NOT in here: anything from the leisure log. That's one person's
+// private tracker and the shared surfaces must contain no trace of it.
 export function buildScoreboardMessage(stats) {
-  const { people, household, missed, window } = stats;
+  const { people, household, missed, chronic, window } = stats;
   const stamp = new Date().toISOString();
-  if (!people.length) {
+  if (!people.length && !household.total) {
     return {
       embeds: [
         { title: "📊 Weekly recap", description: "No chores were due last week.", color: 0x9b59b6, timestamp: stamp },
@@ -392,35 +397,94 @@ export function buildScoreboardMessage(stats) {
 
   // "▲ 12 pts" / "▼ 5 pts" against the week before — a number on its own can't
   // tell you whether things are getting better or worse.
-  const trend = (d) => (d === null ? "" : d > 0 ? ` ▲ ${d} pts` : d < 0 ? ` ▼ ${Math.abs(d)} pts` : " ·  no change");
+  const trend = (d, unit = " pts") =>
+    d === null || d === 0 ? "" : d > 0 ? ` ▲ ${d}${unit}` : ` ▼ ${Math.abs(d)}${unit}`;
   const pctText = (p) => (p === null ? "—" : `${p}%`);
 
-  const lines = [`**Household** — ${household.done} of ${household.total} done · **${pctText(household.pct)}**${trend(household.delta)}`, ""];
-  for (const p of people) {
-    lines.push(`**${p.name}** — ${p.done} of ${p.total} · **${pctText(p.pct)}**${trend(p.delta)}`);
-    const bits = [`✅ ${p.onTime} on time`];
-    if (p.late) bits.push(`⏰ ${p.late} late`);
-    if (p.missed) bits.push(`❌ ${p.missed} missed`);
-    // Labelled "chore-days" on purpose: it counts days you actually had chores
-    // and cleared them, so it can span more than a week and a chore-free week
-    // never builds one. Calling it an N-day streak was misleading.
-    if (p.streak) bits.push(`🔥 ${p.streak} chore-day${p.streak === 1 ? "" : "s"} clear`);
-    lines.push(bits.join(" · "));
+  const lines = [];
+
+  // Headline. With nothing scoreable (e.g. every chore cancelled) there's no
+  // percentage to lead with, and leading with "—%" in a red band read as a
+  // disaster week when nothing had actually gone wrong.
+  const scoreable = household.counted > 0;
+  if (scoreable) {
+    lines.push(`🎯 **${pctText(household.onTimePct)} on time**${trend(household.delta)}`);
+  } else {
+    lines.push("😌 **Quiet week** — nothing was left to score.");
+  }
+  const mix = scoreable ? [`${household.onTime} of ${household.counted} on time`] : [];
+  if (household.late) mix.push(`⏰ ${household.late} late`);
+  if (household.missed) mix.push(`❌ ${household.missed} missed`);
+  if (household.canceled) mix.push(`🚫 ${household.canceled} cancelled`);
+  if (mix.length) lines.push(mix.join(" · "));
+  lines.push("");
+
+  // How late is late? "5 late" treated one day and eighteen days the same.
+  if (household.avgLate !== null) {
+    const w = household.worst;
+    const worst = w && w.daysLate > household.avgLate ? ` — worst: ${w.title}, ${w.daysLate}d late` : "";
+    lines.push(`⏰ **Late by ${household.avgLate}d on average**${worst}`);
+    lines.push("");
+  }
+
+  // Per person — collapsed to one line when the two are close, because three
+  // lines implying a race nobody's winning is just noise.
+  const scored = people.filter((p) => p.onTimePct !== null);
+  const close =
+    scored.length === 2 && Math.abs(scored[0].onTimePct - scored[1].onTimePct) <= 10;
+  const streakBit = (p) => (p.streak ? ` · 🔥 ${p.streak} clear day${p.streak === 1 ? "" : "s"}` : "");
+  if (close) {
+    const runs = scored.filter((p) => p.streak);
+    lines.push(
+      `🤝 **Evenly matched** — ${scored
+        .map((p) => `${p.name} ${pctText(p.onTimePct)}`)
+        .join(", ")}` +
+        (runs.length ? `
+${runs.map((p) => `${p.name} 🔥 ${p.streak} clear`).join(" · ")}` : ""),
+    );
+    lines.push("");
+  } else {
+    for (const p of people) {
+      const head =
+        p.onTimePct === null
+          ? "nothing to score"
+          : `${pctText(p.onTimePct)} on time${trend(p.delta)}`;
+      lines.push(`**${p.name}** — ${head}${streakBit(p)}`);
+      const bits = [];
+      if (p.late) bits.push(`⏰ ${p.late} late${p.avgLate !== null ? ` (avg ${p.avgLate}d)` : ""}`);
+      if (p.missed) bits.push(`❌ ${p.missed} missed`);
+      if (p.canceled) bits.push(`🚫 ${p.canceled} cancelled`);
+      if (bits.length) lines.push(bits.join(" · "));
+    }
     lines.push("");
   }
 
   if (missed.length) {
-    const shown = missed.slice(0, 10).map((m) => `• ${m.title} — ${m.who}`);
-    if (missed.length > 10) shown.push(`• …and ${missed.length - 10} more`);
+    const shown = missed.slice(0, 8).map((m) => `• ${m.title} — ${m.who}, due ${fmtDue(m.dueDate)}`);
+    if (missed.length > 8) shown.push(`• …and ${missed.length - 8} more`);
     lines.push(`❌ **What slipped**\n${shown.join("\n")}`);
   } else {
-    lines.push("🎉 **Nothing slipped** — everything due last week got done.");
+    lines.push("🎉 **Nothing slipped** — everything due last week got resolved.");
   }
 
-  // Green when the household cleared most of its load, amber mid, red when
-  // more was missed than done.
-  const pct = household.pct ?? 0;
-  const color = pct >= 80 ? 0x2ecc71 : pct >= 50 ? 0xf39c12 : 0xe74c3c;
+  // One callout, not a list. A chore missed repeatedly is a scheduling problem,
+  // not a willpower problem, so the suggested action is to change the schedule.
+  if (chronic.length) {
+    const c = chronic[0];
+    lines.push("");
+    lines.push(
+      `👉 **Worth a look:** “${c.title}” has been missed ${c.n}× in the last 30 days.` +
+        ` Reschedule it, split it, or drop the cadence — \`/chores help\` has the options.`,
+    );
+  }
+
+  // Band tracks the headline metric so the colour means something. Previously
+  // it read completion %, which almost never left the green band.
+  const ot = household.onTimePct ?? 0;
+  const color = !scoreable
+    ? 0x9b59b6
+    : ot >= 85 ? 0x2ecc71 : ot >= 65 ? 0xf1c40f : ot >= 40 ? 0xe67e22 : 0xe74c3c;
+  const anyStreak = people.some((p) => p.streak);
   return {
     embeds: [
       {
@@ -428,10 +492,12 @@ export function buildScoreboardMessage(stats) {
         description: lines.join("\n").slice(0, 4000),
         color,
         timestamp: stamp,
+        ...(anyStreak ? { footer: { text: STREAK_FOOTNOTE } } : {}),
       },
     ],
   };
 }
+
 
 export function buildCapWarningEmbed(count, cap = 250) {
   const remaining = cap - count;
