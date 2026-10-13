@@ -109,7 +109,7 @@ function mentionMap(spec) {
 
 export async function handleInteraction(interaction, env, ctx, dispatch) {
   if (interaction.type === 1) return { type: 1 }; // PING -> PONG
-  if (interaction.type === 3) return handleComponent(interaction, env); // button click
+  if (interaction.type === 3) return handleComponent(interaction, env, ctx); // button click
   if (interaction.type === 4) return autocompleteResponse(interaction, env); // option autocomplete
   if (interaction.type === 2) {
     switch (interaction.data?.name) {
@@ -143,139 +143,33 @@ async function resolveCaller(env, interaction) {
 
 // Button/menu clicks (message components). The digest's actions dropdown carries
 // values "done:<id>:<team>" (mark done) or "claim:<id>:<team>" (assign to me).
-async function handleComponent(interaction, env) {
+async function handleComponent(interaction, env, ctx) {
   const cid = interaction.data?.custom_id || "";
 
   if (["actions-menu", "done-menu", "cancel-menu", "claim-menu"].includes(cid)) {
-    const legacy = cid === "done-menu"; // old menu: values were "<id>:<team>"
-    const vals = interaction.data?.values || [];
-    const clicker = vals.some((v) => v.startsWith("claim:")) ? await resolveCaller(env, interaction) : null;
-    // Track resolved work by ISSUE ID, not by option value: each chore now has
-    // both a "✓ done" and a "✖ cancel" entry, and acting on either must remove
-    // both from the rebuilt menu.
-    const resolvedIds = new Set();
-    const claimed = new Set();
-    const tookOver = [];
-    for (const v of vals) {
-      const [action, id, team] = legacy ? ["done", ...v.split(":")] : v.split(":");
-      try {
-        if (action === "done") {
-          const stateId = team ? await getDoneStateId(env, team) : null;
-          if (stateId && id && (await setIssueState(env, id, stateId))?.success) resolvedIds.add(id);
-        } else if (action === "cancel") {
-          const stateId = team ? await getCanceledStateId(env, team) : null;
-          if (stateId && id && (await setIssueState(env, id, stateId))?.success) resolvedIds.add(id);
-        } else if (action === "claim" && clicker && id) {
-          // Read the current owner first: the mutation only reports the new
-          // state, and the notification needs to name who it came off.
-          const before = await fetchIssueBrief(env, id);
-          if ((await assignIssue(env, id, clicker))?.success) {
-            claimed.add(v);
-            await markClaimed(env, id); // deliberate: exempt from auto re-split
-            const prev = before?.assignee;
-            // Re-claiming your own changes nothing, so stays quiet. Taking
-            // someone else's names them; picking up unclaimed work doesn't.
-            if (!prev?.id || prev.id !== clicker) {
-              tookOver.push({
-                title: before?.title || "a chore",
-                from: prev?.id ? prev.name : null,
-              });
-            }
-          }
+    // Acknowledge FIRST. Everything below is Linear round-trips — a single
+    // claim costs about seven (resolve caller, read the issue, assign, tag it
+    // claimed, look up names to announce) — and Discord gives an interaction
+    // three seconds before it shows the user an error. The work was completing
+    // fine; it was the acknowledgement that arrived too late. Type 6 leaves the
+    // message untouched until the background pass rewrites it below.
+    ctx?.waitUntil?.(
+      (async () => {
+        try {
+          await runMenuAction(interaction, env, ctx, cid);
+        } catch (e) {
+          console.error("menu action failed:", e);
+          // Some of it may well have landed — say so rather than leaving the
+          // click looking like it did nothing.
+          await followUp(
+            interaction,
+            "⚠️ That didn't complete cleanly — check the chore in Linear before retrying, " +
+              "part of it may have gone through.",
+          );
         }
-      } catch {
-        /* skip this one */
-      }
-    }
-    // Always announce in the due channel, never wherever the click happened —
-    // the point is that the person who no longer owns it finds out.
-    if (tookOver.length) {
-      const users = await getUsers(env).catch(() => []);
-      const who = users.find((u) => u.id === clicker);
-      const taker = who?.name || who?.displayName || "Someone";
-      for (const t of tookOver) {
-        ctx?.waitUntil?.(announceClaim(env, { taker, title: t.title, from: t.from }));
-      }
-    }
-
-    // Rebuild. Claiming now happens in its own row, so a chore picked up there
-    // has to be PROMOTED into the "mark done" row — otherwise you'd take
-    // something on and then have no way to tick it off from the same message.
-    const msg = interaction.message || {};
-    const promoted = [];
-    for (const row of msg.components || []) {
-      for (const c of row.components || []) {
-        if (c.type !== 3 || c.custom_id !== "claim-menu") continue;
-        for (const o of c.options || []) {
-          if (!claimed.has(o.value)) continue;
-          const [, id, team] = o.value.split(":");
-          promoted.push({
-            label: o.label.replace(/^🙋\s*/, "✓ "),
-            value: `done:${id}:${team || ""}`,
-            description: "just claimed by you",
-          });
-        }
-      }
-    }
-    let promotedPlaced = false;
-    const components = (msg.components || [])
-      .map((row) => ({
-        ...row,
-        components: (row.components || [])
-          .map((c) => {
-            if (
-              c.type === 3 &&
-              ["actions-menu", "done-menu", "cancel-menu", "claim-menu"].includes(c.custom_id)
-            ) {
-              const rowId = c.custom_id === "done-menu" ? "actions-menu" : c.custom_id;
-              // The take-over row lists chores belonging to someone else. Once
-              // one is claimed it's no longer a take-over for anybody, so it's
-              // dropped — unlike the main row, where a claimed chore becomes a
-              // "✓ done" option for its new owner.
-              const isClaimRow = c.custom_id === "claim-menu";
-              // Old "done-menu" rows stored "<id>:<team>"; current rows store
-              // "<action>:<id>:<team>". Pull the issue id from the right slot or
-              // pruning silently no-ops on an older digest.
-              const legacyRow = c.custom_id === "done-menu";
-              const optId = (v) => v.split(":")[legacyRow ? 0 : 1];
-              let opts = (c.options || [])
-                .filter((o) => !resolvedIds.has(optId(o.value)))
-                .filter((o) => !(isClaimRow && claimed.has(o.value)));
-              if (rowId === "actions-menu" && promoted.length && !promotedPlaced) {
-                opts = [...opts, ...promoted].slice(0, 25);
-                promotedPlaced = true;
-              }
-              return opts.length
-                ? { ...c, custom_id: rowId, options: opts, max_values: Math.min(opts.length, 25) }
-                : null;
-            }
-            return c;
-          })
-          .filter(Boolean),
-      }))
-      .filter((row) => (row.components || []).length);
-
-    // Nothing was assigned when the digest posted, so there was no "mark done"
-    // row to promote into — add one.
-    if (promoted.length && !promotedPlaced) {
-      components.unshift({
-        type: 1,
-        components: [
-          {
-            type: 3,
-            custom_id: "actions-menu",
-            placeholder: "✅ Mark done…",
-            min_values: 1,
-            max_values: Math.min(promoted.length, 25),
-            options: promoted.slice(0, 25),
-          },
-        ],
-      });
-    }
-    return {
-      type: 7,
-      data: { content: msg.content || "", embeds: msg.embeds || [], components, allowed_mentions: { parse: [] } },
-    };
+      })(),
+    );
+    return { type: 6 }; // DEFERRED_UPDATE_MESSAGE
   }
 
   if (cid.startsWith("done:")) {
@@ -524,12 +418,32 @@ function say(content) {
 
 // Edit the original (deferred) interaction reply once background work finishes.
 // Uses the interaction token (self-authorizing) — no bot auth needed.
-async function editInteractionReply(interaction, content) {
+// A new ephemeral message on an interaction that's already been acknowledged.
+// Used when deferred work fails: the user clicked something, got an instant ack,
+// and would otherwise just watch nothing happen.
+async function followUp(interaction, content) {
+  const url = `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`;
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, flags: EPHEMERAL }),
+    });
+  } catch (e) {
+    console.error("follow-up failed:", e.message);
+  }
+}
+
+async function editInteractionReply(interaction, payload) {
   const url = `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
+  // A string is the common case (a deferred command's text); an object lets a
+  // deferred COMPONENT interaction rewrite the whole message — embeds, menus
+  // and all — once its Linear work finishes.
+  const body = typeof payload === "string" ? { content: payload } : payload;
   const res = await fetch(url, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) console.error("Interaction follow-up failed:", res.status, await res.text());
 }
@@ -1332,3 +1246,144 @@ async function adminCommand(interaction, env, ctx, dispatch) {
     { ephemeral: true },
   );
 }
+
+// Does the actual work behind a digest dropdown, after the interaction has
+// already been acknowledged. Runs in waitUntil, so it can take as long as the
+// Linear calls need without Discord timing the user out.
+async function runMenuAction(interaction, env, ctx, cid) {
+
+    const legacy = cid === "done-menu"; // old menu: values were "<id>:<team>"
+    const vals = interaction.data?.values || [];
+    const clicker = vals.some((v) => v.startsWith("claim:")) ? await resolveCaller(env, interaction) : null;
+    // Track resolved work by ISSUE ID, not by option value: each chore now has
+    // both a "✓ done" and a "✖ cancel" entry, and acting on either must remove
+    // both from the rebuilt menu.
+    const resolvedIds = new Set();
+    const claimed = new Set();
+    const tookOver = [];
+    for (const v of vals) {
+      const [action, id, team] = legacy ? ["done", ...v.split(":")] : v.split(":");
+      try {
+        if (action === "done") {
+          const stateId = team ? await getDoneStateId(env, team) : null;
+          if (stateId && id && (await setIssueState(env, id, stateId))?.success) resolvedIds.add(id);
+        } else if (action === "cancel") {
+          const stateId = team ? await getCanceledStateId(env, team) : null;
+          if (stateId && id && (await setIssueState(env, id, stateId))?.success) resolvedIds.add(id);
+        } else if (action === "claim" && clicker && id) {
+          // Read the current owner first: the mutation only reports the new
+          // state, and the notification needs to name who it came off.
+          const before = await fetchIssueBrief(env, id);
+          if ((await assignIssue(env, id, clicker))?.success) {
+            claimed.add(v);
+            await markClaimed(env, id); // deliberate: exempt from auto re-split
+            const prev = before?.assignee;
+            // Re-claiming your own changes nothing, so stays quiet. Taking
+            // someone else's names them; picking up unclaimed work doesn't.
+            if (!prev?.id || prev.id !== clicker) {
+              tookOver.push({
+                title: before?.title || "a chore",
+                from: prev?.id ? prev.name : null,
+              });
+            }
+          }
+        }
+      } catch {
+        /* skip this one */
+      }
+    }
+    // Always announce in the due channel, never wherever the click happened —
+    // the point is that the person who no longer owns it finds out.
+    if (tookOver.length) {
+      const users = await getUsers(env).catch(() => []);
+      const who = users.find((u) => u.id === clicker);
+      const taker = who?.name || who?.displayName || "Someone";
+      for (const t of tookOver) {
+        ctx?.waitUntil?.(announceClaim(env, { taker, title: t.title, from: t.from }));
+      }
+    }
+
+    // Rebuild. Claiming now happens in its own row, so a chore picked up there
+    // has to be PROMOTED into the "mark done" row — otherwise you'd take
+    // something on and then have no way to tick it off from the same message.
+    const msg = interaction.message || {};
+    const promoted = [];
+    for (const row of msg.components || []) {
+      for (const c of row.components || []) {
+        if (c.type !== 3 || c.custom_id !== "claim-menu") continue;
+        for (const o of c.options || []) {
+          if (!claimed.has(o.value)) continue;
+          const [, id, team] = o.value.split(":");
+          promoted.push({
+            label: o.label.replace(/^🙋\s*/, "✓ "),
+            value: `done:${id}:${team || ""}`,
+            description: "just claimed by you",
+          });
+        }
+      }
+    }
+    let promotedPlaced = false;
+    const components = (msg.components || [])
+      .map((row) => ({
+        ...row,
+        components: (row.components || [])
+          .map((c) => {
+            if (
+              c.type === 3 &&
+              ["actions-menu", "done-menu", "cancel-menu", "claim-menu"].includes(c.custom_id)
+            ) {
+              const rowId = c.custom_id === "done-menu" ? "actions-menu" : c.custom_id;
+              // The take-over row lists chores belonging to someone else. Once
+              // one is claimed it's no longer a take-over for anybody, so it's
+              // dropped — unlike the main row, where a claimed chore becomes a
+              // "✓ done" option for its new owner.
+              const isClaimRow = c.custom_id === "claim-menu";
+              // Old "done-menu" rows stored "<id>:<team>"; current rows store
+              // "<action>:<id>:<team>". Pull the issue id from the right slot or
+              // pruning silently no-ops on an older digest.
+              const legacyRow = c.custom_id === "done-menu";
+              const optId = (v) => v.split(":")[legacyRow ? 0 : 1];
+              let opts = (c.options || [])
+                .filter((o) => !resolvedIds.has(optId(o.value)))
+                .filter((o) => !(isClaimRow && claimed.has(o.value)));
+              if (rowId === "actions-menu" && promoted.length && !promotedPlaced) {
+                opts = [...opts, ...promoted].slice(0, 25);
+                promotedPlaced = true;
+              }
+              return opts.length
+                ? { ...c, custom_id: rowId, options: opts, max_values: Math.min(opts.length, 25) }
+                : null;
+            }
+            return c;
+          })
+          .filter(Boolean),
+      }))
+      .filter((row) => (row.components || []).length);
+
+    // Nothing was assigned when the digest posted, so there was no "mark done"
+    // row to promote into — add one.
+    if (promoted.length && !promotedPlaced) {
+      components.unshift({
+        type: 1,
+        components: [
+          {
+            type: 3,
+            custom_id: "actions-menu",
+            placeholder: "✅ Mark done…",
+            min_values: 1,
+            max_values: Math.min(promoted.length, 25),
+            options: promoted.slice(0, 25),
+          },
+        ],
+      });
+    }
+    // Rewrite the digest in place now the work is done. Same payload the
+    // synchronous version used to return; it just arrives a moment later.
+    await editInteractionReply(interaction, {
+      content: msg.content || "",
+      embeds: msg.embeds || [],
+      components,
+      allowed_mentions: { parse: [] },
+    });
+}
+

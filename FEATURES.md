@@ -353,6 +353,13 @@ only your own. Ownership is matched by Linear **user id**, not name.
   picking up unclaimed work doesn't, since there's nobody to tell. `/chores
   claim` replies ephemerally and lets that one notice be the public record,
   rather than posting into whichever channel you happened to type in.
+- **Dropdown actions are acknowledged immediately, then done in the
+  background.** A single claim costs roughly seven Linear round-trips (resolve
+  the caller, read the issue, assign, tag it `claimed`, look up names to
+  announce) and Discord times an interaction out after **3 seconds** — the work
+  was finishing fine, the acknowledgement just arrived too late. The digest
+  message is rewritten once the work completes; if it fails, an ephemeral note
+  says so rather than leaving the click looking like it did nothing.
 - *Why a menu, not emoji reactions:* reactions need a persistent Discord Gateway a
   serverless Worker can't hold; menu/button interactions arrive over the same HTTP
   path as slash commands.
