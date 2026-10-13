@@ -103,12 +103,42 @@ Markers that protect manual intent (labels on the generated chore, not the templ
 
 Weekly recap:
 - Covers the **finished week ending yesterday**, not a window including today — every day is
-  final, so "not completed" unambiguously means missed.
+  final, so "not completed" unambiguously means missed. It stays **weekly**, unconditionally —
+  not "only when something changed".
 - `fetchChoreHistory` must keep **`includeArchived: true`**. The Monday cron sweeps last week's
   unfinished chores (step 1) *before* the recap posts (step 4); excluding archived meant the
   recap couldn't see the misses that had just been swept and under-reported badly.
-- The streak is **chore-days** (days you had chores and cleared them), not calendar days. Don't
-  relabel it "N-day streak" — that read as consecutive days while actually spanning up to 30.
+- **Leads with on-time %, not completion %.** Completion sat near the same value every week
+  (missed weekly chores get swept, rarer ones stay open), so the headline number never moved.
+  Don't promote completion % back to the headline.
+- `computeStats` must branch on `state.type === "canceled"` **before** the `completedAt` check.
+  A cancelled chore has no `completedAt`, so it used to fall through and be tallied as *missed* —
+  deflating the ratio and listing deliberately-cancelled chores under "what slipped".
+- Lateness carries **magnitude** (avg days late + worst offender by name); "5 late" hid the
+  difference between one day and eighteen.
+- The per-person block **collapses to one line** when the two are within 10 points, and a week
+  with nothing scoreable reads as a quiet week (purple) rather than a red-band disaster.
+- **Never put leisure data in the recap** — it's one person's private tracker.
+
+Streaks — ONE definition, in `src/streak.js`:
+- There used to be three independent implementations (widget `computeStreak`, recap `streakFor`,
+  dashboard `queryDashboard`) and they reported **three different numbers for the same person on
+  the same day** (0 / 0 / 5). They disagreed on the window (60/30/41 days), on whether today
+  counted, and — the one that actually caused it — on whether a **cancelled** chore breaks a run.
+  All three now call `choreStreak`. **Don't re-fork it.**
+- The definition: a day counts when you had chores due and **resolved all of them — done OR
+  cancelled**. Cancelling is a legitimate outcome (`statusOf` already keeps it out of the
+  completion ratio), so it must not break a run either. Chore-free days are **bridged**. **Today
+  is excluded** — a streak is a record of finished days.
+- Sharing the definition is **not sufficient**: the data feeding it must match too.
+  `fetchAssignedDueInWindow` (streak-only) had a `neq: "canceled"` query filter and no
+  `includeArchived`, so cancelled and swept rows never reached the helper and whole days looked
+  chore-free. Both removed. If a surface's number drifts again, suspect its **query** first.
+- Wording is shared on purpose: **"N clear days"** plus `STREAK_FOOTNOTE`. "N-day streak"
+  overclaimed calendar days; "N chore-days clear" was jargon.
+- The **leisure** streak (`db.js` `queryLeisure`) is a deliberately separate metric — consecutive
+  *logged* days that started clear. Don't fold it into `choreStreak`.
+- `/status` responses can be **edge-cached**; cache-bust before concluding a number is wrong.
 
 Missed chores:
 - **The default is cadence-derived (`defaultOnMiss`), not a constant.** Only weekly-or-more-
