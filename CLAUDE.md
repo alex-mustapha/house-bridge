@@ -171,6 +171,38 @@ Long horizon + reconciliation:
   pruned** (deprioritized).
 - Dates in `/chores pause` etc. are strict `YYYY-MM-DD` (a typo like `2026-07014` is rejected).
 
+Discord interaction deadlines (three different budgets — don't conflate them):
+- **Slash commands (type 2): 3s to ack, 15min to answer.** Use `deferAndRun` (returns type 5
+  immediately, does the work in `waitUntil`, then PATCHes `messages/@original`). Anything doing
+  Linear round-trips must go through it.
+- **Component clicks (type 3): same 3s.** Handled by acking with type 6 and rewriting the message
+  from the background pass.
+- **Autocomplete (type 4): 3s, and it CANNOT BE DEFERRED** — there is no type-5 equivalent, so
+  whatever the handler does must finish inside the budget. It also fires **once per keystroke**.
+  Treat every autocomplete branch as a hard latency budget: at most one small Linear query,
+  memoised. The `needswork` branch used to do two uncached sequential queries per keystroke (one
+  of them 250 nodes with `includeArchived`) and timed out in real use; it now uses
+  `fetchRecentCompleted` behind a 20s memo (`recentCompletedTitles`), measured ~100-230ms.
+- A timeout here does **not** mean the work didn't happen. Twice now the Linear/D1 write landed and
+  only the acknowledgement was lost — check `chore_detail_log` / Linear before assuming failure.
+- `getTeamId` is **cached per isolate** (`teamIdCache`). It used to re-query on every call.
+
+Linear query pagination:
+- **`first: 250` is not "all".** For this team 250 issues only reaches back ~66 days, so
+  `fetchChoreHistory`'s 120-day callers were silently getting ~66 days. Linear can't `orderBy`
+  issues by `completedAt`, so there's no safe way to choose which 250 — `fetchChoreHistory` now
+  pages through with a cursor (`maxPages` default 5, warns if it hits the bound). Any new
+  bulk query needs the same treatment.
+- Truncation here is silent and plausible-looking: it understated `marks.js` slip streaks and could
+  make a "who last completed this" lookup return nothing for an infrequent chore.
+
+Diagnostics:
+- **`[observability]` is on** (`wrangler.toml`), so request logs are retained and queryable. Before
+  that, `wrangler tail` was live-only and a failure from the previous day had to be reconstructed
+  from D1.
+- **`/recent-done?key=`** shows exactly what the `needswork` picker would offer plus its in-Worker
+  timing — that path can't otherwise be exercised without signing a Discord interaction.
+
 ## Gotchas
 - **Deploy → commit → push, same turn.** After every `npm run deploy`, immediately
   `git add -A && git commit && git push`. The repo must match what's deployed (a future GH

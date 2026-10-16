@@ -32,6 +32,7 @@ import {
   markClaimed,
   fetchRecentCompletedAssigned,
   fetchChoreHistory,
+  fetchRecentCompleted,
 } from "./linear.js";
 import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, reshuffleWindow, coverUserPause } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
@@ -222,6 +223,26 @@ async function autocompleteResponse(interaction, env) {
 }
 
 // Turn a list of strings into an autocomplete response (deduped, max 25).
+// Recently-completed chore titles, newest first, memoised briefly. The TTL
+// exists for autocomplete: Discord fires one interaction per keystroke, so
+// without it "bathroom" costs eight Linear round-trips. Short enough that a
+// chore completed a moment ago still shows up.
+const RECENT_DONE_TTL_MS = 20_000;
+let recentDoneCache = { at: 0, titles: [] };
+async function recentCompletedTitles(env) {
+  if (Date.now() - recentDoneCache.at < RECENT_DONE_TTL_MS) return recentDoneCache.titles;
+  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  if (!teamId) return [];
+  try {
+    const titles = (await fetchRecentCompleted(env, teamId, { days: 21 })).map((h) => h.title);
+    recentDoneCache = { at: Date.now(), titles };
+    return titles;
+  } catch (e) {
+    console.error("recent completions lookup failed:", e.message);
+    return recentDoneCache.titles; // stale beats empty in a picker
+  }
+}
+
 function acChoices(values) {
   const seen = new Set();
   const choices = [];
@@ -262,14 +283,15 @@ async function choreAutocomplete(interaction, env) {
     if (sub.name === "needswork") {
       // You flag a chore after it's been done, so suggest recent completions
       // rather than the active list.
-      const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
-      if (!teamId) return acChoices([]);
-      const since = localDate(new Date(Date.now() - 30 * 86_400_000)).ymd;
-      const hist = await fetchChoreHistory(env, teamId, since);
-      const titles = hist
-        .filter((h) => h.completedAt)
-        .sort((a2, b2) => (b2.completedAt || "").localeCompare(a2.completedAt || ""))
-        .map((h) => h.title);
+      //
+      // This branch has to answer inside Discord's 3s autocomplete budget, and
+      // autocomplete interactions CANNOT be deferred — there is no type-5
+      // equivalent for them. It used to do two sequential uncached Linear
+      // queries PER KEYSTROKE (getTeamId, then a 250-node includeArchived
+      // 30-day history), which measured 1-2s and tipped over the budget on any
+      // latency spike. Now: one small query, memoised for a few seconds so
+      // typing a word costs one round-trip instead of one per character.
+      const titles = await recentCompletedTitles(env);
       return acChoices(titles.filter(match));
     }
     if (sub.name === "unclaim") {

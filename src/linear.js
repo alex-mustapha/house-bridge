@@ -116,7 +116,13 @@ export async function fetchActiveIssueCount(env, hardCap = 500) {
   return { count, capped: hasNext };
 }
 
+// A team's id never changes, but this was re-queried on every call — including
+// once per keystroke from the slash-command autocomplete, which has a hard 3s
+// budget it cannot defer. Cached for the life of the isolate. Failures are not
+// cached, so a transient error doesn't stick.
+const teamIdCache = new Map();
 export async function getTeamId(env, teamKey) {
+  if (teamIdCache.has(teamKey)) return teamIdCache.get(teamKey);
   const query = `
     query TeamByKey($key: String!) {
       teams(filter: { key: { eq: $key } }, first: 1) {
@@ -124,7 +130,9 @@ export async function getTeamId(env, teamKey) {
       }
     }`;
   const data = await linearQuery(env, query, { key: teamKey });
-  return data.teams?.nodes?.[0]?.id || null;
+  const id = data.teams?.nodes?.[0]?.id || null;
+  if (id) teamIdCache.set(teamKey, id);
+  return id;
 }
 
 export async function getProjectId(env, name) {
@@ -408,11 +416,19 @@ export async function fetchUndatedActive(env, limit = 25) {
 // (step 1) before the recap runs (step 4), so excluding archived meant the
 // recap couldn't see the very misses that had just been swept and reported a
 // flatteringly small number.
-export async function fetchChoreHistory(env, teamId, since) {
+// Paginated. `first: 250` alone was SILENTLY TRUNCATING: 250 issues only reaches
+// back about 66 days for this team (verified against live data — the page ended
+// at Aug 10 with hasNextPage true), while callers ask for 120 days. Truncation
+// made `marks.js` understate slip streaks and could make a "who last completed
+// this" lookup come back empty for an infrequent chore even though a completion
+// existed. Linear won't order `issues` by completedAt, so there was no safe way
+// to pick which 250 to keep — the fix is to fetch them all.
+export async function fetchChoreHistory(env, teamId, since, { maxPages = 5 } = {}) {
   const query = `
-    query History($teamId: ID!) {
+    query History($teamId: ID!, $after: String) {
       issues(
         first: 250
+        after: $after
         includeArchived: true
         filter: {
           team: { id: { eq: $teamId } }
@@ -420,10 +436,46 @@ export async function fetchChoreHistory(env, teamId, since) {
         }
       ) {
         nodes { identifier title dueDate completedAt assignee { name } state { type } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }`;
+  const out = [];
+  let after = null;
+  for (let page = 0; page < maxPages; page++) {
+    const data = await linearQuery(env, query, { teamId, after });
+    const conn = data.issues;
+    out.push(...(conn?.nodes || []));
+    if (!conn?.pageInfo?.hasNextPage) return out;
+    after = conn.pageInfo.endCursor;
+  }
+  // Bounded so a runaway history can't eat the subrequest budget. Loud, because
+  // silently returning partial history is the bug this function just fixed.
+  console.warn(`fetchChoreHistory: stopped at maxPages=${maxPages}; history may be partial`);
+  return out;
+}
+
+// Recently completed chores across the team, titles first. Deliberately small
+// and un-archived: this feeds the `needswork` autocomplete, which must answer
+// inside Discord's 3s window. The old path called fetchChoreHistory (250 nodes,
+// includeArchived, 30 days) once per keystroke.
+export async function fetchRecentCompleted(env, teamId, { days = 14, first = 50 } = {}) {
+  const query = `
+    query RecentDone($teamId: ID!) {
+      issues(
+        first: ${first}
+        filter: {
+          team: { id: { eq: $teamId } }
+          state: { type: { eq: "completed" } }
+          completedAt: { gte: "-P${days}D" }
+        }
+      ) {
+        nodes { title completedAt assignee { name } }
       }
     }`;
   const data = await linearQuery(env, query, { teamId });
-  return data.issues?.nodes || [];
+  return (data.issues?.nodes || []).sort((a, b) =>
+    (b.completedAt || "").localeCompare(a.completedAt || ""),
+  );
 }
 
 // True if the team still has any active issue due on or before `onOrBefore`.

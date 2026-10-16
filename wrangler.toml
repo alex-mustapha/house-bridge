@@ -105,3 +105,12 @@ DISCORD_DUE_CHANNEL_ID = "1519809360170324069"
 binding = "DB"
 database_name = "chore-stats"
 database_id = "1f02a152-b650-443e-adb4-b9c71b8b9516"
+
+# Retained request logs. Without this, `wrangler tail` is live-only and there
+# is nothing to read after the fact — a Discord interaction that failed
+# yesterday had to be reconstructed from D1 instead of simply looked up.
+# Sampling stays at 1.0: this Worker handles a couple of hundred requests a
+# day, so there is no volume reason to drop any.
+[observability]
+enabled = true
+head_sampling_rate = 1.0

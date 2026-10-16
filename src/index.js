@@ -26,6 +26,7 @@ import {
   fetchActiveBreakdown,
   anyOpenDueByTeam,
   fetchChoreHistory,
+  fetchRecentCompleted,
   getTeamId,
   markChoreDone,
   cancelChore,
@@ -475,6 +476,30 @@ async function handleRequest(request, env, ctx) {
       } catch (e) {
         return new Response(`delete error: ${e?.message || e}\n`, { status: 500 });
       }
+    }
+    // The exact lookup behind the `needswork` chore autocomplete. That path runs
+    // inside Discord's 3s window and can't be deferred, so it needs to be
+    // checkable without signing a Discord interaction — this is how you see
+    // what the picker would offer, and how long it takes to produce it.
+    if (url.pathname === "/recent-done") {
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const days = parseInt(url.searchParams.get("days") || "21", 10);
+      const t0 = Date.now();
+      const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+      const rows = teamId ? await fetchRecentCompleted(env, teamId, { days }) : [];
+      return new Response(
+        JSON.stringify(
+          {
+            days,
+            ms: Date.now() - t0,
+            count: rows.length,
+            titles: [...new Set(rows.map((r) => r.title))].slice(0, 25),
+          },
+          null,
+          2,
+        ),
+        { headers: { "Content-Type": "application/json" } },
+      );
     }
     if (url.pathname === "/describe") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
