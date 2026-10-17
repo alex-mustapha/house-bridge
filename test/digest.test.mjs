@@ -7,6 +7,9 @@ import {
   buildDigestMessage,
   buildAllClearMessage,
   buildDigestMenu,
+  digestBytes,
+  fitDigestPayload,
+  DIGEST_BUDGET_BYTES,
 } from "../src/discord.js";
 
 const TODAY = "2026-10-17";
@@ -79,13 +82,24 @@ test("snooze is offered for dated chores only", () => {
   assert.match(snooze.options[0].label, /Dated/);
 });
 
-test("option values encode action:id:team so the handler can route them", () => {
+test("option values are action:issueId, with no repeated team id", () => {
+  // The team id used to be a third part: the same UUID on every option of every
+  // row, which helped push the message past Discord's total size cap.
   const rows = buildDigestMenu([mk(TODAY, "Alex", "X")], []);
   for (const row of rows) {
     for (const o of row.components[0].options) {
       const parts = o.value.split(":");
-      assert.equal(parts.length, 3, o.value);
+      assert.equal(parts.length, 2, `${o.value} should be action:issueId`);
       assert.ok(["done", "cancel", "claim", "snooze"].includes(parts[0]), parts[0]);
+    }
+  }
+});
+
+test("options carry no description — the embed above already says it", () => {
+  const rows = buildDigestMenu([mk(TODAY, "Alex", "X")], []);
+  for (const row of rows) {
+    for (const o of row.components[0].options) {
+      assert.equal(o.description, undefined, `${o.value} still has a description`);
     }
   }
 });
@@ -109,4 +123,95 @@ test("the embed description stays inside Discord's 4000-char limit", () => {
 test("the digest never leaks the private leisure tracker", () => {
   const m = buildDigestMessage([mk(TODAY, "Alex")], {}, TODAY, [], [], null);
   assert.ok(!/leisure/i.test(JSON.stringify(m)));
+});
+
+// --- size: the regression that silently stopped the digest posting ------------
+test("a busy day fits inside the Discord size budget", () => {
+  // 15 chores is a real day and is what got rejected at 13,374 bytes.
+  const issues = Array.from({ length: 15 }, (_, k) =>
+    mk(k % 3 === 0 ? "2026-10-15" : TODAY, k % 2 ? "Alex" : "Kristal",
+       `A realistically long chore title ${k}`));
+  const msg = buildDigestMessage(issues, {}, TODAY, [], [], null);
+  const payload = { ...msg, components: buildDigestMenu(issues, []) };
+  assert.ok(
+    digestBytes(payload) <= DIGEST_BUDGET_BYTES,
+    `${digestBytes(payload)}B exceeds the ${DIGEST_BUDGET_BYTES}B budget`,
+  );
+});
+
+test("sections are included by default and omitted only when asked", () => {
+  const issues = [mk(TODAY, "Alex", "Today"), mk("2026-10-19", "Alex", "Later")];
+  const anytime = [{ title: "Patch driveway", url: "u", createdAt: "2026-01-01" }];
+
+  const full = buildDigestMessage(issues, {}, TODAY, [], anytime, null);
+  assert.match(full.embeds[0].description, /Anytime/);
+  assert.match(full.embeds[0].description, /Upcoming/);
+
+  const noAnytime = buildDigestMessage(issues, {}, TODAY, [], anytime, null, { includeAnytime: false });
+  assert.ok(!/Anytime/.test(noAnytime.embeds[0].description));
+  assert.match(noAnytime.embeds[0].description, /Upcoming/, "upcoming survives the first cut");
+
+  const minimal = buildDigestMessage(issues, {}, TODAY, [], anytime, null, {
+    includeAnytime: false, includeUpcoming: false,
+  });
+  assert.ok(!/Anytime/.test(minimal.embeds[0].description));
+  assert.ok(!/Upcoming/.test(minimal.embeds[0].description));
+  assert.match(minimal.embeds[0].description, /Today/, "today is never shed");
+});
+
+test("shedding sections makes the payload strictly smaller", () => {
+  const issues = Array.from({ length: 12 }, (_, k) => mk(k < 6 ? TODAY : "2026-10-19", "Alex", `Chore ${k}`));
+  const anytime = [{ title: "Patch driveway", url: "u", createdAt: "2026-01-01" }];
+  const size = (o) => digestBytes(buildDigestMessage(issues, {}, TODAY, [], anytime, null, o));
+  const full = size({});
+  const noAny = size({ includeAnytime: false });
+  const least = size({ includeAnytime: false, includeUpcoming: false });
+  assert.ok(noAny < full, "dropping Anytime must shrink it");
+  assert.ok(least < noAny, "dropping Upcoming must shrink it further");
+});
+
+test("fitDigestPayload leaves a payload under budget untouched", () => {
+  const msg = buildDigestMessage([mk(TODAY, "Alex")], {}, TODAY, [], [], null);
+  const payload = { ...msg, components: buildDigestMenu([mk(TODAY, "Alex")], []) };
+  const r = fitDigestPayload(payload);
+  assert.deepEqual(r.dropped, []);
+  assert.equal(r.trimmedTo, null);
+  assert.equal(r.payload, payload, "must be the same object, not a rebuild");
+});
+
+test("fitDigestPayload sheds dropdowns, and never the Mark done row", () => {
+  const many = Array.from({ length: 25 }, (_, k) =>
+    mk(TODAY, "Alex", `An extremely long chore title used to blow the size budget ${k}`));
+  const msg = buildDigestMessage(many, {}, TODAY, [], [], null);
+  const payload = { ...msg, components: buildDigestMenu(many, []) };
+  const before = digestBytes(payload);
+
+  // A budget above the embed floor (fitDigestPayload only sheds COMPONENTS —
+  // the embed is the caller's job, via the includeAnytime/includeUpcoming
+  // levels) but below the full payload, so shedding is actually exercised.
+  // The achievable floor is the embed plus one trimmed "Mark done" row, so the
+  // budget has to leave room for that much.
+  const embedFloor = digestBytes({ ...msg, components: [] });
+  const budget = embedFloor + 1000;
+  const r = fitDigestPayload(payload, budget);
+
+  assert.ok(r.bytes < before, `expected shrinkage, got ${before}B -> ${r.bytes}B`);
+  assert.ok(r.bytes <= budget, `${r.bytes}B still over the ${budget}B budget`);
+  assert.ok(r.dropped.length > 0, "something should have been shed");
+  const left = r.payload.components.map((c) => c.components[0].custom_id);
+  assert.ok(left.includes("actions-menu"), "Mark done must never be dropped");
+  assert.ok(!r.dropped.includes("actions-menu"));
+});
+
+test("the embed can never alone exceed the budget, so a fit is always reachable", () => {
+  // buildDigestMessage caps the description at 4000 chars; that plus a minimal
+  // component set has to leave room, or fitDigestPayload could not succeed.
+  const many = Array.from({ length: 200 }, (_, k) =>
+    mk(TODAY, k % 2 ? "Alex" : "Kristal", `A very long chore title to pad the embed out ${k}`));
+  const msg = buildDigestMessage(many, {}, TODAY, [], [], null);
+  const floor = digestBytes({ ...msg, components: [] });
+  assert.ok(
+    floor < DIGEST_BUDGET_BYTES,
+    `embed floor ${floor}B leaves no room under the ${DIGEST_BUDGET_BYTES}B budget`,
+  );
 });

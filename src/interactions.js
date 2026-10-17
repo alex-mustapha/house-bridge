@@ -1263,6 +1263,12 @@ async function runMenuAction(interaction, env, ctx, cid) {
     // Resolve once: claims need it to assign, and done/cancel need it to name
     // who acted in the channel confirmation.
     const clicker = await resolveCaller(env, interaction).catch(() => null);
+    // Option values are now `action:issueId`. They used to carry the team id as
+    // a third part (dropped because repeating the same UUID 60 times helped push
+    // the message past Discord's size limit), and the oldest rows were
+    // `issueId:teamId`. Resolve the team once here so all three forms work — a
+    // digest posted before this change must keep functioning.
+    const fallbackTeam = await getTeamId(env, choresTeam(env)).catch(() => null);
     // Track resolved work by ISSUE ID, not by option value: each chore now has
     // both a "✓ done" and a "✖ cancel" entry, and acting on either must remove
     // both from the rebuilt menu.
@@ -1286,14 +1292,15 @@ async function runMenuAction(interaction, env, ctx, cid) {
     for (const v of vals) {
       const [action, id, team] = legacy ? ["done", ...v.split(":")] : v.split(":");
       try {
+        const teamId = team || fallbackTeam;
         if (action === "done") {
-          const stateId = team ? await getDoneStateId(env, team) : null;
+          const stateId = teamId ? await getDoneStateId(env, teamId) : null;
           if (stateId && id && (await setIssueState(env, id, stateId))?.success) {
             resolvedIds.add(id);
             didDone.push(titleOf(v));
           }
         } else if (action === "cancel") {
-          const stateId = team ? await getCanceledStateId(env, team) : null;
+          const stateId = teamId ? await getCanceledStateId(env, teamId) : null;
           if (stateId && id && (await setIssueState(env, id, stateId))?.success) {
             resolvedIds.add(id);
             didCancel.push(titleOf(v));
@@ -1362,11 +1369,10 @@ async function runMenuAction(interaction, env, ctx, cid) {
         if (c.type !== 3 || c.custom_id !== "claim-menu") continue;
         for (const o of c.options || []) {
           if (!claimed.has(o.value)) continue;
-          const [, id, team] = o.value.split(":");
+          const [, id] = o.value.split(":");
           promoted.push({
             label: o.label.replace(/^🙋\s*/, "✓ "),
-            value: `done:${id}:${team || ""}`,
-            description: "just claimed by you",
+            value: `done:${id}`,
           });
         }
       }

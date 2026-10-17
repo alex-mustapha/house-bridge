@@ -17,6 +17,9 @@ import {
   buildStatsEmbed,
   buildDigestMenu,
   buildAllClearMessage,
+  digestBytes,
+  fitDigestPayload,
+  DIGEST_BUDGET_BYTES,
   postViaBot,
   editViaBot,
   postToDiscord,
@@ -351,6 +354,40 @@ async function handleRequest(request, env, ctx) {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       // Just reposts today's chore list. Unlike /run-cron it does no generation,
       // no sweep, no archiving — nothing but the Discord post.
+      // `&dry=1` returns the exact payload instead of posting it, with the
+      // Discord limits that matter alongside it. There was no way to see what
+      // Discord was actually being sent, which is what made a silent rejection
+      // hard to diagnose.
+      if (url.searchParams.get("dry")) {
+        const built = await buildDigestPayload(env);
+        if (!built) return new Response("null" + "\n", { status: 200 });
+        const rows = (built.withMenu?.components || []).map((r) => {
+          const c = r.components?.[0] || {};
+          const opts = c.options || [];
+          return {
+            custom_id: c.custom_id,
+            options: opts.length,
+            min_values: c.min_values,
+            max_values: c.max_values,
+            dupValues: opts.length - new Set(opts.map((o) => o.value)).size,
+            longestLabel: opts.reduce((m, o) => Math.max(m, (o.label || "").length), 0),
+            longestDesc: opts.reduce((m, o) => Math.max(m, (o.description || "").length), 0),
+            longestValue: opts.reduce((m, o) => Math.max(m, (o.value || "").length), 0),
+          };
+        });
+        const report = {
+          empty: built.empty,
+          counts: { count: built.count, shown: built.shown, actionable: built.actionable },
+          contentLen: built.withMenu?.content?.length ?? null,
+          embedLen: built.withMenu?.embeds?.[0]?.description?.length ?? null,
+          rowCount: rows.length,
+          rows,
+          payload: built.withMenu,
+        };
+        return new Response(JSON.stringify(report, null, 2) + "\n", {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       const r = await postDigest(env).catch((e) => ({ error: e.message }));
       return new Response(`${JSON.stringify(r)}\n`, { status: 200 });
     }
@@ -1024,7 +1061,7 @@ async function buildDigestPayload(env) {
     return null;
   });
   const mentions = parseMentions(env.DISCORD_MENTIONS);
-  const msg = buildDigestMessage(shown, mentions, today, [], await anytimePool(env, 2), marks);
+  const anytime = await anytimePool(env, 2);
 
   // The dropdown stays scoped to what's actionable now — today, past due, and
   // any unassigned chore (claimable ahead of time). A select caps at 25
@@ -1033,13 +1070,45 @@ async function buildDigestPayload(env) {
   const actionable = all.filter(
     (i) => !i.dueDate || i.dueDate <= today || !i.assignee?.name,
   );
+  const components = buildDigestMenu(actionable, []);
+
+  // Discord refuses an oversized message outright (413 / code 40005), so on a
+  // busy day the digest has to give something up. It sheds CONTENT, in order of
+  // what matters least, and only when the full version would actually be
+  // rejected — a normal day renders everything:
+  //   1. the Anytime suggestions (undated, purely opportunistic)
+  //   2. then Upcoming, for everyone (later this week is context, not today)
+  // If even that is too big, fitDigestPayload drops whole dropdowns as a last
+  // resort. "Mark done" and today/past-due are never shed.
+  const LEVELS = [
+    { label: "full", includeAnytime: true, includeUpcoming: true },
+    { label: "without Anytime", includeAnytime: false, includeUpcoming: true },
+    { label: "without Anytime or Upcoming", includeAnytime: false, includeUpcoming: false },
+  ];
+  let msg = null;
+  let level = null;
+  let withMenu = null;
+  for (const lvl of LEVELS) {
+    msg = buildDigestMessage(shown, mentions, today, [], anytime, marks, lvl);
+    withMenu = { ...msg, components };
+    level = lvl.label;
+    if (digestBytes(withMenu) <= DIGEST_BUDGET_BYTES) break;
+  }
+  if (level !== "full") {
+    console.warn(`digest too large for Discord — rendered ${level} (${digestBytes(withMenu)}B)`);
+  }
+  const fitted = fitDigestPayload(withMenu);
+
   return {
     today,
     empty: false,
     count: all.length,
     shown: shown.length,
     actionable: actionable.length,
-    withMenu: { ...msg, components: buildDigestMenu(actionable, []) },
+    level,
+    bytes: fitted.bytes,
+    droppedRows: fitted.dropped,
+    withMenu: fitted.payload,
     plain: msg,
   };
 }
@@ -1054,9 +1123,20 @@ async function postDigest(env) {
   // (no menu) if the bot token / channel id aren't configured.
   if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
     const sent = await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, built.withMenu);
+    // Report the failure instead of claiming success. This returned
+    // `posted: true` regardless of what Discord said, so a rejected digest was
+    // indistinguishable from a delivered one — which is exactly how it went
+    // unnoticed.
+    if (!sent.ok) {
+      return {
+        posted: false,
+        count: built.count,
+        discord: { status: sent.status, error: sent.error },
+      };
+    }
     // Remember which message this is so completions from any surface can edit
     // it instead of adding a line to the channel.
-    if (sent?.id) {
+    if (sent.id) {
       await saveDigestMessage(env, {
         ymd: built.today,
         channelId: env.DISCORD_DUE_CHANNEL_ID,

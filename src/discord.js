@@ -87,7 +87,18 @@ function mentionFor(name, mentionMap) {
 // Daily digest of today's + overdue chores, grouped by assignee — each person's
 // past-due work listed above what's due today. Owners are @-pinged in `content`
 // (mentions only notify from content, not the embed).
-export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [], anytime = [], marks = null) {
+// `opts.includeAnytime` / `opts.includeUpcoming` let a caller render a smaller
+// digest. Both default to ON: the digest only ever sheds a section when the full
+// one would be REJECTED by Discord for size — it is not a routine trim.
+export function buildDigestMessage(
+  issues,
+  mentionMap,
+  today,
+  unassignedSoon = [],
+  anytime = [],
+  marks = null,
+  { includeAnytime = true, includeUpcoming = true } = {},
+) {
   // Person-first: everything one person owns sits under their own heading, with
   // their past-due work called out above what's due today. A single flat
   // past-due list made it impossible to see your own share at a glance — you
@@ -138,7 +149,7 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
       if (overdue.length || week.length) parts.push("📅 *Today*");
       parts.push(...todayish.map((i) => `• [${i.title}](${i.url})${mk(i)}`));
     }
-    if (week.length) {
+    if (includeUpcoming && week.length) {
       // Routine weekly chores are filtered out upstream, so what lands here is
       // the stuff worth a heads-up: ad-hoc, project work, and chores that come
       // round every few months.
@@ -155,7 +166,7 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
   // Undated work, oldest first. Nothing else in the digest can surface these —
   // every other list is keyed on a due date — so without this they're invisible
   // until someone goes looking in Linear.
-  if (anytime.length) {
+  if (includeAnytime && anytime.length) {
     const lines = anytime.map((i) => {
       const bits = [i.project, i.assignee, i.ageDays != null ? `${i.ageDays}d old` : null].filter(Boolean);
       return `• [${i.title}](${i.url})${bits.length ? ` — ${bits.join(" · ")}` : ""}`;
@@ -274,50 +285,32 @@ export function buildDigestMenu(issues, soon = []) {
   // means. Anything beyond a single day is a manual due-date edit on purpose.
   const snoozes = [];
 
+  // Option values are `action:issueId`. They used to carry the team id as a
+  // third part, but it is the same UUID on every option of every row — 36 bytes
+  // repeated up to 60 times on a busy day — and the handler resolves it once
+  // from env instead. Descriptions are gone for the same reason: the embed
+  // directly above lists every chore with its owner and due date, so repeating
+  // that per option bought nothing and cost roughly 3KB. Together these two
+  // pushed the message past Discord's total size limit (413 / code 40005) and
+  // the digest silently stopped posting.
   for (const i of issues) {
-    const team = i.team?.id || "";
     if (i.assignee?.name) {
-      dones.push({
-        label: `✓ ${i.title}`.slice(0, 100),
-        value: `done:${i.id}:${team}`,
-        description: `${i.assignee.name}${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
-      });
-      cancels.push({
-        label: `✖ ${i.title}`.slice(0, 100),
-        value: `cancel:${i.id}:${team}`,
-        description: `won't count as done${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
-      });
+      dones.push({ label: `✓ ${i.title}`.slice(0, 100), value: `done:${i.id}` });
+      cancels.push({ label: `✖ ${i.title}`.slice(0, 100), value: `cancel:${i.id}` });
       // Options are fixed when the message is posted, so one list serves both
       // people — the handler assigns to whoever actually clicked.
-      takeovers.push({
-        label: `🙋 ${i.title}`.slice(0, 100),
-        value: `claim:${i.id}:${team}`,
-        description: `currently ${i.assignee.name} — take it on`.slice(0, 100),
-      });
+      takeovers.push({ label: `🙋 ${i.title}`.slice(0, 100), value: `claim:${i.id}` });
     } else {
-      takeovers.push({
-        label: `🙋 ${i.title}`.slice(0, 100),
-        value: `claim:${i.id}:${team}`,
-        description: `unassigned${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
-      });
+      takeovers.push({ label: `🙋 ${i.title}`.slice(0, 100), value: `claim:${i.id}` });
     }
-  }
-  for (const i of issues) {
-    if (!i.dueDate) continue;
-    snoozes.push({
-      label: `😴 ${i.title}`.slice(0, 100),
-      value: `snooze:${i.id}:${i.team?.id || ""}`,
-      description: `due ${i.dueDate} → tomorrow`.slice(0, 100),
-    });
+    if (i.dueDate) {
+      snoozes.push({ label: `😴 ${i.title}`.slice(0, 100), value: `snooze:${i.id}` });
+    }
   }
 
   // Unclaimed work due later in the week — grabbable ahead of time.
   for (const i of soon) {
-    takeovers.push({
-      label: `🙋 ${i.title}`.slice(0, 100),
-      value: `claim:${i.id}:${i.teamId || ""}`,
-      description: `unassigned${i.dueDate ? ` · due ${i.dueDate}` : ""}`.slice(0, 100),
-    });
+    takeovers.push({ label: `🙋 ${i.title}`.slice(0, 100), value: `claim:${i.id}` });
   }
 
   // Each row stands alone: a day with only unassigned work still gets a claim
@@ -362,11 +355,18 @@ export async function postViaBot(env, channelId, payload) {
     },
     body: JSON.stringify(payload),
   });
+  const text = await res.text();
   if (!res.ok) {
-    console.error("Bot message post failed:", res.status, await res.text());
-    return null;
+    console.error("Bot message post failed:", res.status, text.slice(0, 600));
+    return { ok: false, status: res.status, error: text.slice(0, 600) };
   }
-  return await res.json().catch(() => null);
+  let message = null;
+  try {
+    message = JSON.parse(text);
+  } catch {
+    /* a 2xx with an unparseable body still counts as posted */
+  }
+  return { ok: true, status: res.status, id: message?.id || null, message };
 }
 
 // Edit a message the bot posted. `status` comes back so the caller can tell a
@@ -588,4 +588,59 @@ export async function postToDiscord(webhookUrl, body) {
   if (!res.ok) {
     console.error(`Discord webhook failed: ${res.status} ${await res.text()}`);
   }
+}
+
+// Discord rejects an oversized message with 413 / code 40005, and the cap is on
+// the WHOLE payload, not any single documented field: 13,374 bytes was refused
+// while 10,568 went through. Nothing exceeded a documented limit, so nothing
+// looked wrong — the digest just stopped appearing.
+//
+// The budget sits under the largest payload known to be accepted, with margin.
+export const DIGEST_BUDGET_BYTES = 9500;
+
+export const digestBytes = (payload) =>
+  new TextEncoder().encode(JSON.stringify(payload)).length;
+
+// Last resort, only after the content-shedding levels have all been tried: drop
+// whole dropdowns, then trim their options. Losing a dropdown is visible and
+// every action still has a slash command; a 413 is silent. "Mark done" is never
+// dropped.
+const SHED_ORDER = ["snooze-menu", "cancel-menu", "claim-menu"];
+
+export function fitDigestPayload(payload, budget = DIGEST_BUDGET_BYTES) {
+  const before = digestBytes(payload);
+  if (before <= budget) return { payload, bytes: before, dropped: [], trimmedTo: null };
+
+  let p = payload;
+  const dropped = [];
+  for (const id of SHED_ORDER) {
+    p = {
+      ...p,
+      components: (p.components || []).filter((r) => r.components?.[0]?.custom_id !== id),
+    };
+    dropped.push(id);
+    if (digestBytes(p) <= budget) break;
+  }
+
+  let trimmedTo = null;
+  for (const cap of [20, 15, 10, 5]) {
+    if (digestBytes(p) <= budget) break;
+    trimmedTo = cap;
+    p = {
+      ...p,
+      components: (p.components || []).map((r) => {
+        const c = r.components?.[0];
+        if (!c?.options || c.options.length <= cap) return r;
+        const options = c.options.slice(0, cap);
+        return { ...r, components: [{ ...c, options, max_values: Math.min(options.length, 25) }] };
+      }),
+    };
+  }
+
+  console.warn(
+    `digest still ${before}B over ${budget}B after shedding sections — dropped ` +
+      `[${dropped.join(", ")}]${trimmedTo ? `, options trimmed to ${trimmedTo}` : ""}, ` +
+      `now ${digestBytes(p)}B`,
+  );
+  return { payload: p, bytes: digestBytes(p), dropped, trimmedTo };
 }
