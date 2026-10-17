@@ -127,6 +127,9 @@ export function analyze(rows, { targetSplit = {}, flagCounts = {}, estimateOf } 
           onTime: g.onTime,
           avgLateDays: avgLate,
         },
+        detail:
+          `${g.title} — ${DOW[dueM.key]} → ${DOW[doneM.key]} ` +
+          `(${doneM.n} of ${done}, avg ${avgLate}d late${g.onTime === 0 ? ", never on time" : ""})`,
         recommendation:
           `Move ${g.title} from ${DOW[dueM.key]} to ${DOW[doneM.key]}` +
           (g.onTime === 0
@@ -143,6 +146,7 @@ export function analyze(rows, { targetSplit = {}, flagCounts = {}, estimateOf } 
         severity: 2,
         n: g.n,
         facts: { canceled: g.canceled, occurrences: g.n, rate: pct(g.canceled, g.n) },
+        detail: `${g.title} — cancelled ${g.canceled} of ${g.n} (${pct(g.canceled, g.n)}%)`,
         recommendation:
           `${g.title} was cancelled ${g.canceled} of ${g.n} times (${pct(g.canceled, g.n)}%). ` +
           `Cancelling is a deliberate "not this time", so it probably comes round more often ` +
@@ -158,6 +162,7 @@ export function analyze(rows, { targetSplit = {}, flagCounts = {}, estimateOf } 
         severity: 4,
         n: g.n,
         facts: { missed: g.missed, occurrences: g.n, rate: pct(g.missed, g.n) },
+        detail: `${g.title} — missed ${g.missed} of ${g.n} (${pct(g.missed, g.n)}%)`,
         recommendation:
           `${g.title} was missed ${g.missed} of ${g.n} times (${pct(g.missed, g.n)}%) — not ` +
           `cancelled, just not done. Either it is harder than its estimate, it lands at a bad ` +
@@ -173,6 +178,7 @@ export function analyze(rows, { targetSplit = {}, flagCounts = {}, estimateOf } 
         severity: 5,
         n: g.n,
         facts: { occurrences: g.n, missed: g.missed, canceled: g.canceled },
+        detail: `${g.title} — 0 of ${g.n} ever completed`,
         recommendation:
           `${g.title} has not been completed once in ${g.n} occurrences. If it matters, ` +
           `something about it has to change; if it does not, delete the template so it stops ` +
@@ -190,6 +196,8 @@ export function analyze(rows, { targetSplit = {}, flagCounts = {}, estimateOf } 
         severity: 1,
         n: g.n,
         facts: { missed: g.missed, completions: done, avgLateDays: avgLate },
+        detail:
+          `${g.title} — ${g.missed} missed, but only ${avgLate}d late when recorded`,
         recommendation:
           `${g.title} shows ${g.missed} misses, but when it is recorded it is only ${avgLate}d ` +
           `late on average. That usually means the work happened and the chore was not ticked. ` +
@@ -207,6 +215,7 @@ export function analyze(rows, { targetSplit = {}, flagCounts = {}, estimateOf } 
         severity: 2,
         n: count,
         facts: { flags: count },
+        detail: `${title} — flagged ${count} times`,
         recommendation:
           `${title} has been flagged "done but a detail was missed" ${count} times. Repeat ` +
           `flags on one chore usually mean its checklist is incomplete, rather than that ` +
@@ -244,6 +253,9 @@ export function analyze(rows, { targetSplit = {}, flagCounts = {}, estimateOf } 
         severity: 3,
         n: loadTotal,
         facts: { share: s.share, target: s.target, drift },
+        detail:
+          `${s.name} — ${s.share}% of effort vs ${s.target}% target ` +
+          `(${drift > 0 ? "+" : ""}${drift} pts)`,
         recommendation:
           `${s.name} carried ${s.share}% of completed effort against a ${s.target}% target ` +
           `(${drift > 0 ? "+" : ""}${drift} pts). Rotation is per-chore alternation, so a gap ` +
@@ -313,7 +325,14 @@ export function summarize(rows) {
 // rules stay pure and testable; everything that can fail at runtime is here.
 export async function gatherInsights(env, { days = 120, estimateOf, targetSplit } = {}) {
   if (!env.DB) return null;
-  const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  // `days <= 0` means all time. A sentinel lower bound keeps the query shape
+  // identical rather than branching the SQL; the window reported back is the
+  // earliest row actually found, so the post states the real span rather than
+  // a date from the year 1.
+  const allTime = !Number.isFinite(days) || days <= 0;
+  const since = allTime
+    ? "0001-01-01"
+    : new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
   const today = new Date().toISOString().slice(0, 10);
   const rows =
     (
@@ -343,9 +362,15 @@ export async function gatherInsights(env, { days = 120, estimateOf, targetSplit 
     console.error("insight flag lookup failed:", e.message);
   }
 
+  const earliest = rows.reduce(
+    (m, r) => (r.due_date && (!m || r.due_date < m) ? r.due_date : m),
+    null,
+  );
+
   return {
-    windowDays: days,
-    since,
+    windowDays: allTime ? null : days,
+    allTime,
+    since: earliest || (allTime ? today : since),
     until: today,
     summary: summarize(rows),
     ...analyze(rows, { targetSplit, flagCounts, estimateOf }),

@@ -15,17 +15,74 @@
 // render goes out instead. The feature degrades to "less pretty", never to
 // "silently missing".
 
-const KIND_LABEL = {
-  "never-done": "Never completed",
-  "wrong-weekday": "Scheduled on the wrong day",
-  "possibly-unlogged": "Probably happening, not being logged",
-  "chronically-missed": "Repeatedly missed",
-  "too-frequent": "Comes round too often",
-  "unclear-checklist": "Checklist may be incomplete",
-  "load-drift": "Effort split",
+// The problem and the fix belong to the CATEGORY, not to each chore. Stating
+// them per line meant the same two sentences repeated three times over, which
+// buried the one thing that differed: which chore, and by how much.
+const KINDS = {
+  "never-done": {
+    label: "Never completed",
+    advice:
+      "Not once, across every occurrence. If these matter, something about them has to " +
+      "change; if they do not, delete the template so it stops generating.",
+  },
+  "wrong-weekday": {
+    label: "Scheduled on the wrong day",
+    advice:
+      "These are consistently finished later than their due date, on the same day each " +
+      "time. Move each one to the day it actually gets done and the lateness disappears " +
+      "without anyone changing what they do.",
+  },
+  "possibly-unlogged": {
+    label: "Probably happening, just not logged",
+    advice:
+      "Punctual whenever they are recorded, but absent often. That pattern usually means " +
+      "the work happened and the chore was never ticked. Worth confirming before changing " +
+      "any schedule.",
+  },
+  "chronically-missed": {
+    label: "Repeatedly missed",
+    advice:
+      "Not cancelled, just not done. Each is either harder than its estimate, lands at a " +
+      "bad time, or wants splitting into smaller pieces.",
+  },
+  "too-frequent": {
+    label: "Comes round too often",
+    advice:
+      "Cancelling is a deliberate “not this time”, so this often means they arrive more " +
+      "frequently than they need to. Consider a longer cadence.",
+  },
+  "unclear-checklist": {
+    label: "Checklist may be incomplete",
+    advice:
+      "Flagged as done-but-a-detail-was-missed more than once. Repeat flags on one chore " +
+      "usually mean the checklist is missing a step, rather than that someone keeps being " +
+      "careless.",
+  },
+  "load-drift": {
+    label: "Effort split",
+    advice:
+      "Rotation is per-chore alternation, so a gap this size usually comes from who picks " +
+      "up the extras rather than from the rotation itself.",
+  },
 };
 
-const fmtWindow = (d) => `${d.since} to ${d.until} (${d.windowDays} days)`;
+// Order groups the way the findings are already ordered: most actionable first.
+const groupFindings = (findings) => {
+  const groups = [];
+  const byKind = new Map();
+  for (const f of findings) {
+    if (!byKind.has(f.kind)) {
+      const g = { kind: f.kind, items: [] };
+      byKind.set(f.kind, g);
+      groups.push(g);
+    }
+    byKind.get(f.kind).items.push(f);
+  }
+  return groups;
+};
+
+const fmtWindow = (d) =>
+  `${d.since} to ${d.until} (${d.allTime ? "all time" : `${d.windowDays} days`})`;
 
 export function renderPlain(data) {
   const s = data.summary;
@@ -50,9 +107,20 @@ export function renderPlain(data) {
     return lines.join("\n");
   }
 
-  lines.push(`**${data.findings.length} thing${data.findings.length === 1 ? "" : "s"} worth a look**`);
-  for (const f of data.findings) {
-    lines.push(`• *${KIND_LABEL[f.kind] || f.kind}* — ${f.recommendation}`);
+  const groups = groupFindings(data.findings);
+  const n = data.findings.length;
+  lines.push(`**${n} thing${n === 1 ? "" : "s"} worth a look**`);
+
+  for (const g of groups) {
+    const meta = KINDS[g.kind] || { label: g.kind, advice: "" };
+    lines.push("");
+    lines.push(`**${meta.label}** (${g.items.length})`);
+    if (meta.advice) lines.push(`*${meta.advice}*`);
+    for (const f of g.items) {
+      // `detail` is facts only — the advice was already stated for the group.
+      // Older findings without one fall back to the standalone sentence.
+      lines.push(`• ${f.detail || f.recommendation}`);
+    }
   }
   return lines.join("\n");
 }
@@ -70,9 +138,12 @@ const SYSTEM = [
   "   the given ones, and you may point out when several share a cause.",
   "3. Do not moralise, praise, or scold. These are two adults reviewing a schedule,",
   "   not students being graded. Say what the data shows and what to change.",
-  "4. Be concise: a short opening line on where things stand, then the findings as",
-  "   a brief bulleted list. Under 250 words total.",
-  "5. Discord markdown only: ** for bold, * for italics, • for bullets. No headings,",
+  "4. GROUP the findings by category. State the problem and the fix once per",
+  "   category, then list the chores under it with only what differs (which chore,",
+  "   which day, how many times). Do not repeat the same advice on every line.",
+  "5. Be concise: a short opening line on where things stand, then the grouped",
+  "   findings. Under 250 words total.",
+  "6. Discord markdown only: ** for bold, * for italics, • for bullets. No headings,",
   "   no tables, no code blocks.",
 ].join("\n");
 
@@ -102,11 +173,17 @@ export async function writeWithClaude(env, data) {
                   window: { since: data.since, until: data.until, days: data.windowDays },
                   summary: data.summary,
                   effortSplit: data.split,
-                  findings: data.findings.map((f) => ({
-                    kind: f.kind,
-                    chore: f.title,
-                    facts: f.facts,
-                    computedRecommendation: f.recommendation,
+                  // Pre-grouped, so the model is not asked to work out the
+                  // categories itself — and so it cannot invent one.
+                  findingsByCategory: groupFindings(data.findings).map((g) => ({
+                    category: KINDS[g.kind]?.label || g.kind,
+                    sharedAdvice: KINDS[g.kind]?.advice || "",
+                    chores: g.items.map((f) => ({
+                      chore: f.title,
+                      facts: f.facts,
+                      computedDetail: f.detail || null,
+                      computedRecommendation: f.recommendation,
+                    })),
                   })),
                 },
                 null,

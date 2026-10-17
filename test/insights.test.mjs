@@ -228,7 +228,10 @@ const sampleData = () => {
 test("the plain render states the window and the findings", () => {
   const out = renderPlain(sampleData());
   assert.match(out, /2026-06-20 to 2026-10-18/);
-  assert.match(out, /Move Laundry from Sat to Sun/);
+  // Grouped: the category and its advice are stated once, and the chore line
+  // carries only what differs.
+  assert.match(out, /\*\*Scheduled on the wrong day\*\*/);
+  assert.match(out, /• Laundry — Sat → Sun/);
 });
 
 test("a quiet month says so rather than padding", () => {
@@ -242,7 +245,7 @@ test("a quiet month says so rather than padding", () => {
 test("without an API key the post falls back to the computed render", async () => {
   const { source, message } = await buildInsightsPost({}, sampleData());
   assert.equal(source, "computed", "no key must degrade to plain, not to silence");
-  assert.match(message.embeds[0].description, /Move Laundry/);
+  assert.match(message.embeds[0].description, /• Laundry — Sat → Sun/);
   assert.match(message.embeds[0].footer.text, /chores considered/);
 });
 
@@ -260,4 +263,61 @@ test("the post stays inside Discord's embed limit", async () => {
 test("the post never leaks the private leisure log", async () => {
   const { message } = await buildInsightsPost({}, sampleData());
   assert.ok(!/leisure/i.test(JSON.stringify(message)));
+});
+
+// --- grouping -----------------------------------------------------------------
+// The first render repeated the category label AND the full advice on every
+// line, so three wrong-weekday chores produced the same two sentences three
+// times and buried the only part that differed: which chore, and by how much.
+test("findings are grouped, with the advice stated once per category", () => {
+  const rows = [
+    ...weekly("Laundry", "2026-07-04", 8, 1),
+    ...weekly("Sweeping", "2026-07-02", 8, 3),
+    ...weekly("Mow", "2026-07-04", 4, 3, "late"),
+    ...weekly("Mow", "2026-09-05", 6, 0, "missed"),
+  ];
+  const data = {
+    windowDays: 120, since: "2026-06-20", until: "2026-10-18",
+    summary: summarize(rows), ...analyze(rows),
+  };
+  const out = renderPlain(data);
+
+  // The category heading appears exactly once even though two chores share it.
+  const headings = out.match(/\*\*Scheduled on the wrong day\*\*/g) || [];
+  assert.equal(headings.length, 1, "category stated once, not per chore");
+
+  // And the shared advice sentence likewise.
+  const advice = out.match(/Move each one to the day it actually gets done/g) || [];
+  assert.equal(advice.length, 1, "advice stated once, not per chore");
+
+  // Both chores are still listed, with their own numbers.
+  assert.match(out, /• Laundry — Sat → Sun/);
+  assert.match(out, /• Sweeping — Thu → Sun/);
+});
+
+test("each group reports how many chores are in it", () => {
+  const rows = [...weekly("A", "2026-07-04", 8, 1), ...weekly("B", "2026-07-02", 8, 3)];
+  const data = {
+    windowDays: 120, since: "2026-06-20", until: "2026-10-18",
+    summary: summarize(rows), ...analyze(rows),
+  };
+  assert.match(renderPlain(data), /\*\*Scheduled on the wrong day\*\* \(2\)/);
+});
+
+test("per-chore lines carry facts only, not repeated advice", () => {
+  const rows = weekly("Laundry", "2026-07-04", 8, 1);
+  const f = analyze(rows).findings[0];
+  assert.ok(f.detail, "every finding needs a terse detail string");
+  assert.ok(!/Move /.test(f.detail), "the advice belongs to the group, not the line");
+  assert.match(f.detail, /Laundry/);
+  assert.match(f.detail, /Sat → Sun/);
+});
+
+test("all time is labelled as such rather than as a day count", () => {
+  const out = renderPlain({
+    allTime: true, windowDays: null, since: "2026-06-25", until: "2026-10-17",
+    summary: summarize([]), findings: [], split: [], titlesConsidered: 0,
+  });
+  assert.match(out, /\(all time\)/);
+  assert.ok(!/null days/.test(out), "a null window must not render as 'null days'");
 });

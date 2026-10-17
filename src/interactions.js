@@ -1160,6 +1160,34 @@ async function adminCommand(interaction, env, ctx, dispatch) {
           const r = await callToolkit(dispatch, "/pin-dashboard");
           return r.ok ? "📌 Dashboard link posted and pinned." : adminFail(r);
         }
+        case "insights": {
+          // timeframe is an integer choice where 0 means all time, which is also
+          // the default when the option is omitted. `?days=` is always sent, so
+          // the endpoint cannot fall back to the monthly cron rolling window.
+          const days = Number.isFinite(o.timeframe) ? o.timeframe : 0;
+          const span =
+            days === 0 ? "all time" : days === 365 ? "the last year" : `the last ${days} days`;
+          const r = await callToolkit(
+            dispatch,
+            `/insights?days=${days}${o.preview ? "&dry=1" : ""}`,
+          );
+          if (!r.json) return adminFail(r);
+          if (o.preview) {
+            const j = r.json;
+            const head =
+              `🔎 **Chore review preview** — ${span}\n` +
+              `_${j.titlesConsidered} chores considered, ${j.findings.length} finding(s). ` +
+              `Nothing was posted._\n\n`;
+            // Trimmed to Discord's message limit: a preview that 400s is worse
+            // than a truncated one. The untrimmed text is what /insights returns.
+            return (head + j.body).slice(0, 1900);
+          }
+          return r.json.posted
+            ? `🔎 Chore review posted to the recap channel — ${span}, ` +
+                `**${r.json.findings}** finding(s)` +
+                (r.json.source === "computed" ? " (computed wording)." : " (worded by Claude).")
+            : `Nothing posted: ${r.json.reason || "unknown"}.`;
+        }
         case "cron": {
           const r = await callToolkit(dispatch, "/run-cron");
           return r.ok

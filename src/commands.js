@@ -187,6 +187,27 @@ export const COMMANDS = [
           { type: 5, name: "confirm", description: "Actually archive (default: dry run)", required: false },
         ],
       },
+      {
+        type: 1,
+        name: "insights",
+        description: "Post the chore review now — recommendations from the log (default: all time)",
+        options: [
+          {
+            type: 4,
+            name: "timeframe",
+            description: "How far back to look (default: all time)",
+            required: false,
+            choices: [
+              { name: "All time", value: 0 },
+              { name: "Last 30 days", value: 30 },
+              { name: "Last 90 days", value: 90 },
+              { name: "Last 6 months", value: 180 },
+              { name: "Last year", value: 365 },
+            ],
+          },
+          { type: 5, name: "preview", description: "Show it here instead of posting to #recap", required: false },
+        ],
+      },
       { type: 1, name: "cron", description: "Run the full daily cron now (generates + sweeps)" },
       { type: 1, name: "register", description: "Re-register slash commands after a deploy" },
     ],

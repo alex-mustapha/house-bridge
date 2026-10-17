@@ -263,7 +263,7 @@ async function handleRequest(request, env, ctx) {
       };
       const resp = await handleInteraction(interaction, env, ctx, dispatch);
       return new Response(JSON.stringify(resp), {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
 
@@ -351,7 +351,7 @@ async function handleRequest(request, env, ctx) {
           null,
           2,
         ),
-        { headers: { "Content-Type": "application/json" } },
+        { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
       );
     }
     if (url.pathname === "/digest") {
@@ -389,7 +389,7 @@ async function handleRequest(request, env, ctx) {
           payload: built.withMenu,
         };
         return new Response(JSON.stringify(report, null, 2) + "\n", {
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
         });
       }
       const r = await postDigest(env).catch((e) => ({ error: e.message }));
@@ -402,7 +402,7 @@ async function handleRequest(request, env, ctx) {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       const r = await refreshDigest(env).catch((e) => ({ error: e.message }));
       return new Response(JSON.stringify(r) + "\n", {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/run-week") {
@@ -415,7 +415,7 @@ async function handleRequest(request, env, ctx) {
       try {
         const report = await annotateTemplates(env);
         return new Response(JSON.stringify(report, null, 2), {
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
         });
       } catch (e) {
         return new Response(`annotate error: ${e?.stack || e?.message || e}\n`, { status: 500 });
@@ -427,7 +427,7 @@ async function handleRequest(request, env, ctx) {
       // worth checking before clearing a backlog.
       if (url.searchParams.get("dry")) {
         return new Response(JSON.stringify(await archiveOldChores(env, { dryRun: true }), null, 2), {
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
         });
       }
       const r = await archiveOldChores(env);
@@ -439,7 +439,7 @@ async function handleRequest(request, env, ctx) {
       const rows = await recentWebhooks(env, parseInt(url.searchParams.get("n") || "30", 10))
         .catch((e) => ({ error: e.message }));
       return new Response(JSON.stringify(rows, null, 2) + "\n", {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/insights") {
@@ -449,10 +449,14 @@ async function handleRequest(request, env, ctx) {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       const r = await postInsights(env, {
         dry: !!url.searchParams.get("dry"),
-        days: parseInt(url.searchParams.get("days") || "0", 10) || undefined,
+        // `days` present and 0 means ALL TIME, which `|| undefined` would have
+        // swallowed back into the default window.
+        days: url.searchParams.has("days")
+          ? parseInt(url.searchParams.get("days"), 10) || 0
+          : undefined,
       }).catch((e) => ({ error: e.message }));
       return new Response(JSON.stringify(r, null, 2) + "\n", {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/channels") {
@@ -509,7 +513,7 @@ async function handleRequest(request, env, ctx) {
         "archive summary": "DISCORD_WEBHOOK_<TEAM>, else DEFAULT",
       };
       return new Response(JSON.stringify({ webhooks: out, posts }, null, 2) + "\n", {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/webhookcheck") {
@@ -519,13 +523,13 @@ async function handleRequest(request, env, ctx) {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       const hooks = await listWebhooks(env).catch((e) => ({ error: e.message }));
       return new Response(JSON.stringify(hooks, null, 2) + "\n", {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/botcheck") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       return new Response(JSON.stringify(await botCheck(env), null, 2), {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/register-commands") {
@@ -586,7 +590,7 @@ async function handleRequest(request, env, ctx) {
         const pinRes = await fetch(`https://discord.com/api/v10/channels/${ch.id}/pins/${msg.id}`, { method: "PUT", headers: auth });
         return new Response(
           JSON.stringify({ posted: true, channel: ch.name, pinned: pinRes.ok, pinStatus: pinRes.status, url: dashUrl }, null, 2),
-          { headers: { "Content-Type": "application/json" } },
+          { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
         );
       } catch (e) {
         return new Response(`pin error: ${e?.message || e}\n`, { status: 500 });
@@ -624,7 +628,7 @@ async function handleRequest(request, env, ctx) {
           null,
           2,
         ),
-        { headers: { "Content-Type": "application/json" } },
+        { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
       );
     }
     if (url.pathname === "/describe") {
@@ -636,7 +640,7 @@ async function handleRequest(request, env, ctx) {
       // the calendar or chore list to look it up in the first place.
       const body = q ? await describeTemplate(env, q) : await describeAllTemplates(env);
       return new Response(JSON.stringify(body, null, 2), {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/done") {
@@ -651,7 +655,7 @@ async function handleRequest(request, env, ctx) {
       // log. Exposed so it can be tested and re-run without waiting for night.
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       return new Response(JSON.stringify(await autoLogLeisure(env), null, 2), {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/leisure") {
@@ -670,7 +674,7 @@ async function handleRequest(request, env, ctx) {
         note: url.searchParams.get("note"),
       });
       return new Response(JSON.stringify(r), {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/unarchive") {
@@ -1405,7 +1409,10 @@ async function postInsights(env, { dry = false, days } = {}) {
   }
 
   const data = await gatherInsights(env, {
-    days: days || parseInt(env.INSIGHTS_WINDOW_DAYS || "120", 10),
+    // `days === 0` means ALL TIME and must survive. `days || default` swallowed
+    // it back into the rolling window, which was invisible in testing because
+    // the default window happens to cover almost the whole log right now.
+    days: days === undefined ? parseInt(env.INSIGHTS_WINDOW_DAYS || "120", 10) : days,
     estimateOf: (title) => costMap[(title || "").toLowerCase()] ?? 15,
     targetSplit: parseTargetSplit(env.ROTATION_WEIGHTS || "Alex:60,Kristal:40"),
   });

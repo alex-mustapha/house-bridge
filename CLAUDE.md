@@ -254,6 +254,16 @@ Monthly review (`src/insights.js` + `src/insightspost.js`):
 - The `possibly-unlogged` vs `chronically-missed` split is deliberate: punctual-when-recorded but
   often absent means the work happened and nobody ticked it; late-when-recorded means a real
   problem. Don't collapse them.
+- **Findings are GROUPED by category when rendered.** The problem and the fix belong to the
+  category, not to each chore: stating them per line meant the same two sentences three times
+  over, burying the only part that differed. Each finding carries a terse `detail` (facts only)
+  alongside its standalone `recommendation`; `renderPlain` prints the category advice once then the
+  details, and the prose layer is handed the pre-grouped shape so it cannot invent a category.
+- **`days <= 0` means ALL TIME**, and it has to survive two layers of `||`. Both
+  `postInsights` (`days || default`) and the endpoint (`parseInt(...) || undefined`) swallowed the
+  0 back into the rolling window. It was invisible in testing because the 120-day default happens
+  to cover almost the whole log — the reported window just said "120 days" instead of "all time".
+  `/admin insights` defaults to all time; the monthly cron keeps the rolling window.
 - It is gated inside the DAILY cron on `dom === 1`, not given its own trigger. The scheduled
   handler dispatches on the cron string and anything that isn't `LEISURE_CRON` falls through to the
   full daily job — a third trigger would have run generation, the digest and the sweep twice over
