@@ -32,6 +32,7 @@ import {
   getTeamId,
   markChoreDone,
   cancelChore,
+  snoozeChore,
   unarchiveIssue,
   markClaimed,
   markSnoozed,
@@ -593,6 +594,17 @@ async function handleRequest(request, env, ctx) {
       const match = url.searchParams.get("match");
       if (!match) return new Response("missing ?match=<text>\n", { status: 400 });
       const { ok, message } = await cancelChore(env, match);
+      return new Response(message + "\n", { status: ok ? 200 : 404 });
+    }
+    if (url.pathname === "/snooze") {
+      // Powers the widget's snooze button, and nothing more involved: one day,
+      // anchored to today so an overdue chore lands on tomorrow rather than on
+      // another past date. Anything further out is a manual due-date edit in
+      // Linear, deliberately.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const match = url.searchParams.get("match");
+      if (!match) return new Response("missing ?match=<text>\n", { status: 400 });
+      const { ok, message } = await snoozeChore(env, match, localDate(new Date()).ymd);
       return new Response(message + "\n", { status: ok ? 200 : 404 });
     }
     if (url.pathname === "/status") {

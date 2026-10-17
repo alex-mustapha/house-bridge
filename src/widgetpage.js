@@ -119,20 +119,24 @@ export function renderWidgetPage(user, status) {
   }
   li .claim:active { background: rgba(255,255,255,.3); }
   li .claim:disabled { opacity: .5; }
-  li .done, li .cancel {
+  li .done, li .snooze, li .cancel {
     flex: none; margin-left: 10px; width: 42px; height: 42px; border-radius: 12px;
     border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.16);
     color: #fff; font-size: 19px; line-height: 1; cursor: pointer; -webkit-appearance: none;
   }
-  /* Cancel is deliberately quieter than done: it's the exception, and it
-     shouldn't be the easy thumb-target next to a 42px primary action. */
-  li .cancel {
+  /* Snooze and cancel are deliberately quieter than done: both are exceptions,
+     and neither should be an easy thumb-target next to a 42px primary action. */
+  li .snooze, li .cancel {
     margin-left: 6px; width: 36px; height: 36px; align-self: center;
     border-color: rgba(255,255,255,.28); background: rgba(255,255,255,.07);
     font-size: 15px; opacity: .8;
   }
-  li .done:active, li .cancel:active { background: rgba(255,255,255,.34); }
-  li .done:disabled, li .cancel:disabled { opacity: .55; }
+  li .done:active, li .snooze:active, li .cancel:active { background: rgba(255,255,255,.34); }
+  li .done:disabled, li .snooze:disabled, li .cancel:disabled { opacity: .55; }
+  /* Pushed a day, not finished. Deliberately NOT the .completing style, which
+     strikes text through: reusing the done look for a not-done state is the
+     exact bug that made active chores look completed once before. */
+  li.working { opacity: .55; }
   li.completing .open { opacity: .5; text-decoration: line-through; }
   .empty { margin-top: 28px; font-size: 18px; opacity: .92; }
   .donehdr { margin: 22px 0 2px; font-size: 12px; letter-spacing: .04em;
@@ -213,7 +217,9 @@ export function renderWidgetPage(user, status) {
     } else {
       badge.textContent = "📋";
       count.textContent = s.remaining + (s.remaining === 1 ? " chore left" : " chores left");
-      who.textContent = KEY ? "✓ done · ✖ not doing it · tap a chore to open" : "tap a chore to open it in Linear";
+      who.textContent = KEY
+        ? "✓ done · 😴 tomorrow · ✖ not doing it · tap a chore to open"
+        : "tap a chore to open it in Linear";
       list.innerHTML = tasks.map((t, idx) => {
         const t2 = esc(t.title);
         const href = esc(t.url || LINEAR_URL);
@@ -221,6 +227,7 @@ export function renderWidgetPage(user, status) {
         // tell actual work from work that was dropped.
         const right = KEY
           ? '<button class="done" data-title="' + t2 + '" aria-label="Mark done">✓</button>' +
+            '<button class="snooze" data-title="' + t2 + '" aria-label="Push to tomorrow">😴</button>' +
             '<button class="cancel" data-title="' + t2 + '" aria-label="Cancel — not doing this">✖</button>'
           : '';
         // Tapping the title expands the chore's own checklist in place, rather
@@ -327,23 +334,30 @@ export function renderWidgetPage(user, status) {
   });
 
   document.getElementById("list").addEventListener("click", async (e) => {
-    const btn = e.target.closest(".done, .cancel");
+    const btn = e.target.closest(".done, .snooze, .cancel");
     if (!btn) return;
     e.preventDefault();
-    const isCancel = btn.classList.contains("cancel");
-    const glyph = isCancel ? "✖" : "✓";
+    // The class name IS the endpoint name (/done, /snooze, /cancel), so there's
+    // no mapping to keep in step.
+    const kind = btn.classList.contains("cancel")
+      ? "cancel"
+      : btn.classList.contains("snooze")
+        ? "snooze"
+        : "done";
+    const glyph = kind === "cancel" ? "✖" : kind === "snooze" ? "😴" : "✓";
     const li = btn.closest("li");
     const siblings = li.querySelectorAll("button");
     siblings.forEach(b => { b.disabled = true; });
-    li.classList.add("completing");
+    li.classList.add(kind === "snooze" ? "working" : "completing");
     try {
-      const r = await fetch((isCancel ? "/cancel?match=" : "/done?match=") +
+      const r = await fetch("/" + kind + "?match=" +
         encodeURIComponent(btn.dataset.title) +
         "&key=" + encodeURIComponent(KEY), { cache: "no-store" });
       if (!r.ok) throw new Error(String(r.status));
       await refresh();
     } catch (err) {
       li.classList.remove("completing");
+      li.classList.remove("working");
       siblings.forEach(b => { b.disabled = false; });
       btn.textContent = "!";
       setTimeout(() => { btn.textContent = glyph; }, 1500);

@@ -30,6 +30,7 @@ import {
   unassignIssue,
   fetchIssueBrief,
   markClaimed,
+  snoozeIssue,
   fetchRecentCompletedAssigned,
   fetchChoreHistory,
   fetchRecentCompleted,
@@ -146,7 +147,7 @@ async function resolveCaller(env, interaction) {
 async function handleComponent(interaction, env, ctx) {
   const cid = interaction.data?.custom_id || "";
 
-  if (["actions-menu", "done-menu", "cancel-menu", "claim-menu"].includes(cid)) {
+  if (["actions-menu", "done-menu", "cancel-menu", "claim-menu", "snooze-menu"].includes(cid)) {
     // Acknowledge FIRST. Everything below is Linear round-trips — a single
     // claim costs about seven (resolve caller, read the issue, assign, tag it
     // claimed, look up names to announce) — and Discord gives an interaction
@@ -770,33 +771,18 @@ async function choreCommand(interaction, env, ctx) {
         const issue = await pickChore(env, o.chore);
         if (!issue) return `No active chore matching "${o.chore}".`;
         const days = Math.max(1, Math.min(60, parseInt(o.days, 10) || 1));
-        const newDue = addDays(issue.dueDate || localDate(new Date()).ymd, days);
-        const res = await updateIssueDueDate(env, issue.id, newDue);
-        if (!res?.success) return "Couldn't update the due date.";
-
-        // Mark it snoozed. A pushed-out chore now sits on a date its template
-        // doesn't generate, which looks exactly like a stale copy left behind
-        // by a schedule change — so the next reconcile would archive it. The
-        // label is what tells those two apart, and it rides along on this one
-        // occurrence, disappearing with it when it's completed.
-        let marked = true;
-        try {
-          const brief = await fetchIssueBrief(env, issue.id);
-          const existing = (brief?.labels?.nodes || []).map((l) => l.id);
-          const [snoozeId] = await getLabelIds(env, ["snoozed"]);
-          if (!snoozeId) marked = false;
-          else if (!existing.includes(snoozeId)) {
-            const r = await updateIssueLabels(env, issue.id, [...existing, snoozeId]);
-            marked = !!r?.success;
-          }
-        } catch (e) {
-          console.error("snooze label failed:", e.message);
-          marked = false;
-        }
-
+        // Shared with the digest row and the widget button, so all three agree
+        // on what "a day later" means — notably that an overdue chore moves
+        // to tomorrow rather than to a date still in the past.
+        const r = await snoozeIssue(env, issue.id, {
+          dueDate: issue.dueDate,
+          today: localDate(new Date()).ymd,
+          days,
+        });
+        if (!r.ok) return "Couldn't update the due date.";
         return (
-          `😴 Snoozed **${issue.title}** ${days} day${days === 1 ? "" : "s"} → due ${newDue}.` +
-          (marked ? "" : "\n⚠️ Couldn't tag it as snoozed — it may be tidied up by tomorrow's sync.")
+          `😴 Snoozed **${issue.title}** → due ${r.to}.` +
+          (r.marked ? "" : "\n⚠️ Couldn't tag it as snoozed — it may be tidied up by tomorrow's sync.")
         );
       });
     }
@@ -1285,6 +1271,7 @@ async function runMenuAction(interaction, env, ctx, cid) {
     const tookOver = [];
     const didDone = [];
     const didCancel = [];
+    const didSnooze = [];
     // Option labels carry the chore title (minus its ✓/✖/🙋 marker), so the
     // confirmation can name chores without another Linear lookup.
     const titleOf = (value) => {
@@ -1310,6 +1297,19 @@ async function runMenuAction(interaction, env, ctx, cid) {
           if (stateId && id && (await setIssueState(env, id, stateId))?.success) {
             resolvedIds.add(id);
             didCancel.push(titleOf(v));
+          }
+        } else if (action === "snooze" && id) {
+          // Pushed a day, so it's off today's board — same consequence as being
+          // resolved, hence the same id set, which prunes it from every row.
+          const brief = await fetchIssueBrief(env, id);
+          const r = await snoozeIssue(env, id, {
+            dueDate: brief?.dueDate,
+            today: localDate(new Date()).ymd,
+            days: 1,
+          });
+          if (r.ok) {
+            resolvedIds.add(id);
+            didSnooze.push(titleOf(v));
           }
         } else if (action === "claim" && clicker && id) {
           // Read the current owner first: the mutation only reports the new
@@ -1338,6 +1338,19 @@ async function runMenuAction(interaction, env, ctx, cid) {
     // re-rendered from the Linear webhook, through the bot token and
     // independent of any interaction token, so the message itself is the
     // durable record. One board that stays correct beats a line per action.
+    //
+    // One log line instead. Request logs are retained ([observability] in
+    // wrangler.toml), so this is what makes "I clicked it and nothing happened"
+    // answerable without reconstructing it from D1.
+    if (didDone.length || didCancel.length || didSnooze.length || tookOver.length) {
+      console.log("digest menu action", {
+        by: clicker || "unresolved",
+        done: didDone,
+        cancelled: didCancel,
+        snoozed: didSnooze,
+        tookOver: tookOver.map((t) => t.title),
+      });
+    }
 
     // Rebuild. Claiming now happens in its own row, so a chore picked up there
     // has to be PROMOTED into the "mark done" row — otherwise you'd take
@@ -1366,7 +1379,9 @@ async function runMenuAction(interaction, env, ctx, cid) {
           .map((c) => {
             if (
               c.type === 3 &&
-              ["actions-menu", "done-menu", "cancel-menu", "claim-menu"].includes(c.custom_id)
+              ["actions-menu", "done-menu", "cancel-menu", "claim-menu", "snooze-menu"].includes(
+                c.custom_id,
+              )
             ) {
               const rowId = c.custom_id === "done-menu" ? "actions-menu" : c.custom_id;
               // The take-over row lists chores belonging to someone else. Once

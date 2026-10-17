@@ -332,6 +332,10 @@ export function buildDigestMenu(issues, soon = []) {
   const dones = [];
   const takeovers = [];
   const cancels = [];
+  // One-tap "push it a day". Only dated chores: snoozing something undated
+  // would invent a due date rather than move one, which isn't what the button
+  // means. Anything beyond a single day is a manual due-date edit on purpose.
+  const snoozes = [];
 
   for (const i of issues) {
     const team = i.team?.id || "";
@@ -361,6 +365,15 @@ export function buildDigestMenu(issues, soon = []) {
       });
     }
   }
+  for (const i of issues) {
+    if (!i.dueDate) continue;
+    snoozes.push({
+      label: `😴 ${i.title}`.slice(0, 100),
+      value: `snooze:${i.id}:${i.team?.id || ""}`,
+      description: `due ${i.dueDate} → tomorrow`.slice(0, 100),
+    });
+  }
+
   // Unclaimed work due later in the week — grabbable ahead of time.
   for (const i of soon) {
     takeovers.push({
@@ -393,6 +406,7 @@ export function buildDigestMenu(issues, soon = []) {
   return [
     row("actions-menu", "✅ Mark done…", dones),
     row("claim-menu", "🙋 Claim a chore…", takeovers),
+    row("snooze-menu", "😴 Push to tomorrow…", snoozes),
     row("cancel-menu", "❌ Cancel a chore…", cancels),
   ].filter(Boolean);
 }

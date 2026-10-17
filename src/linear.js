@@ -217,6 +217,23 @@ export async function cancelChore(env, match) {
     : { ok: false, message: "Update failed" };
 }
 
+// Title-matched snooze, mirroring cancelChore/markChoreDone so the widget's
+// button is the same shape as its other actions. `today` is passed in because
+// the Eastern-calendar helper lives in recurring.js, which imports from here.
+export async function snoozeChore(env, match, today) {
+  const matches = await findActiveByTitle(env, match, [
+    env.CHORES_PROJECT || "House Chores",
+    env.ADHOC_PROJECT || "Ad Hoc",
+  ]);
+  if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };
+  matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
+  const issue = matches[0];
+  const r = await snoozeIssue(env, issue.id, { dueDate: issue.dueDate, today, days: 1 });
+  return r.ok
+    ? { ok: true, title: issue.title, to: r.to, message: `Snoozed "${issue.title}" to ${r.to}` }
+    : { ok: false, message: "Update failed" };
+}
+
 // Active (non-done) chores across the given project(s) whose title contains
 // `text` (case-insensitive; empty matches all). Accepts a name or an array.
 export async function findActiveByTitle(env, text, projects) {
@@ -883,6 +900,25 @@ export async function markSnoozed(env, id) {
     console.error("markSnoozed failed:", e.message);
     return false;
   }
+}
+
+// Push a chore's due date out by `days`, ANCHORED TO TODAY when it's already
+// overdue. Snoozing used to add days to the stored due date, so "+1 day" on
+// something three days late just moved it to two days late — still overdue,
+// still on the board. Useless for a one-tap button, and not what anyone means
+// by "push it to tomorrow". A future-dated chore still moves relative to its
+// own date, so snoozing never pulls a date earlier.
+//
+// Also applies the `snoozed` label, which is the thing that stops the reconcile
+// pass treating a hand-moved date as a stale copy and archiving it overnight.
+export async function snoozeIssue(env, id, { dueDate, today, days = 1 } = {}) {
+  const base = !dueDate || dueDate < today ? today : dueDate;
+  const [y, m, d] = base.split("-").map(Number);
+  const to = new Date(Date.UTC(y, m - 1, d + Math.max(1, days))).toISOString().slice(0, 10);
+  const res = await updateIssueDueDate(env, id, to);
+  if (!res?.success) return { ok: false, to };
+  const marked = await markSnoozed(env, id);
+  return { ok: true, to, marked };
 }
 
 export async function markClaimed(env, id) {
