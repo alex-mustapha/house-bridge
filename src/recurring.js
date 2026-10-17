@@ -1535,8 +1535,15 @@ function summarizeTemplate(t) {
     rotates: !t.assignee && !descCfg.assignDays && !descCfg.opposite,
     dom: config.dom || null,
     months: config.months || null,
-    schedule: describeSchedule(chore),
-    next: nextOccurrences(chore, 5),
+    // `paused` is enforced in buildDefs (which skips the template outright), so
+    // reporting a cadence-derived `next` here advertised dates that will never
+    // be generated. Third place this bit: buildDefs generates, annotateTemplates
+    // renders "⏸️ Paused", and this one quietly disagreed with both.
+    paused: !!config.paused,
+    schedule: config.paused
+      ? `⏸️ Paused — ${describeSchedule(chore)}`
+      : describeSchedule(chore),
+    next: config.paused ? [] : nextOccurrences(chore, 5),
   };
 }
 
