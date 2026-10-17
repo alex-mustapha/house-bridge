@@ -15,11 +15,13 @@ import {
   buildScoreboardMessage,
   buildStatsEmbed,
   buildDigestMenu,
+  buildAllClearMessage,
   postViaBot,
+  editViaBot,
   postToDiscord,
-  announceClaim,
 } from "./discord.js";
 import { logChores, queryStats, queryDashboard, queryLeisure } from "./db.js";
+import { saveDigestMessage, getDigestMessage, clearDigestMessage } from "./db.js";
 import {
   fetchDueIssues,
   fetchActiveIssueCount,
@@ -578,15 +580,6 @@ async function handleRequest(request, env, ctx) {
       const res = await assignIssue(env, hits[0].id, target.id);
       if (res?.success) {
         await markClaimed(env, hits[0].id); // deliberate: exempt from auto re-split
-        // The same notice the slash command and the digest dropdown post, in
-        // the same channel — however the chore happened to be picked up.
-        ctx.waitUntil(
-          announceClaim(env, {
-            taker: target.name || who,
-            title: hits[0].title,
-            from: prev?.id && prev.id !== target.id ? prev.name : null,
-          }),
-        );
       }
       return new Response(
         res?.success ? `Assigned "${hits[0].title}" to ${target.name || who}\n` : "Assign failed\n",
@@ -761,6 +754,37 @@ async function handleEvent(payload, env) {
 
   // Comments are no longer echoed to Discord (too noisy).
   if (type !== "Issue") return;
+
+  // Keep today's digest message honest, whatever moved the chore.
+  //
+  // Every surface goes through Linear — the widget's /done and ✖, the /chores
+  // commands, the digest dropdown, Linear's own UI — so this one hook covers
+  // all of them, and it runs on the bot token rather than an interaction token,
+  // so it still lands when a dropdown's response was lost.
+  //
+  // Placed above the description-only filter, which returns early without
+  // posting an embed but can still change the board.
+  //
+  // `remove` is EXCLUDED, and that matters: the nightly auto-archive sweep fires
+  // one remove webhook per issue, up to ARCHIVE_MAX (30) of them, and it runs
+  // AFTER the digest has been posted — so including removes meant up to 30 full
+  // digest rebuilds and 30 Discord edits every morning, against a channel edit
+  // limit of roughly 5 per 5 seconds. Archived chores are resolved and older
+  // than the retention window, so they were never on today's board anyway.
+  //
+  // Gated on the fields the digest actually renders, so a description edit
+  // doesn't trigger a rebuild.
+  if (action === "create" || action === "update") {
+    const proj = data?.project?.name;
+    const choreProjects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
+    const changed = Object.keys(payload.updatedFrom || {});
+    const DIGEST_FIELDS = ["state", "stateId", "assignee", "assigneeId", "dueDate", "title"];
+    const touches =
+      action === "create" || !changed.length || changed.some((k) => DIGEST_FIELDS.includes(k));
+    if (proj && choreProjects.includes(proj) && touches) {
+      await refreshDigest(env).catch((e) => console.error("digest refresh failed:", e.message));
+    }
+  }
 
   // Archiving a chore fires one `remove` webhook PER ISSUE, so the auto-archive
   // sweep (up to ARCHIVE_MAX a run) would carpet the activity channel with
@@ -953,7 +977,11 @@ async function botCheck(env) {
 // on its own via /digest — re-running the whole cron just to resend the list
 // also runs generation and the overdue sweep, which is a lot of side effect for
 // "send that message again". Read-only apart from the Discord post.
-async function postDigest(env) {
+// Builds the digest payload WITHOUT posting it. Shared by the daily cron post
+// and the live in-place refresh, so a re-render can never drift from what the
+// cron would have produced — two copies of this logic would diverge the first
+// time either changed.
+async function buildDigestPayload(env) {
   const today = localDate(new Date()).ymd;
   // Pull the whole week in one query: the digest shows today + past due per
   // person, then the rest of the week per person underneath (unassigned work
@@ -971,7 +999,21 @@ async function postDigest(env) {
   const cap = Math.max(0, parseInt(env.WEEK_LOOKAHEAD_DAYS || "14", 10) || 0);
   const week = Math.min(toWeekEnd, cap);
   const all = await fetchDueIssues(env, week);
-  if (!all.length) return { posted: false, count: 0 };
+  // fetchDueIssues excludes completed and canceled, so an empty result means
+  // nothing in the window is outstanding. For the morning post that means
+  // "don't post"; for a live refresh it means the day just got CLEARED, which
+  // is the one state change worth showing. Returning null for both is what
+  // would have frozen the digest on its last unresolved chore forever.
+  if (!all.length) {
+    return {
+      today,
+      empty: true,
+      count: 0,
+      shown: 0,
+      actionable: 0,
+      allClear: buildAllClearMessage(today),
+    };
+  }
 
   // The preview is for work you could otherwise forget: ad-hoc tasks, project
   // work, and chores that only come round every few months. Routine
@@ -1002,19 +1044,80 @@ async function postDigest(env) {
   const actionable = all.filter(
     (i) => !i.dueDate || i.dueDate <= today || !i.assignee?.name,
   );
+  return {
+    today,
+    empty: false,
+    count: all.length,
+    shown: shown.length,
+    actionable: actionable.length,
+    withMenu: { ...msg, components: buildDigestMenu(actionable, []) },
+    plain: msg,
+  };
+}
+
+async function postDigest(env) {
+  const built = await buildDigestPayload(env);
+  // Nothing outstanding first thing in the morning: stay quiet rather than
+  // opening the day with an "all clear" about chores nobody had yet. The
+  // all-clear is a transition, and it's the refresh that renders it.
+  if (!built || built.empty) return { posted: false, count: 0 };
   // Bot-posted digest carries the actions dropdown; falls back to the webhook
   // (no menu) if the bot token / channel id aren't configured.
   if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
-    await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, {
-      ...msg,
-      components: buildDigestMenu(actionable, []),
-    });
+    const sent = await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, built.withMenu);
+    // Remember which message this is so completions from any surface can edit
+    // it instead of adding a line to the channel.
+    if (sent?.id) {
+      await saveDigestMessage(env, {
+        ymd: built.today,
+        channelId: env.DISCORD_DUE_CHANNEL_ID,
+        messageId: sent.id,
+      }).catch((e) => console.error("remembering digest message failed:", e.message));
+    }
   } else if (env.DISCORD_WEBHOOK_DUE) {
-    await postToDiscord(env.DISCORD_WEBHOOK_DUE, msg);
+    await postToDiscord(env.DISCORD_WEBHOOK_DUE, built.plain);
   } else {
-    return { posted: false, count: all.length };
+    return { posted: false, count: built.count };
   }
-  return { posted: true, count: all.length, shown: shown.length, actionable: actionable.length };
+  return { posted: true, count: built.count, shown: built.shown, actionable: built.actionable };
+}
+
+// Re-render today's digest message in place.
+//
+// Every surface that resolves a chore does it through Linear — the widget's
+// /done, the /chores commands, the digest dropdown, Linear's own UI — so the
+// Linear webhook is the single hook that covers all of them. The digest
+// dropdown already did this via its interaction token; this is what the widget
+// was missing.
+//
+// Deliberately an EDIT, not a new message: with several completions a day, a
+// line each would turn the channel into a feed, and the completion embed
+// already goes to the activity channel. The trade-off is that Discord edits are
+// silent — no ping, no channel bump — so this keeps the board accurate rather
+// than announcing anything.
+async function refreshDigest(env) {
+  if (!env.DB) return { refreshed: false, reason: "no DB" };
+  if (!env.DISCORD_BOT_TOKEN || !env.DISCORD_DUE_CHANNEL_ID) {
+    return { refreshed: false, reason: "bot not configured" };
+  }
+  const today = localDate(new Date()).ymd;
+  const rec = await getDigestMessage(env, today).catch((e) => {
+    console.error("digest message lookup failed:", e.message);
+    return null;
+  });
+  // No digest posted yet today (or it went out via the webhook, which gives no
+  // message id) — nothing to edit, and that's not an error.
+  if (!rec?.message_id) return { refreshed: false, reason: "no digest message today" };
+  const built = await buildDigestPayload(env);
+  if (!built) return { refreshed: false, reason: "nothing due" };
+  const payload = built.empty ? built.allClear : built.withMenu;
+  const r = await editViaBot(env, rec.channel_id, rec.message_id, payload);
+  if (!r.ok && r.status === 404) {
+    // Someone deleted it; forget the id so we stop trying all day.
+    await clearDigestMessage(env, today).catch(() => {});
+    return { refreshed: false, reason: "message deleted" };
+  }
+  return { refreshed: r.ok, remaining: built.actionable };
 }
 
 // Archive resolved chores older than CHORE_RETENTION_DAYS so the active count

@@ -519,6 +519,56 @@ async function ensureDetailLog(env) {
   ).run();
 }
 
+// Which Discord message holds a given day's digest, so it can be edited in
+// place later. Keyed by date: one digest per day, and yesterday's row is of no
+// use, so this stays tiny without needing a cleanup job.
+const DIGEST_MSG_SCHEMA = `CREATE TABLE IF NOT EXISTS digest_message (
+  ymd TEXT PRIMARY KEY,
+  channel_id TEXT,
+  message_id TEXT,
+  posted_at TEXT
+)`;
+
+async function ensureDigestMessage(env) {
+  await env.DB.prepare(DIGEST_MSG_SCHEMA).run();
+}
+
+export async function saveDigestMessage(env, { ymd, channelId, messageId } = {}) {
+  if (!env.DB || !ymd || !channelId || !messageId) return null;
+  await ensureDigestMessage(env);
+  // Re-posting a day's digest (a manual /digest after the cron) replaces the
+  // pointer, so edits always land on the message people are actually looking at.
+  await env.DB.prepare(
+    `INSERT INTO digest_message (ymd, channel_id, message_id, posted_at)
+     VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT(ymd) DO UPDATE SET
+       channel_id = excluded.channel_id,
+       message_id = excluded.message_id,
+       posted_at  = excluded.posted_at`,
+  )
+    .bind(ymd, String(channelId), String(messageId), new Date().toISOString())
+    .run();
+  return { ymd, channelId, messageId };
+}
+
+export async function getDigestMessage(env, ymd) {
+  if (!env.DB || !ymd) return null;
+  await ensureDigestMessage(env);
+  const r = await env.DB.prepare(
+    `SELECT ymd, channel_id, message_id, posted_at FROM digest_message WHERE ymd = ?1`,
+  )
+    .bind(ymd)
+    .first();
+  return r || null;
+}
+
+export async function clearDigestMessage(env, ymd) {
+  if (!env.DB || !ymd) return 0;
+  await ensureDigestMessage(env);
+  const r = await env.DB.prepare(`DELETE FROM digest_message WHERE ymd = ?1`).bind(ymd).run();
+  return r?.meta?.changes || 0;
+}
+
 export async function flagChoreDetail(env, { title, person, by, note } = {}) {
   if (!env.DB || !title || !person) return null;
   await ensureDetailLog(env);

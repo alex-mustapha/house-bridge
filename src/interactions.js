@@ -37,7 +37,6 @@ import {
 import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, reshuffleWindow, coverUserPause } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
-import { announceClaim, postToDue } from "./discord.js";
 import { recordLeisure } from "./leisure.js";
 import { flagChoreDetail, clearChoreDetail } from "./db.js";
 
@@ -898,14 +897,13 @@ async function choreCommand(interaction, env, ctx) {
         const res = await assignIssue(env, issue.id, userId);
         if (!res?.success) return "Couldn't assign that chore.";
         await markClaimed(env, issue.id); // deliberate: exempt from auto re-split
-        // Announce in the due channel rather than wherever this was typed, so
-        // it reaches the person who had it regardless of where you ran it.
-        const announced = await announceClaim(env, {
-          taker: who,
-          title: issue.title,
-          from: prev?.id && prev.id !== userId ? prev.name : null,
-        });
-        return `🙋 You claimed **${issue.title}**.${announced ? " Posted in the chores channel." : ""}`;
+        // No channel post: the digest re-renders itself on every Linear change,
+        // so the board shows the new owner without adding a line here.
+        const lost = prev?.id && prev.id !== userId ? prev.name : null;
+        return (
+          `🙋 You claimed **${issue.title}**.` +
+          (lost ? ` It was ${lost}'s — the digest will show it as yours.` : "")
+        );
       }, { ephemeral: true });
     }
     case "unclaim": {
@@ -1335,31 +1333,11 @@ async function runMenuAction(interaction, env, ctx, cid) {
         /* skip this one */
       }
     }
-    // Confirm in the chores channel. This is the durable record of what the
-    // dropdown did: it goes through the bot token, so it lands even if the
-    // interaction response is late or its token has expired — which is exactly
-    // the case that made a successful claim look like a failure. Claims are
-    // announced separately just below, with the previous owner @-mentioned.
-    if (didDone.length || didCancel.length) {
-      const users = await getUsers(env).catch(() => []);
-      const me = users.find((u) => u.id === clicker);
-      const who = me?.name || me?.displayName || "Someone";
-      const bits = [];
-      if (didDone.length) bits.push(`✅ **${who}** marked **${didDone.join("**, **")}** done`);
-      if (didCancel.length) bits.push(`❌ **${who}** cancelled **${didCancel.join("**, **")}**`);
-      ctx?.waitUntil?.(postToDue(env, { content: bits.join("\n"), allowed_mentions: { parse: [] } }));
-    }
-
-    // Always announce in the due channel, never wherever the click happened —
-    // the point is that the person who no longer owns it finds out.
-    if (tookOver.length) {
-      const users = await getUsers(env).catch(() => []);
-      const who = users.find((u) => u.id === clicker);
-      const taker = who?.name || who?.displayName || "Someone";
-      for (const t of tookOver) {
-        ctx?.waitUntil?.(announceClaim(env, { taker, title: t.title, from: t.from }));
-      }
-    }
+    // No per-action channel posts. These existed because a dropdown whose
+    // interaction token expired left the action invisible; the digest is now
+    // re-rendered from the Linear webhook, through the bot token and
+    // independent of any interaction token, so the message itself is the
+    // durable record. One board that stays correct beats a line per action.
 
     // Rebuild. Claiming now happens in its own row, so a chore picked up there
     // has to be PROMOTED into the "mark done" row — otherwise you'd take

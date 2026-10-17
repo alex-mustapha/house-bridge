@@ -115,8 +115,10 @@ export function mentionTag(env, name) {
 export async function postToDue(env, body) {
   try {
     if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
-      await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, body);
-      return true;
+      // Only claim success if it actually posted; otherwise fall through to the
+      // webhook. This used to return true unconditionally, so a rejected bot
+      // post silently swallowed the announcement instead of retrying.
+      if (await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, body)) return true;
     }
     if (env.DISCORD_WEBHOOK_DUE) {
       await postToDiscord(env.DISCORD_WEBHOOK_DUE, body);
@@ -256,8 +258,16 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
   const hasOverdue = issues.some((i) => i.dueDate && i.dueDate < today);
   const color = !issues.length ? COLORS.done : hasOverdue ? COLORS.overdue : COLORS.dueSoon;
 
+  // The date is stated outright. It used to be implied only by Discord's own
+  // relative timestamp ("Yesterday at 8:00"), which is useless when scrolling
+  // back. The count makes progress legible: the same message shrinking from
+  // "4 left" to "1 left" is the point of editing it in place.
+  const remaining = issues.filter((i) => !i.dueDate || i.dueDate <= today).length;
   return {
-    content: `🔔 **Today's chores**${pings.length ? `\n${pings.join(" · ")}` : ""}`,
+    content:
+      `🔔 **Today's chores — ${fmtDue(today)}**` +
+      (remaining ? ` · ${remaining} left` : "") +
+      (pings.length ? `\n${pings.join(" · ")}` : ""),
     embeds: [
       {
         description: sections.join("\n\n").slice(0, 4000) || "Nothing due today.",
@@ -266,6 +276,30 @@ export function buildDigestMessage(issues, mentionMap, today, unassignedSoon = [
       },
     ],
     allowed_mentions: { parse: ["users"] },
+  };
+}
+
+// What the digest becomes once everything due is resolved. A distinct, dated
+// ✅ line per day means scrolling the channel shows the run of cleared days
+// directly — which is the whole reason the digest is edited rather than
+// re-posted.
+//
+// No streak number here on purpose: `choreStreak` excludes today (a streak is a
+// record of finished days), so printing it beside "all clear" would read one
+// lower than the day you are looking at and disagree with the widget and the
+// recap. The column of ✅ dates IS the streak.
+export function buildAllClearMessage(today) {
+  return {
+    content: `✅ **All clear — ${fmtDue(today)}**`,
+    embeds: [
+      {
+        description: "Everything due today is done.",
+        color: COLORS.done,
+        timestamp: new Date().toISOString(),
+      },
+    ],
+    components: [], // drop the dropdowns; there is nothing left to act on
+    allowed_mentions: { parse: [] },
   };
 }
 
@@ -363,6 +397,11 @@ export function buildDigestMenu(issues, soon = []) {
   ].filter(Boolean);
 }
 
+// Returns the CREATED MESSAGE (or null on failure), not just a boolean. The
+// digest needs its own message id so it can be re-rendered in place when a
+// chore is resolved somewhere other than Discord — the widget, or Linear itself.
+// The id used to be thrown away, which is the only reason widget completions
+// couldn't update the digest the way the dropdown already did.
 export async function postViaBot(env, channelId, payload) {
   const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
     method: "POST",
@@ -372,8 +411,37 @@ export async function postViaBot(env, channelId, payload) {
     },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) console.error("Bot message post failed:", res.status, await res.text());
-  return res.ok;
+  if (!res.ok) {
+    console.error("Bot message post failed:", res.status, await res.text());
+    return null;
+  }
+  return await res.json().catch(() => null);
+}
+
+// Edit a message the bot posted. `status` comes back so the caller can tell a
+// deleted message (404) from a transient failure and forget the stale id.
+export async function editViaBot(env, channelId, messageId, payload) {
+  try {
+    const res = await fetch(
+      `https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+    if (!res.ok) {
+      console.error("Bot message edit failed:", res.status, await res.text());
+      return { ok: false, status: res.status };
+    }
+    return { ok: true, status: res.status };
+  } catch (e) {
+    console.error("Bot message edit threw:", e.message);
+    return { ok: false, status: 0 };
+  }
 }
 
 // Weekly recap embed. Leads with **on-time %** because that's the number that
