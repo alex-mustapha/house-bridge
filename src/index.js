@@ -26,6 +26,7 @@ import {
 } from "./discord.js";
 import { logChores, queryStats, queryDashboard, queryLeisure } from "./db.js";
 import { saveDigestMessage, getDigestMessage, clearDigestMessage } from "./db.js";
+import { logWebhook, recentWebhooks } from "./db.js";
 import {
   fetchDueIssues,
   fetchActiveIssueCount,
@@ -430,6 +431,15 @@ async function handleRequest(request, env, ctx) {
       const r = await archiveOldChores(env);
       return new Response(`${JSON.stringify(r)}\nrun repeatedly to clear a backlog\n`, { status: 200 });
     }
+    if (url.pathname === "/webhooklog") {
+      // The last N webhook arrivals and what became of each.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const rows = await recentWebhooks(env, parseInt(url.searchParams.get("n") || "30", 10))
+        .catch((e) => ({ error: e.message }));
+      return new Response(JSON.stringify(rows, null, 2) + "\n", {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (url.pathname === "/webhookcheck") {
       // Diagnoses the Linear side of the webhook: registered, enabled, and
       // pointing here? A dead registration looks exactly like a broken handler
@@ -730,10 +740,13 @@ async function handleRequest(request, env, ctx) {
     const raw = await request.text();
     const signature = request.headers.get("linear-signature");
 
+    // Every exit below is logged. All three used to be silent, so a webhook that
+    // was being rejected looked exactly like one that was never sent.
     if (
       !signature ||
       !(await verifyLinearSignature(raw, signature, env.LINEAR_WEBHOOK_SECRET))
     ) {
+      ctx.waitUntil(logWebhook(env, "bad-signature", signature ? "mismatch" : "header missing"));
       return new Response("Invalid signature", { status: 401 });
     }
 
@@ -741,6 +754,7 @@ async function handleRequest(request, env, ctx) {
     try {
       payload = JSON.parse(raw);
     } catch {
+      ctx.waitUntil(logWebhook(env, "bad-json", raw.slice(0, 120)));
       return new Response("Bad JSON", { status: 400 });
     }
 
@@ -749,12 +763,35 @@ async function handleRequest(request, env, ctx) {
       payload.webhookTimestamp &&
       Date.now() - payload.webhookTimestamp > 60_000
     ) {
+      ctx.waitUntil(
+        logWebhook(
+          env,
+          "stale",
+          `${Math.round((Date.now() - payload.webhookTimestamp) / 1000)}s old`,
+        ),
+      );
       return new Response("Stale webhook", { status: 400 });
     }
 
     // Ack immediately; do the Discord post in the background so Linear
     // doesn't time out and retry.
-    ctx.waitUntil(handleEvent(payload, env));
+    ctx.waitUntil(
+      logWebhook(
+        env,
+        "accepted",
+        `${payload.type}/${payload.action} ${payload.data?.project?.name || "(no project)"} ` +
+          `${payload.data?.identifier || ""} changed=[${Object.keys(payload.updatedFrom || {}).join(",")}]`,
+      ),
+    );
+    ctx.waitUntil(
+      handleEvent(payload, env).catch((e) => {
+        // handleEvent runs detached, so an exception here surfaced nowhere at
+        // all — which is how a ReferenceError on its third line went unnoticed
+        // while it killed every webhook.
+        console.error("handleEvent failed:", e?.stack || e?.message || e);
+        return logWebhook(env, "handler-threw", e?.message || String(e));
+      }),
+    );
     return new Response("ok", { status: 200 });
 }
 
@@ -830,7 +867,7 @@ export async function handleEvent(payload, env) {
     const DIGEST_FIELDS = ["state", "stateId", "assignee", "assigneeId", "dueDate", "title"];
     const touches =
       action === "create" || !changed.length || changed.some((k) => DIGEST_FIELDS.includes(k));
-    if (proj && choreProjects.includes(proj) && touches) {
+    if (proj && choreProjects(env).includes(proj) && touches) {
       await refreshDigest(env).catch((e) => console.error("digest refresh failed:", e.message));
     }
   }
@@ -845,7 +882,7 @@ export async function handleEvent(payload, env) {
   // say) is still worth seeing. Set MIRROR_CHORE_REMOVALS=true to get them back.
   if (action === "remove" && env.MIRROR_CHORE_REMOVALS !== "true") {
     const proj = data?.project?.name;
-    if (proj && choreProjects.includes(proj)) return;
+    if (proj && choreProjects(env).includes(proj)) return;
   }
 
   // A due date changed by hand — in Linear, or by anything other than the
@@ -854,7 +891,7 @@ export async function handleEvent(payload, env) {
   // /chores snooze tags it too; this is idempotent.
   if (action === "update" && payload.updatedFrom && "dueDate" in payload.updatedFrom) {
     const proj = data?.project?.name;
-    if (proj && choreProjects.includes(proj) && data?.id) {
+    if (proj && choreProjects(env).includes(proj) && data?.id) {
       await markSnoozed(env, data.id).catch((e) => console.error("auto-snooze tag failed:", e));
     }
   }

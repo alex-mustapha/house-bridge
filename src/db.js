@@ -520,6 +520,49 @@ async function ensureDetailLog(env) {
   ).run();
 }
 
+// A short ring buffer of webhook arrivals and what became of them. The webhook
+// handler has three silent exits (bad signature, bad JSON, stale timestamp) and
+// then runs its work inside ctx.waitUntil, where a throw surfaces nowhere — so
+// "did Linear call us, and how far did it get?" was unanswerable. Kept to the
+// last 100 rows; this is a handful of writes a day.
+const WEBHOOK_LOG_SCHEMA = `CREATE TABLE IF NOT EXISTS webhook_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT,
+  outcome TEXT,
+  detail TEXT
+)`;
+
+async function ensureWebhookLog(env) {
+  await env.DB.prepare(WEBHOOK_LOG_SCHEMA).run();
+}
+
+export async function logWebhook(env, outcome, detail = "") {
+  if (!env.DB) return;
+  try {
+    await ensureWebhookLog(env);
+    await env.DB.prepare(`INSERT INTO webhook_log (at, outcome, detail) VALUES (?1, ?2, ?3)`)
+      .bind(new Date().toISOString(), String(outcome), String(detail).slice(0, 300))
+      .run();
+    await env.DB.prepare(
+      `DELETE FROM webhook_log WHERE id <= (SELECT MAX(id) - 100 FROM webhook_log)`,
+    ).run();
+  } catch (e) {
+    // Diagnostics must never break the thing they are diagnosing.
+    console.error("webhook log write failed:", e.message);
+  }
+}
+
+export async function recentWebhooks(env, limit = 30) {
+  if (!env.DB) return [];
+  await ensureWebhookLog(env);
+  const r = await env.DB.prepare(
+    `SELECT at, outcome, detail FROM webhook_log ORDER BY id DESC LIMIT ?1`,
+  )
+    .bind(Math.max(1, Math.min(100, limit)))
+    .all();
+  return r.results || [];
+}
+
 // Which Discord message holds a given day's digest, so it can be edited in
 // place later. Keyed by date: one digest per day, and yesterday's row is of no
 // use, so this stays tiny without needing a cleanup job.
