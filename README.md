@@ -300,6 +300,7 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 | `GET /done?key=…&match=bathroom` | Marks the soonest-due active chore whose title contains the text as **Done** (excludes templates). Powers voice/shortcut "I cleaned the bathroom". |
 | `GET /cancel?key=…&match=bathroom` | Marks the soonest-due matching chore **Canceled** — clears it without counting as work done. Powers the widget's ✖. |
 | `GET /insights?key=…[&dry=1&days=120]` | Monthly chore review: computed recommendations (wrong weekday, cadence too frequent, chronically missed, logging gaps, effort drift) posted to the stats channel. `&dry=1` returns the findings and the rendered body without posting. Runs automatically on the 1st. |
+| `GET /channels?key=…` | Which configured webhook points at which Discord channel, plus what posts where. Never echoes the webhook URLs (they are secrets) — only the resolved channel. |
 | `GET /webhooklog?key=…[&n=30]` | The last webhook arrivals and what became of each (accepted / bad-signature / stale / handler-threw). |
 | `GET /webhookcheck?key=…` | Linear’s own view of the webhook registration. |
 | `GET /refresh-digest?key=…` | Forces the in-place re-render of today’s digest message. |

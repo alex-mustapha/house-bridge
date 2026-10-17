@@ -455,6 +455,63 @@ async function handleRequest(request, env, ctx) {
         headers: { "Content-Type": "application/json" },
       });
     }
+    if (url.pathname === "/channels") {
+      // Which configured webhook points at which Discord channel. With five of
+      // them set, "where does this post?" is otherwise guesswork — working out
+      // that chore completions went to the activity channel rather than
+      // #due-today took a while once already.
+      //
+      // Resolves each webhook by GETting it (that returns the channel id with no
+      // auth) then names the channel with the bot token. The webhook URLs are
+      // secrets and are NEVER echoed back — only the resolved channel.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const names = [
+        "DISCORD_WEBHOOK_STATS",
+        "DISCORD_WEBHOOK_DUE",
+        "DISCORD_WEBHOOK_DEFAULT",
+        "DISCORD_WEBHOOK_CHO",
+        "DISCORD_WEBHOOK_PRJ",
+        "DISCORD_WEBHOOK_ADMIN",
+      ];
+      const out = [];
+      for (const n of names) {
+        if (!env[n]) {
+          out.push({ setting: n, set: false });
+          continue;
+        }
+        const row = { setting: n, set: true };
+        try {
+          const r = await fetch(env[n]);
+          if (r.ok) {
+            const w = await r.json();
+            row.channelId = w.channel_id || null;
+            row.webhookName = w.name || null;
+            if (row.channelId && env.DISCORD_BOT_TOKEN) {
+              const c = await fetch(
+                `https://discord.com/api/v10/channels/${row.channelId}`,
+                { headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` } },
+              );
+              if (c.ok) row.channel = "#" + ((await c.json()).name || "?");
+            }
+          } else {
+            row.error = `webhook lookup ${r.status}`;
+          }
+        } catch (e) {
+          row.error = e.message;
+        }
+        out.push(row);
+      }
+      const posts = {
+        "daily digest": "DISCORD_DUE_CHANNEL_ID (bot) -> " + (env.DISCORD_DUE_CHANNEL_ID || "unset"),
+        "weekly recap": "first set of STATS, DUE, DEFAULT",
+        "monthly review": "first set of STATS, DUE, DEFAULT",
+        "chore activity echo": "DISCORD_WEBHOOK_<TEAM>, else DEFAULT",
+        "archive summary": "DISCORD_WEBHOOK_<TEAM>, else DEFAULT",
+      };
+      return new Response(JSON.stringify({ webhooks: out, posts }, null, 2) + "\n", {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (url.pathname === "/webhookcheck") {
       // Diagnoses the Linear side of the webhook: registered, enabled, and
       // pointing here? A dead registration looks exactly like a broken handler

@@ -259,6 +259,14 @@ Monthly review (`src/insights.js` + `src/insightspost.js`):
   full daily job — a third trigger would have run generation, the digest and the sweep twice over
   every month.
 
+Where things post (resolved by `/channels?key=`, which names each webhook's channel):
+- **#recap** — weekly recap and the monthly review (`STATS || DUE || DEFAULT`)
+- **#due-today** — the daily digest, edited in place (bot + `DISCORD_DUE_CHANNEL_ID`)
+- **#chores-activity** — per-issue echo and the archive summary (`WEBHOOK_<TEAM> || DEFAULT`)
+- **#projects-activity**, **#bot-log** — PRJ team, admin
+`DISCORD_WEBHOOK_DEFAULT` and `DISCORD_WEBHOOK_CHO` currently point at the same channel, so the
+team override is a no-op. Harmless, but don't read it as evidence they are meant to differ.
+
 ## Tests
 `npm test` — Node's built-in runner (`node --test`), no dependencies to install. Files live in
 `test/*.test.mjs`.
