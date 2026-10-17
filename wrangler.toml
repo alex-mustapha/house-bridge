@@ -90,6 +90,10 @@ ADHOC_PROJECT = "Ad Hoc"
 PUBLIC_BASE_URL = "https://linear-discord-bridge.muffinfactory.workers.dev"
 # Rotation load skew: higher weight = bigger share of the week's chore minutes.
 # Per-person overrides set via `/chores weight` (D1) take precedence.
+# ROTATION_MEMBERS is NOT here — it is set outside the repo (Worker secret).
+# It is load-bearing: every consumer is `if (env.ROTATION_MEMBERS)`, so if it
+# ever goes missing rotation silently stops alternating rather than erroring.
+# runWeek logs a loud console.error when it is absent. Expected: "Alex,Kristal".
 ROTATION_WEIGHTS = "Alex:60,Kristal:40"
 # Title of a no-cadence template in the Recurring project to spawn (due at the
 # pause start) whenever a whole-household /chores pause is set — e.g. a trip

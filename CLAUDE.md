@@ -34,6 +34,19 @@ Pause semantics:
   auto-expiry (`createCatchups`, `processExpiredPauses`).
 - Holds are **soft-cleared** (status + cleared_at) so history is queryable via `/chores pauses`.
 
+Shared helpers — use them, don't re-derive:
+- **`config.js`** holds `choresProject` / `adhocProject` / `recurringProject` / `choresTeam` /
+  `choreProjects`. Those four defaults were spelled out inline 61 times across four files; there is
+  a test that fails if one creeps back in.
+- **`scheduleFromConfig(config, descCfg)`** (recurring.js) is the ONLY place a chore's scheduling
+  shape is built. It previously existed as three parallel copies — `buildDefs` (generation),
+  `summarizeTemplate` (`/describe`) and `annotateTemplates` (the schedule comment) — and they
+  drifted twice in two days: `weekdays-only` reached two of three, `paused` reached two of three.
+- **`streak.js`** is the only streak definition. **`snoozeIssue`** is the only snooze.
+- `ROTATION_MEMBERS` lives outside the repo and every consumer is `if (env.ROTATION_MEMBERS)`, so
+  losing it would silently stop rotation rather than erroring. `runWeek` now logs a loud error when
+  it's absent.
+
 Assignment (rotation-first — changed Aug 2026):
 - **Per-title alternation is the primary rule**: whoever did a chore last doesn't get it next
   occurrence. Effort/weight load balancing survives but is a **tiebreak only**, used when a title
@@ -222,6 +235,28 @@ Diagnostics:
   from D1.
 - **`/recent-done?key=`** shows exactly what the `needswork` picker would offer plus its in-Worker
   timing — that path can't otherwise be exercised without signing a Discord interaction.
+
+## Tests
+`npm test` — Node's built-in runner (`node --test`), no dependencies to install. Files live in
+`test/*.test.mjs`.
+- **`node --test test/` silently finds nothing** and reports a phantom failure. The script uses the
+  quoted glob `"test/**/*.test.mjs"`, which Node expands itself. Don't "simplify" it to a directory.
+- Everything tested is **pure**: no network, no D1, no Discord. The seams that make that possible
+  are `scheduleFromConfig`, `choreStreak`, `computeStats`, `targetDayOfMonth`, `isDueToday` and the
+  message builders. Keep new logic separable the same way — if a behaviour can only be checked by
+  hitting Linear, it's in the wrong place.
+- `test/parity.test.mjs` is a **structural guard**, not an example-based test: it walks what
+  `parseLabelConfig` can set and fails if any schedule-relevant key doesn't reach
+  `scheduleFromConfig`. Adding a directive that bypasses the shared builder breaks the build. If a
+  new config key genuinely isn't schedule-related, add it to `NOT_SCHEDULE` with a reason.
+- `test/widget.test.mjs` **renders the page and compiles the emitted script** with `node:vm`. A
+  syntax check of `widgetpage.js` always passes, because the broken code lives inside a string.
+- `test/modules.test.mjs` imports every module. `node --check` cannot catch a function that is
+  called but never imported — that shipped once and this is what catches it.
+- One test is **skipped on purpose**, with its reason in the skip message: the shared widget page
+  still contains the leisure tracker's markup and script. It flips to a pass when that's fixed.
+- When adding a guard, **mutation-test it**: break the thing deliberately, confirm the suite fails
+  with a useful message, then restore. A guard that can't fail is decoration.
 
 ## Gotchas
 - **Deploy → commit → push, same turn.** After every `npm run deploy`, immediately

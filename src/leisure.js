@@ -7,6 +7,7 @@
 // needs Linear queries, which don't belong in the D1 layer.
 
 import { fetchAssignedActiveIssues, fetchRecentCompletedAssigned, getUsers } from "./linear.js";
+import { recurringProject } from "./config.js";
 import { localDate } from "./recurring.js";
 import { logLeisure, queryLeisure } from "./db.js";
 
@@ -24,7 +25,7 @@ export async function recordLeisure(env, { userId, person, note, source = "self"
   if (!userId || !person) return { error: "Couldn't match you to a Linear user." };
   const now = new Date();
   const today = localDate(now).ymd;
-  const recurring = env.RECURRING_PROJECT || "Recurring";
+  const recurring = recurringProject(env);
 
   // Everything of theirs still open and due today or earlier. Overdue is
   // counted separately: a months-old one-off shouldn't make a clear slate

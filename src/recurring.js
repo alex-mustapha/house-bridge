@@ -62,6 +62,7 @@ import {
   getViewerId,
   assignIssue,
 } from "./linear.js";
+import { choresProject, choresTeam, recurringProject } from "./config.js";
 import { getActivePauses, pausesOn, markPauseCleared } from "./pauses.js";
 import { getWeightResolver } from "./weights.js";
 
@@ -141,7 +142,7 @@ export const RECURRING = [
 
 // Extract cadence from a template's labels. Returns the parsed config plus the
 // IDs of the "real" labels (everything not a cadence directive) to copy along.
-function parseLabelConfig(labelNodes) {
+export function parseLabelConfig(labelNodes) {
   const config = {};
   const passthroughLabelIds = [];
 
@@ -184,7 +185,7 @@ export function parseDuration(s) {
 // week/dueafter/opposite/start/end/count/estimate live in the description;
 // parsed then stripped. (Months come from labels only.)
 const DESC_DIRECTIVE_RE = /^\s*(week|dueafter|opposite|start|end|count|estimate|effort|every|assign)\s*:/i;
-function parseDescriptionConfig(description) {
+export function parseDescriptionConfig(description) {
   const cfg = {};
   if (!description) return cfg;
 
@@ -360,7 +361,7 @@ function monthIndexOf(ymd) {
   return y * 12 + (m - 1);
 }
 
-function isDueToday(chore, now) {
+export function isDueToday(chore, now) {
   const L = localDate(now);
   if (chore.start && L.ymd < chore.start) return false; // hasn't started yet
   if (chore.end && L.ymd > chore.end) return false; // past its end date
@@ -432,13 +433,51 @@ function isDueToday(chore, now) {
   }
 }
 
+// The scheduling shape of a chore, derived from its labels plus description
+// directives. THE one place this is built.
+//
+// It lived in three parallel copies — buildDefs (what actually generates),
+// summarizeTemplate (what /describe reports) and annotateTemplates (the schedule
+// comment written back onto the template) — and they drifted exactly as you
+// would expect. `weekdays-only` was added to the first two, so annotateTemplates
+// kept writing "Monthly on the 15th" onto the investment templates with no
+// mention of it; `paused` had the same problem a day earlier. Add a scheduling
+// directive here and all three surfaces pick it up at once.
+export function scheduleFromConfig(config, descCfg) {
+  // "anyday": a weekly-family chore with no weekday label runs `count` times
+  // per week on auto-spread days (default once, due Sunday).
+  const weeklyFamily = ["weekly", "biweekly", "triweekly"].includes(config.cadence);
+  const anyday = weeklyFamily && !(config.days && config.days.length);
+  const count = anyday ? descCfg.count || 1 : undefined;
+  return {
+    cadence: config.cadence,
+    days: anyday ? ANYDAY_SPREAD[count] : config.days,
+    anyday,
+    count,
+    estimate: descCfg.estimate,
+    effort: descCfg.effort,
+    intervalDays: descCfg.intervalDays,
+    intervalMonths: descCfg.intervalMonths,
+    dom: config.dom,
+    weekdaysOnly: config.weekdaysOnly,
+    months: config.months,
+    weekPhase: descCfg.weekPhase,
+    start: descCfg.start,
+    end: descCfg.end,
+    anchorWeek: descCfg.start
+      ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex
+      : undefined,
+    anchorMonth: descCfg.start ? monthIndexOf(descCfg.start) : undefined,
+  };
+}
+
 // Normalize both sources into a common shape with teamId + labelIds resolved.
 async function buildDefs(env) {
   const defs = [];
 
   // Linear templates (primary).
   try {
-    const projectName = env.RECURRING_PROJECT || "Recurring";
+    const projectName = recurringProject(env);
     const templates = await fetchRecurringTemplates(env, projectName);
     for (const t of templates) {
       const { config, passthroughLabelIds } = parseLabelConfig(t.labels?.nodes || []);
@@ -457,12 +496,6 @@ async function buildDefs(env) {
         continue;
       }
       if (config.paused) continue; // `paused` label -> don't generate
-      // "anyday": a weekly-family chore with no weekday label runs `count` times
-      // per week on auto-spread days (default once, due Sunday).
-      const weeklyFamily = ["weekly", "biweekly", "triweekly"].includes(config.cadence);
-      const anyday = weeklyFamily && !(config.days && config.days.length);
-      const count = anyday ? descCfg.count || 1 : undefined;
-      const days = anyday ? ANYDAY_SPREAD[count] : config.days;
       defs.push({
         title: t.title,
         teamId: t.team?.id,
@@ -474,28 +507,13 @@ async function buildDefs(env) {
         onExisting:
           config.onExisting ||
           defaultOnMiss({ cadence: config.cadence, intervalDays: descCfg.intervalDays }),
-        cadence: config.cadence,
-        days,
-        anyday,
-        count,
-        estimate: descCfg.estimate,
-        effort: descCfg.effort,
-        intervalDays: descCfg.intervalDays,
-        intervalMonths: descCfg.intervalMonths,
-        dom: config.dom,
-        weekdaysOnly: config.weekdaysOnly,
-        months: config.months,
-        weekPhase: descCfg.weekPhase,
+        ...scheduleFromConfig(config, descCfg),
+        // Assignment and creation concerns, not scheduling — these stay here
+        // because only generation uses them.
         dueAfterDays: descCfg.dueAfterDays,
         opposite: descCfg.opposite, // assign opposite of this chore's owner
         assigneeId: t.assignee?.id, // explicit owner on the template = fixed
         assignDays: descCfg.assignDays, // per-weekday fixed owners (names, resolved later)
-        start: descCfg.start, // first eligible date
-        end: descCfg.end, // last eligible date
-        anchorWeek: descCfg.start
-          ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex
-          : undefined,
-        anchorMonth: descCfg.start ? monthIndexOf(descCfg.start) : undefined,
       });
     }
   } catch (err) {
@@ -521,7 +539,7 @@ async function buildDefs(env) {
 async function pausedTemplateTitles(env) {
   const out = new Set();
   try {
-    const tpls = await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring");
+    const tpls = await fetchRecurringTemplates(env, recurringProject(env));
     for (const t of tpls) {
       const paused = (t.labels?.nodes || []).some((l) => (l.name || "").toLowerCase() === "paused");
       if (paused && t.team?.id) out.add(`${t.team.id}::${t.title}`);
@@ -560,7 +578,7 @@ export async function forceReplace(env, identifier) {
     labelIds: (issue.labels?.nodes || []).map((l) => l.id),
     assigneeId,
     stateId: await getTodoStateId(env, issue.team.id),
-    projectId: await getProjectId(env, env.CHORES_PROJECT || "House Chores"),
+    projectId: await getProjectId(env, choresProject(env)),
   });
   if (result?.success) {
     console.log(`Replaced ${identifier} -> ${result.issue?.identifier}`);
@@ -576,6 +594,17 @@ export async function forceReplace(env, identifier) {
 // fixed owners and "opposite" pairs) instead of per-chore alternation, so weeks
 // aren't lopsided. Run weekly (during the Monday recap), not daily.
 export async function runWeek(env, opts = {}) {
+  // ROTATION_MEMBERS is load-bearing and lives outside the repo. Every consumer
+  // is written `if (env.ROTATION_MEMBERS)`, so losing it would not error — it
+  // would silently stop alternating and hand chores out by fallback, which is
+  // the exact bug this system was built to fix and the one hardest to notice.
+  // It will always just be the two of us, so the only real risk is losing it.
+  if (!env.ROTATION_MEMBERS) {
+    console.error(
+      "ROTATION_MEMBERS is not set — rotation is DISABLED and assignment will not " +
+        "alternate. Expected a comma-separated list of Linear user names.",
+    );
+  }
   const defs = await buildDefs(env);
   if (!defs.length) return { created: 0, archived: 0, moved: 0, remaining: 0, capped: false };
 
@@ -615,7 +644,7 @@ export async function runWeek(env, opts = {}) {
   const horizonEnd = localDate(new Date(base.getTime() + (horizonDays - 1) * 86_400_000)).ymd;
   const isOpen = (n) => !["completed", "canceled"].includes(n.state?.type);
 
-  const projectName = env.CHORES_PROJECT || "House Chores";
+  const projectName = choresProject(env);
   const projectId = await getProjectId(env, projectName);
 
   const ctx = { todoStates: {}, spawned: {}, lastByTitle: {} };
@@ -1065,7 +1094,7 @@ export async function rebalanceWindow(env) {
   const wt = { [A]: resolveWeight(nameOf(A)) || 50, [B]: resolveWeight(nameOf(B)) || 50 };
 
   const defs = await buildDefs(env);
-  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const teamId = await getTeamId(env, choresTeam(env));
   const byTitle = {};
   for (const c of defs) if (c.teamId === teamId) byTitle[c.title] = c;
   const pinnedTitles = new Set(
@@ -1092,7 +1121,7 @@ export async function rebalanceWindow(env) {
     return c ? choreCost(c.estimate, c.effort) : DEFAULT_EST_MIN;
   };
 
-  const spawned = await fetchSpawned(env, teamId, env.CHORES_PROJECT || "House Chores");
+  const spawned = await fetchSpawned(env, teamId, choresProject(env));
   const counts = { [A]: 0, [B]: 0 };
   const movable = [];
   for (const n of spawned) {
@@ -1158,7 +1187,7 @@ export async function reshuffleWindow(env) {
   if (rotation.length < 2) return { reassigned: 0, considered: 0, capped: false };
 
   const defs = await buildDefs(env);
-  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const teamId = await getTeamId(env, choresTeam(env));
   const byTitle = {};
   for (const c of defs) if (c.teamId === teamId) byTitle[c.title] = c;
   // A title can legitimately have SEVERAL templates — that's how a per-weekday
@@ -1183,7 +1212,7 @@ export async function reshuffleWindow(env) {
   const pausedOn = (ymd) => userPauses.filter((p) => ymd >= p.start_date && ymd <= p.end_date).map((p) => p.userId);
 
   const today = localDate(new Date()).ymd;
-  const spawned = await fetchSpawned(env, teamId, env.CHORES_PROJECT || "House Chores");
+  const spawned = await fetchSpawned(env, teamId, choresProject(env));
 
   // Seed each title's rotation position from the most recent copy that already
   // happened, so the first future occurrence alternates off real history rather
@@ -1250,9 +1279,9 @@ export async function coverUserPause(env, { userId, from, to }) {
   const covers = rotation.filter((id) => id !== userId);
   if (!covers.length) return 0;
   const cover = covers[0]; // 2-person household: the other member
-  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const teamId = await getTeamId(env, choresTeam(env));
   if (!teamId) return 0;
-  const spawned = await fetchSpawned(env, teamId, env.CHORES_PROJECT || "House Chores");
+  const spawned = await fetchSpawned(env, teamId, choresProject(env));
   const cap = Math.max(1, parseInt(env.GEN_MAX_CREATES || "40", 10) || 40);
   let reassigned = 0;
   for (const n of spawned) {
@@ -1354,7 +1383,7 @@ export async function createCatchups(env, { start, end, returnDate }) {
   });
   if (!owed.length) return { created: 0, titles: [] };
 
-  const projectName = env.CHORES_PROJECT || "House Chores";
+  const projectName = choresProject(env);
   const projectId = await getProjectId(env, projectName);
 
   // Dedup against open chores already due on the return date.
@@ -1414,7 +1443,7 @@ function formatDate(ymd) {
 }
 
 // Human-readable cadence from a parsed chore config.
-function describeSchedule(c) {
+export function describeSchedule(c) {
   const est = c.estimate ? ` · ~${c.estimate}m` : "";
   const eff = c.effort ? ` · effort ${c.effort}/5` : "";
   const tail = est + eff;
@@ -1452,7 +1481,7 @@ function describeBase(c) {
 
 // Diagnostic: what the engine parses for the template matching `q` (by title).
 export async function describeTemplate(env, q) {
-  const project = env.RECURRING_PROJECT || "Recurring";
+  const project = recurringProject(env);
   const tpls = await fetchRecurringTemplates(env, project);
   const t = tpls.find((x) => x.title.toLowerCase().includes((q || "").toLowerCase()));
   if (!t) return { error: `no template matching "${q}"` };
@@ -1464,7 +1493,7 @@ export async function describeTemplate(env, q) {
 // because a template whose next occurrence is past the generation horizon is
 // never materialized and so never shows up in the calendar or the chore list.
 export async function describeAllTemplates(env) {
-  const project = env.RECURRING_PROJECT || "Recurring";
+  const project = recurringProject(env);
   const tpls = await fetchRecurringTemplates(env, project);
   const rows = tpls.map(summarizeTemplate).sort((a, b) => a.title.localeCompare(b.title));
   const brief = (r) => ({
@@ -1494,27 +1523,7 @@ function summarizeTemplate(t) {
   const descCfg = parseDescriptionConfig(t.description);
   if ((descCfg.intervalDays || descCfg.intervalMonths) && !config.cadence && descCfg.start)
     config.cadence = descCfg.intervalMonths ? "month-interval" : "interval";
-  const weeklyFamily = ["weekly", "biweekly", "triweekly"].includes(config.cadence);
-  const anyday = weeklyFamily && !(config.days && config.days.length);
-  const count = anyday ? descCfg.count || 1 : undefined;
-  const chore = {
-    cadence: config.cadence,
-    days: anyday ? ANYDAY_SPREAD[count] : config.days,
-    anyday,
-    count,
-    estimate: descCfg.estimate,
-    effort: descCfg.effort,
-    intervalDays: descCfg.intervalDays,
-    intervalMonths: descCfg.intervalMonths,
-    dom: config.dom,
-    weekdaysOnly: config.weekdaysOnly,
-    months: config.months,
-    weekPhase: descCfg.weekPhase,
-    start: descCfg.start,
-    end: descCfg.end,
-    anchorWeek: descCfg.start ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex : undefined,
-    anchorMonth: descCfg.start ? monthIndexOf(descCfg.start) : undefined,
-  };
+  const chore = scheduleFromConfig(config, descCfg);
   return {
     title: t.title,
     rawLabels: (t.labels?.nodes || []).map((l) => l.name),
@@ -1548,7 +1557,7 @@ function summarizeTemplate(t) {
 }
 
 // The next `count` due dates for a chore (scans up to ~400 days; pure compute).
-function nextOccurrences(chore, count, skip) {
+export function nextOccurrences(chore, count, skip) {
   const out = [];
   const base = new Date();
   for (let d = 0; d < 400 && out.length < count; d++) {
@@ -1565,7 +1574,7 @@ function nextOccurrences(chore, count, skip) {
 // next due dates. Comments aren't copied to spawned chores. Skips unchanged
 // comments to avoid notification noise.
 export async function annotateTemplates(env) {
-  const projectName = env.RECURRING_PROJECT || "Recurring";
+  const projectName = recurringProject(env);
   const templates = await fetchTemplatesForAnnotation(env, projectName);
 
   // Active global holds make the schedule comment hold-aware: note the pause and
@@ -1612,28 +1621,7 @@ export async function annotateTemplates(env) {
     if (config.paused) {
       body = `${head}⏸️ Paused — scheduling disabled. Remove the \`paused\` label to resume.`;
     } else {
-      const weeklyFamily = ["weekly", "biweekly", "triweekly"].includes(config.cadence);
-      const anyday = weeklyFamily && !(config.days && config.days.length);
-      const count = anyday ? descCfg.count || 1 : undefined;
-      const chore = {
-        cadence: config.cadence,
-        days: anyday ? ANYDAY_SPREAD[count] : config.days,
-        anyday,
-        count,
-        estimate: descCfg.estimate,
-        effort: descCfg.effort,
-        intervalDays: descCfg.intervalDays,
-        intervalMonths: descCfg.intervalMonths,
-        dom: config.dom,
-        months: config.months,
-        weekPhase: descCfg.weekPhase,
-        start: descCfg.start,
-        end: descCfg.end,
-        anchorWeek: descCfg.start
-          ? localDate(new Date(`${descCfg.start}T12:00:00Z`)).weekIndex
-          : undefined,
-        anchorMonth: descCfg.start ? monthIndexOf(descCfg.start) : undefined,
-      };
+      const chore = scheduleFromConfig(config, descCfg);
       const next = nextOccurrences(chore, 3, isHeld).map(formatDate);
       const win = [];
       if (chore.start) win.push(`from ${formatDate(chore.start)}`);

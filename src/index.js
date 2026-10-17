@@ -8,6 +8,7 @@
 //                  the per-person scoreboard.
 
 import { verifyLinearSignature } from "./verify.js";
+import { choreProjects, choresTeam, recurringProject } from "./config.js";
 import {
   formatIssueEmbed,
   buildDigestMessage,
@@ -103,7 +104,7 @@ function computeStreak(issues, today, recurringName) {
 // Unassigned, non-template chores due within UNASSIGNED_LOOKAHEAD_DAYS (default
 // 7) — surfaced to both people so they can claim things before they're due.
 async function unassignedDueSoon(env) {
-  const recurring = env.RECURRING_PROJECT || "Recurring";
+  const recurring = recurringProject(env);
   const days = parseInt(env.UNASSIGNED_LOOKAHEAD_DAYS || "7", 10);
   const until = localDate(new Date(Date.now() + days * 86_400_000)).ymd;
   return (await fetchUnassignedActive(env))
@@ -117,7 +118,7 @@ async function unassignedDueSoon(env) {
 // of this system is that scheduling lives in labels and directives rather than
 // in hand-tended Linear metadata.
 async function anytimePool(env, limit = 2) {
-  const recurring = env.RECURRING_PROJECT || "Recurring";
+  const recurring = recurringProject(env);
   const today = localDate(new Date()).ymd;
   const [ty, tm, td] = today.split("-").map(Number);
   const rows = (await fetchUndatedActive(env, 50).catch((e) => {
@@ -146,7 +147,7 @@ async function anytimePool(env, limit = 2) {
 // phone widget. `remaining` counts active, non-template chores due today/overdue.
 async function dayStatus(env, userName) {
   const today = localDate(new Date()).ymd;
-  const recurring = env.RECURRING_PROJECT || "Recurring";
+  const recurring = recurringProject(env);
   const unassignedSoon = await unassignedDueSoon(env);
   if (userName) {
     const users = await getUsers(env);
@@ -217,7 +218,7 @@ async function dayStatus(env, userName) {
       anytime: await anytimePool(env, 2),
     };
   }
-  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const teamId = await getTeamId(env, choresTeam(env));
   const any = teamId ? await anyOpenDueByTeam(env, teamId, today) : false;
   return { done: !any, remaining: any ? 1 : 0, tasks: [], completed: [], streak: 0, unassignedSoon };
 }
@@ -488,7 +489,7 @@ async function handleRequest(request, env, ctx) {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       const days = parseInt(url.searchParams.get("days") || "21", 10);
       const t0 = Date.now();
-      const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+      const teamId = await getTeamId(env, choresTeam(env));
       const rows = teamId ? await fetchRecentCompleted(env, teamId, { days }) : [];
       return new Response(
         JSON.stringify(
@@ -571,10 +572,7 @@ async function handleRequest(request, env, ctx) {
         [x.displayName, x.name].some((n) => (n || "").toLowerCase().includes(who.toLowerCase())),
       );
       if (!target) return new Response(`No Linear user matching "${who}"\n`, { status: 404 });
-      const hits = await findActiveByTitle(env, match, [
-        env.CHORES_PROJECT || "House Chores",
-        env.ADHOC_PROJECT || "Ad Hoc",
-      ]);
+      const hits = await findActiveByTitle(env, match, choreProjects(env));
       if (!hits.length) return new Response(`No active chore matching "${match}"\n`, { status: 404 });
       hits.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
       const prev = hits[0].assignee;
@@ -631,7 +629,7 @@ async function handleRequest(request, env, ctx) {
       } catch (e) {
         console.error("dashboard log refresh failed:", e);
       }
-      const templates = await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring");
+      const templates = await fetchRecurringTemplates(env, recurringProject(env));
       // Map each chore title to its effort-adjusted minutes, matching how the
       // weekly balancer weighs it (time × effort multiplier).
       const costMap = {};
@@ -756,7 +754,7 @@ async function handleEvent(payload, env) {
   // one — a day/cadence change, or toggling the `paused` label — should
   // reconcile the already-materialized window right away (day-change reconcile +
   // paused-label retraction), instead of waiting for Monday or a manual sync.
-  const recurringProject = env.RECURRING_PROJECT || "Recurring";
+  const recurringProject = recurringProject(env);
   if (data?.project?.name === recurringProject) {
     if (type === "Issue" && ["create", "update", "remove"].includes(action)) {
       await runWeek(env, { skipCleanup: true }).catch((e) => console.error("template-edit reconcile failed:", e));
@@ -788,7 +786,6 @@ async function handleEvent(payload, env) {
   // doesn't trigger a rebuild.
   if (action === "create" || action === "update") {
     const proj = data?.project?.name;
-    const choreProjects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
     const changed = Object.keys(payload.updatedFrom || {});
     const DIGEST_FIELDS = ["state", "stateId", "assignee", "assigneeId", "dueDate", "title"];
     const touches =
@@ -808,7 +805,6 @@ async function handleEvent(payload, env) {
   // say) is still worth seeing. Set MIRROR_CHORE_REMOVALS=true to get them back.
   if (action === "remove" && env.MIRROR_CHORE_REMOVALS !== "true") {
     const proj = data?.project?.name;
-    const choreProjects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
     if (proj && choreProjects.includes(proj)) return;
   }
 
@@ -818,7 +814,6 @@ async function handleEvent(payload, env) {
   // /chores snooze tags it too; this is idempotent.
   if (action === "update" && payload.updatedFrom && "dueDate" in payload.updatedFrom) {
     const proj = data?.project?.name;
-    const choreProjects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
     if (proj && choreProjects.includes(proj) && data?.id) {
       await markSnoozed(env, data.id).catch((e) => console.error("auto-snooze tag failed:", e));
     }
@@ -1039,7 +1034,7 @@ async function buildDigestPayload(env) {
   // Warning marks: repeatedly put off, or a detail was missed last pass.
   const marks = await choreMarks(
     env,
-    await getTeamId(env, env.CHORES_TEAM || "CHO"),
+    await getTeamId(env, choresTeam(env)),
     shown,
     today,
   ).catch((e) => {
@@ -1140,7 +1135,7 @@ async function archiveOldChores(env, { dryRun = false } = {}) {
   const days = parseInt(env.CHORE_RETENTION_DAYS || "30", 10);
   const max = parseInt(env.ARCHIVE_MAX || "30", 10);
   const before = new Date(Date.now() - days * 86_400_000).toISOString();
-  const projects = [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
+  const projects = choreProjects(env);
   const old = await fetchArchivableBefore(env, projects, before, max);
   const byState = old.reduce((a, i) => {
     const t = i.state?.type || "unknown";
@@ -1157,7 +1152,7 @@ async function archiveOldChores(env, { dryRun = false } = {}) {
     console.log(`Auto-archived ${n} resolved chore(s) older than ${days}d.`, byState);
     // One line standing in for the per-issue `remove` events suppressed in
     // handleEvent — the sweep stays visible without burying the channel.
-    const url = resolveWebhook(env.CHORES_TEAM || "CHO", env);
+    const url = resolveWebhook(choresTeam(env), env);
     if (url) {
       const bits = [];
       if (byState.completed) bits.push(`${byState.completed} done`);
@@ -1185,7 +1180,7 @@ async function archiveOldChores(env, { dryRun = false } = {}) {
 async function postScoreboard(env, force) {
   const now = new Date();
   if (!force && now.getUTCDay() !== 1) return;
-  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const teamId = await getTeamId(env, choresTeam(env));
   const url =
     env.DISCORD_WEBHOOK_STATS || env.DISCORD_WEBHOOK_DUE || env.DISCORD_WEBHOOK_DEFAULT;
   if (!teamId || !url) return;

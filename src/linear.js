@@ -1,6 +1,8 @@
 // Linear GraphQL client and query/mutation helpers used by the cron, the
 // real-time webhook handler, and the manual toolkit endpoints.
 
+import { choreProjects, recurringProject } from "./config.js";
+
 const LINEAR_API = "https://api.linear.app/graphql";
 
 async function linearQuery(env, query, variables = {}) {
@@ -202,10 +204,7 @@ export async function getCanceledStateId(env, teamId) {
 // recorded as "decided not to" rather than counted as done. Mirrors
 // markChoreDone so both surfaces behave the same.
 export async function cancelChore(env, match) {
-  const matches = await findActiveByTitle(env, match, [
-    env.CHORES_PROJECT || "House Chores",
-    env.ADHOC_PROJECT || "Ad Hoc",
-  ]);
+  const matches = await findActiveByTitle(env, match, choreProjects(env));
   if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };
   matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
   const issue = matches[0];
@@ -221,10 +220,7 @@ export async function cancelChore(env, match) {
 // button is the same shape as its other actions. `today` is passed in because
 // the Eastern-calendar helper lives in recurring.js, which imports from here.
 export async function snoozeChore(env, match, today) {
-  const matches = await findActiveByTitle(env, match, [
-    env.CHORES_PROJECT || "House Chores",
-    env.ADHOC_PROJECT || "Ad Hoc",
-  ]);
+  const matches = await findActiveByTitle(env, match, choreProjects(env));
   if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };
   matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
   const issue = matches[0];
@@ -342,10 +338,7 @@ export async function setIssueState(env, id, stateId) {
 // Mark the best-matching active chore done by (fuzzy) title — soonest-due wins.
 // Shared by the /done endpoint and the Alexa skill.
 export async function markChoreDone(env, match) {
-  const matches = await findActiveByTitle(env, match, [
-    env.CHORES_PROJECT || "House Chores",
-    env.ADHOC_PROJECT || "Ad Hoc",
-  ]);
+  const matches = await findActiveByTitle(env, match, choreProjects(env));
   if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };
   matches.sort((a, b) => (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99"));
   const issue = matches[0];
@@ -522,29 +515,6 @@ export async function getUsers(env) {
   return data.users?.nodes || [];
 }
 
-// Assignee of the most recently created spawned copy of a chore (archived
-// included), so the next spawn can be handed to the other person.
-export async function getLastAssignee(env, teamId, title) {
-  const query = `
-    query Last($teamId: ID!, $title: String!) {
-      issues(
-        first: 50
-        includeArchived: true
-        filter: {
-          team: { id: { eq: $teamId } }
-          title: { eq: $title }
-          project: { null: true }
-        }
-      ) {
-        nodes { assignee { id } createdAt }
-      }
-    }`;
-  const data = await linearQuery(env, query, { teamId, title });
-  const nodes = (data.issues?.nodes || []).filter((n) => n.createdAt);
-  nodes.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  return nodes[0]?.assignee?.id || null;
-}
-
 // Open (non-completed, non-canceled) spawned chores in a team with an exact
 // title. `project: { null: true }` excludes the template tickets that live in
 // the Recurring project — otherwise "replace" would archive the template.
@@ -658,7 +628,7 @@ export async function fetchChoresForCalendar(env, who) {
     }`;
   const variables = who.unassigned ? {} : { aid: who.assigneeId };
   const data = await linearQuery(env, query, variables);
-  const recurring = env.RECURRING_PROJECT || "Recurring";
+  const recurring = recurringProject(env);
   return (data.issues?.nodes || []).filter((i) => i.dueDate && i.project?.name !== recurring);
 }
 

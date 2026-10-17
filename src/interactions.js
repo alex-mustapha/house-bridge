@@ -35,6 +35,7 @@ import {
   fetchChoreHistory,
   fetchRecentCompleted,
 } from "./linear.js";
+import { adhocProject, choreProjects, choresProject, choresTeam, recurringProject } from "./config.js";
 import { localDate, annotateTemplates, withTemplateLink, runWeek, createCatchups, rebalanceWindow, reshuffleWindow, coverUserPause } from "./recurring.js";
 import { addPause, clearPauses, getActivePauses, getPauseHistory } from "./pauses.js";
 import { setWeight, clearWeight, listWeights } from "./weights.js";
@@ -216,7 +217,7 @@ async function autocompleteResponse(interaction, env) {
     const opt = (sub?.options || []).find((o) => o.focused);
     if (opt?.name !== "chore") return acChoices([]);
     const typed = (opt.value || "").toLowerCase();
-    const tpls = await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring");
+    const tpls = await fetchRecurringTemplates(env, recurringProject(env));
     return acChoices(tpls.map((t) => t.title).filter((t) => (t || "").toLowerCase().includes(typed)));
   }
   return { type: 8, data: { choices: [] } };
@@ -231,7 +232,7 @@ const RECENT_DONE_TTL_MS = 20_000;
 let recentDoneCache = { at: 0, titles: [] };
 async function recentCompletedTitles(env) {
   if (Date.now() - recentDoneCache.at < RECENT_DONE_TTL_MS) return recentDoneCache.titles;
-  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const teamId = await getTeamId(env, choresTeam(env));
   if (!teamId) return [];
   try {
     const titles = (await fetchRecentCompleted(env, teamId, { days: 21 })).map((h) => h.title);
@@ -268,7 +269,7 @@ async function choreAutocomplete(interaction, env) {
     return acChoices((await getUsers(env)).map((u) => u.displayName || u.name).filter(match));
   }
   if (opt.name === "chore") {
-    const recurring = env.RECURRING_PROJECT || "Recurring";
+    const recurring = recurringProject(env);
     if (sub.name === "pause") {
       // any recurring template
       return acChoices((await fetchRecurringTemplates(env, recurring)).map((t) => t.title).filter(match));
@@ -356,7 +357,7 @@ async function projectResponse(interaction, env) {
 }
 
 async function unassignedResponse(interaction, env) {
-  const recurring = env.RECURRING_PROJECT || "Recurring";
+  const recurring = recurringProject(env);
   const issues = (await fetchUnassignedActive(env)).filter(
     (i) => i.project?.name !== recurring,
   );
@@ -413,7 +414,7 @@ async function tasksResponse(interaction, env) {
   if (!user) return reply(`Couldn't find a Linear user matching "${name}".`);
 
   // Exclude recurring-chore templates (they live in the Recurring project).
-  const recurringProject = env.RECURRING_PROJECT || "Recurring";
+  const recurringProject = recurringProject(env);
   const issues = (await fetchAssignedActiveIssues(env, user.id)).filter(
     (i) => i.project?.name !== recurringProject,
   );
@@ -501,7 +502,6 @@ function addDays(ymd, n) {
 
 // The projects that hold do-able chores (recurring-generated + ad-hoc), searched
 // by done/snooze/skip so ad-hoc chores stay actionable.
-const choreProjects = (env) => [env.CHORES_PROJECT || "House Chores", env.ADHOC_PROJECT || "Ad Hoc"];
 
 // /chores — the one-off control surface for scheduling changes (vacation holds,
 // snooze, skip, add, done). Templates remain the source for permanent chores.
@@ -811,7 +811,7 @@ async function choreCommand(interaction, env, ctx) {
         ctx,
         async () => {
           if (!env.DB) return "Flag storage unavailable (no DB).";
-          const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+          const teamId = await getTeamId(env, choresTeam(env));
           if (!teamId) return "Chores team not found.";
 
           if (o.clear) {
@@ -916,8 +916,8 @@ async function choreCommand(interaction, env, ctx) {
       return deferAndRun(interaction, ctx, async () => {
         // Independent lookups in parallel — one wave instead of three.
         const [teamId, projectId, users] = await Promise.all([
-          getTeamId(env, env.CHORES_TEAM || "CHO"),
-          getProjectId(env, env.ADHOC_PROJECT || "Ad Hoc"),
+          getTeamId(env, choresTeam(env)),
+          getProjectId(env, adhocProject(env)),
           o.assignee ? getUsers(env) : Promise.resolve(null),
         ]);
         if (!teamId) return "Chores team not found.";
@@ -951,14 +951,14 @@ async function choreCommand(interaction, env, ctx) {
 // engine-generated, never ad-hoc) + open + in-window + (assignee for user scope).
 // Returns the count archived.
 async function clearGeneratedInWindow(env, { from, to, userId }) {
-  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const teamId = await getTeamId(env, choresTeam(env));
   if (!teamId) return 0;
   const templateTitles = new Set(
-    (await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring")).map((t) =>
+    (await fetchRecurringTemplates(env, recurringProject(env))).map((t) =>
       (t.title || "").toLowerCase(),
     ),
   );
-  const spawned = await fetchSpawned(env, teamId, env.CHORES_PROJECT || "House Chores");
+  const spawned = await fetchSpawned(env, teamId, choresProject(env));
   const open = (n) => !["completed", "canceled"].includes(n.state?.type);
   let cleared = 0;
   for (const n of spawned) {
@@ -977,11 +977,11 @@ async function clearGeneratedInWindow(env, { from, to, userId }) {
 // Returns a note for the reply (or "" if there's no such template).
 async function spawnPrepChecklist(env, dueDate) {
   const prepTitle = env.VACATION_PREP_TITLE || "Vacation Prep";
-  const tpl = (await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring")).find(
+  const tpl = (await fetchRecurringTemplates(env, recurringProject(env))).find(
     (t) => (t.title || "").toLowerCase() === prepTitle.toLowerCase(),
   );
   if (!tpl) return "";
-  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const teamId = await getTeamId(env, choresTeam(env));
   if (!teamId) return "";
   const res = await createIssue(env, {
     teamId,
@@ -989,7 +989,7 @@ async function spawnPrepChecklist(env, dueDate) {
     description: withTemplateLink(tpl.description, tpl.url),
     dueDate,
     stateId: await getTodoStateId(env, teamId),
-    projectId: await getProjectId(env, env.CHORES_PROJECT || "House Chores"),
+    projectId: await getProjectId(env, choresProject(env)),
     labelIds: (tpl.labels?.nodes || []).map((l) => l.id),
   });
   return res?.success ? ` 📋 Added **${tpl.title}** (due ${dueDate}).` : "";
@@ -1007,7 +1007,7 @@ async function pickChore(env, text) {
 // dated audit comment on each. The label is the source of truth for taking a
 // chore off-radar (e.g. seasonal); buildDefs skips paused templates.
 async function setPausedLabel(env, text, add, today) {
-  const tpls = await findTemplatesByTitle(env, text, env.RECURRING_PROJECT || "Recurring");
+  const tpls = await findTemplatesByTitle(env, text, recurringProject(env));
   if (!tpls.length) return reply(`No recurring template matching "${text}".`);
   const [pausedId] = await getLabelIds(env, ["paused"]);
   if (!pausedId) return reply("No `paused` label exists in the workspace — create it first.");
@@ -1054,7 +1054,7 @@ async function pausesList(env) {
     const win = p.end_date === "9999-12-31" ? `since ${p.start_date}` : `${p.start_date} → ${p.end_date}`;
     return `• ${who} — ${win}`;
   });
-  const pausedChores = (await fetchRecurringTemplates(env, env.RECURRING_PROJECT || "Recurring"))
+  const pausedChores = (await fetchRecurringTemplates(env, recurringProject(env)))
     .filter((t) => (t.labels?.nodes || []).some((l) => (l.name || "").toLowerCase() === "paused"))
     .map((t) => `• ${t.title}`);
   const hist = (env.DB ? await getPauseHistory(env, 5) : []).map((h) => {

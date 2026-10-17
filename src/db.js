@@ -2,6 +2,7 @@
 // snapshots recent chore outcomes (upsert by issue id); /stats queries them.
 
 import { getTeamId, fetchChoreHistory } from "./linear.js";
+import { choresTeam } from "./config.js";
 import { choreStreak, statusResolved } from "./streak.js";
 import { localDate } from "./recurring.js";
 
@@ -37,7 +38,7 @@ export async function logChores(env) {
   if (!env.DB) return;
   await ensureSchema(env);
 
-  const teamId = await getTeamId(env, env.CHORES_TEAM || "CHO");
+  const teamId = await getTeamId(env, choresTeam(env));
   if (!teamId) return;
   const today = localDate(new Date()).ymd;
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
@@ -619,19 +620,6 @@ export async function activeDetailFlags(env) {
     out.set(`${row.title_key}::${row.person_key}`, { person: row.person, flaggedAt: row.flagged_at });
   }
   return out;
-}
-
-// Recent notes, newest first — for listing what's been raised.
-export async function listDetailFlags(env, limit = 20) {
-  if (!env.DB) return [];
-  await ensureDetailLog(env);
-  const r = await env.DB.prepare(
-    `SELECT title, person, flagged_at, flagged_by, note
-     FROM chore_detail_log ORDER BY flagged_at DESC LIMIT ?1`,
-  )
-    .bind(Math.max(1, Math.min(100, limit)))
-    .all();
-  return r.results || [];
 }
 
 // How often chores have needed another pass over a window — which chores, and

@@ -8,7 +8,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
-    "cron:test": "wrangler dev --test-scheduled"
+    "cron:test": "wrangler dev --test-scheduled",
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "test:watch": "node --test --watch \"test/**/*.test.mjs\""
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

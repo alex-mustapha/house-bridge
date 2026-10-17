@@ -75,69 +75,6 @@ export function formatIssueEmbed(payload) {
   };
 }
 
-export function formatCommentEmbed(payload) {
-  const { data } = payload;
-  const url = payload.url || data.url || "https://linear.app";
-  const body = (data.body || "").slice(0, 300);
-  const author = data.user?.name || "Someone";
-  const issueId = data.issue?.identifier || "an issue";
-  return {
-    title: `💬 New comment on ${issueId}`,
-    description: body ? `${body}\n\n[View](${url})` : `[View](${url})`,
-    color: COLORS.comment,
-    author: { name: author },
-    timestamp: new Date().toISOString(),
-  };
-}
-
-// Match a Linear assignee name to a Discord mention from the name->id map.
-// Resolve a person's name to a Discord @-mention straight from env, for
-// callers outside the digest builder that don't already hold a parsed map.
-export function mentionTag(env, name) {
-  const map = {};
-  for (const pair of (env.DISCORD_MENTIONS || "").split(",")) {
-    const [k, v] = pair.split(":").map((x) => x.trim());
-    if (k && v) map[k.toLowerCase()] = v;
-  }
-  return mentionFor(name, map) || name || "someone";
-}
-
-// One canonical "someone picked this up" notice, always posted to the
-// due-today channel. Claims can happen from the digest dropdown, /chores claim
-// in any channel, or the widget button — without this the announcement landed
-// wherever the command was typed, so the person losing the chore might never
-// see it. Taking over someone else's work @-mentions them; picking up
-// unclaimed work doesn't, since there's nobody to tell.
-// Post to the chores channel using the bot (falling back to the webhook).
-// Deliberately independent of Discord's interaction token: a dropdown action
-// confirms here even if the interaction response is late, lost, or the token
-// has expired, so an action never completes invisibly.
-export async function postToDue(env, body) {
-  try {
-    if (env.DISCORD_BOT_TOKEN && env.DISCORD_DUE_CHANNEL_ID) {
-      // Only claim success if it actually posted; otherwise fall through to the
-      // webhook. This used to return true unconditionally, so a rejected bot
-      // post silently swallowed the announcement instead of retrying.
-      if (await postViaBot(env, env.DISCORD_DUE_CHANNEL_ID, body)) return true;
-    }
-    if (env.DISCORD_WEBHOOK_DUE) {
-      await postToDiscord(env.DISCORD_WEBHOOK_DUE, body);
-      return true;
-    }
-  } catch (e) {
-    console.error("due-channel post failed:", e.message);
-  }
-  return false;
-}
-
-export async function announceClaim(env, { taker, title, from } = {}) {
-  if (!taker || !title) return false;
-  const content = from
-    ? `🙋 **${taker}** claimed **${title}** from ${mentionTag(env, from)}.`
-    : `🙋 **${taker}** claimed **${title}**.`;
-  return postToDue(env, { content, allowed_mentions: { parse: ["users"] } });
-}
-
 function mentionFor(name, mentionMap) {
   if (!name || !mentionMap) return null;
   const n = name.toLowerCase();
