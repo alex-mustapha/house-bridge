@@ -414,9 +414,9 @@ async function tasksResponse(interaction, env) {
   if (!user) return reply(`Couldn't find a Linear user matching "${name}".`);
 
   // Exclude recurring-chore templates (they live in the Recurring project).
-  const recurringProject = recurringProject(env);
+  const recurringName = recurringProject(env);
   const issues = (await fetchAssignedActiveIssues(env, user.id)).filter(
-    (i) => i.project?.name !== recurringProject,
+    (i) => i.project?.name !== recurringName,
   );
   if (!issues.length) {
     return reply(`🎉 ${user.name || name} has no open tasks.`);

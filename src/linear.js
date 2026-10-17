@@ -923,6 +923,21 @@ export async function archiveIssue(env, id) {
   return data.issueArchive;
 }
 
+// What Linear thinks our webhook registration looks like: whether it exists, is
+// enabled, points at this Worker, and which resource types it sends. There was
+// no way to see any of this from here, which is most of why a dead webhook was
+// hard to distinguish from a bug in the handler.
+export async function listWebhooks(env) {
+  const query = `
+    query Webhooks {
+      webhooks(first: 25) {
+        nodes { id label url enabled resourceTypes allPublicTeams team { key } }
+      }
+    }`;
+  const data = await linearQuery(env, query);
+  return data.webhooks?.nodes || [];
+}
+
 // Map of label id -> name across the workspace (for resolving webhook labelIds).
 export async function getLabelNameMap(env) {
   const query = `query { issueLabels(first: 250) { nodes { id name } } }`;

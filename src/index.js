@@ -32,6 +32,7 @@ import {
   fetchActiveBreakdown,
   anyOpenDueByTeam,
   fetchChoreHistory,
+  listWebhooks,
   fetchRecentCompleted,
   getTeamId,
   markChoreDone,
@@ -391,6 +392,16 @@ async function handleRequest(request, env, ctx) {
       const r = await postDigest(env).catch((e) => ({ error: e.message }));
       return new Response(`${JSON.stringify(r)}\n`, { status: 200 });
     }
+    if (url.pathname === "/refresh-digest") {
+      // Forces the in-place re-render of today's digest message. Normally the
+      // Linear webhook drives this; exposed so the refresh path can be tested
+      // on its own, and as a manual lever when the board has drifted.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const r = await refreshDigest(env).catch((e) => ({ error: e.message }));
+      return new Response(JSON.stringify(r) + "\n", {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (url.pathname === "/run-week") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
       ctx.waitUntil(runWeek(env));
@@ -418,6 +429,16 @@ async function handleRequest(request, env, ctx) {
       }
       const r = await archiveOldChores(env);
       return new Response(`${JSON.stringify(r)}\nrun repeatedly to clear a backlog\n`, { status: 200 });
+    }
+    if (url.pathname === "/webhookcheck") {
+      // Diagnoses the Linear side of the webhook: registered, enabled, and
+      // pointing here? A dead registration looks exactly like a broken handler
+      // from the outside.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const hooks = await listWebhooks(env).catch((e) => ({ error: e.message }));
+      return new Response(JSON.stringify(hooks, null, 2) + "\n", {
+        headers: { "Content-Type": "application/json" },
+      });
     }
     if (url.pathname === "/botcheck") {
       if (!authed(url, env)) return new Response("Not found", { status: 404 });
@@ -766,15 +787,15 @@ async function hasLabel(env, data, name) {
   return false;
 }
 
-async function handleEvent(payload, env) {
+export async function handleEvent(payload, env) {
   const { type, action, data } = payload;
 
   // Template tickets (Recurring project) aren't echoed to Discord, but editing
   // one — a day/cadence change, or toggling the `paused` label — should
   // reconcile the already-materialized window right away (day-change reconcile +
   // paused-label retraction), instead of waiting for Monday or a manual sync.
-  const recurringProject = recurringProject(env);
-  if (data?.project?.name === recurringProject) {
+  const recurringName = recurringProject(env);
+  if (data?.project?.name === recurringName) {
     if (type === "Issue" && ["create", "update", "remove"].includes(action)) {
       await runWeek(env, { skipCleanup: true }).catch((e) => console.error("template-edit reconcile failed:", e));
     }
