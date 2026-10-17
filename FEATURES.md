@@ -24,7 +24,7 @@ Two entry points in one Worker:
 - **`fetch()`** — receives Linear webhooks (real-time events), Discord
   interactions (slash commands + menus), calendar/status/dashboard pages, and the
   keyed toolkit endpoints.
-- **`scheduled()`** — the daily cron (`0 12 * * *` UTC = 8am EDT / 7am EST).
+- **`scheduled()`** — the daily cron (`0 10 * * *` UTC = 6am EDT / 5am EST).
   Every day: settle expired pauses → **generate + reconcile the window** →
   digest → cap check → auto-archive. **Mondays** add the weekly recap
   (scoreboard → D1 snapshot). **Sundays** refresh template schedule comments.
