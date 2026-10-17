@@ -17,6 +17,10 @@
 //                                  month(s) the cycle lands on.
 //   day-of-month label (monthly/bimonthly/semi-annually/annually): first | middle | last
 //                               -> 1st / 15th / last day of month
+//   weekdays-only               (optional, monthly-family) -> if that day falls on
+//                               a weekend, move to the nearest weekday (Sat->Fri,
+//                               Sun->Mon), never crossing out of the month. For
+//                               chores that need a bank/market/office open.
 //   skip | replace (| always)   (optional collision policy; default replace)
 //   paused                       (optional) -> stop generating until removed
 //   silent                       (optional) -> generate without a Discord post
@@ -88,6 +92,12 @@ const CADENCE = new Set([
 
 const DAY_OF_MONTH = new Set(["first", "middle", "last"]);
 
+// Keep a monthly-family chore off Saturdays and Sundays. For chores that can
+// only be done on a business day — anything involving a bank, a market, or an
+// office — landing on the 15th is useless when the 15th is a Sunday. Label
+// spellings are normalized (whitespace stripped, lowercased) before this test.
+const WEEKDAYS_ONLY = new Set(["weekdays-only", "weekdaysonly", "weekday", "businessday"]);
+
 const ONMISS = new Set(["always", "skip", "replace"]);
 
 // "anyday" chores (weekly-family cadence with no weekday label) get weekday(s)
@@ -147,6 +157,8 @@ function parseLabelConfig(labelNodes) {
       config.onExisting = name; // skip | replace | always
     } else if (name in MONTHS) {
       (config.months ||= []).push(MONTHS[name]); // jan..dec (annual/semi/bimonthly)
+    } else if (WEEKDAYS_ONLY.has(name)) {
+      config.weekdaysOnly = true; // nudge weekend landings onto a weekday
     } else if (name === "paused") {
       config.paused = true; // skip generation while present
     } else {
@@ -301,11 +313,37 @@ function lastDayOfMonth(L) {
   return new Date(Date.UTC(L.year, L.month, 0)).getUTCDate();
 }
 
+// Day of week (0=Sun .. 6=Sat) for a given day-of-month in L's month.
+const domWeekday = (L, day) => new Date(Date.UTC(L.year, L.month - 1, day)).getUTCDay();
+
 // first -> 1, middle -> 15, last -> last day; default first.
-function targetDayOfMonth(chore, L) {
-  if (chore.dom === "middle") return 15;
-  if (chore.dom === "last") return lastDayOfMonth(L);
-  return 1;
+//
+// With `weekdays-only`, a target that lands on a weekend moves to the nearest
+// weekday: Saturday back to Friday, Sunday forward to Monday. That's the usual
+// business-day convention and it never moves the chore more than one day.
+//
+// It also never leaves the month, which would silently change which cycle the
+// chore belongs to (or skip it entirely, since `isDueToday` is asked about one
+// day at a time): `first` on a Saturday can't go back to Friday, so it goes
+// forward to Monday, and `last` on a Sunday can't go forward to Monday, so it
+// goes back to Friday.
+//
+// Scope: this feeds `onTargetDay`, so it applies to monthly / bimonthly /
+// semi-annually / annually. `semi-monthly` computes its own days and the
+// weekly family is already pinned by weekday labels.
+export function targetDayOfMonth(chore, L) {
+  const base =
+    chore.dom === "middle" ? 15 : chore.dom === "last" ? lastDayOfMonth(L) : 1;
+  if (!chore.weekdaysOnly) return base;
+  const wd = domWeekday(L, base);
+  if (wd !== 0 && wd !== 6) return base; // already a weekday
+  const last = lastDayOfMonth(L);
+  if (wd === 6) {
+    const friday = base - 1;
+    return friday >= 1 ? friday : base + 2; // Sat -> Fri, else Mon
+  }
+  const monday = base + 1;
+  return monday <= last ? monday : base - 2; // Sun -> Mon, else Fri
 }
 
 // Append a link back to the source template so any spawned chore has a one-click
@@ -445,6 +483,7 @@ async function buildDefs(env) {
         intervalDays: descCfg.intervalDays,
         intervalMonths: descCfg.intervalMonths,
         dom: config.dom,
+        weekdaysOnly: config.weekdaysOnly,
         months: config.months,
         weekPhase: descCfg.weekPhase,
         dueAfterDays: descCfg.dueAfterDays,
@@ -1392,6 +1431,9 @@ function describeBase(c) {
   const dom = c.dom === "middle" ? "the 15th" : c.dom === "last" ? "the last day" : "the 1st";
   const months = (c.months || []).map((m) => MON_ABBR[m - 1]).join(", ");
   const inMonths = months ? ` (${months})` : "";
+  // Only meaningful for the monthly family, which is also the only place
+  // targetDayOfMonth is consulted.
+  const wdOnly = c.weekdaysOnly ? ", weekdays only" : "";
   switch (c.cadence) {
     case "daily": return "Every day";
     case "interval": return `Every ${c.intervalDays} days${c.start ? ` from ${c.start}` : ""}`;
@@ -1400,10 +1442,10 @@ function describeBase(c) {
     case "biweekly": return `Every other week on ${days || "—"}`;
     case "triweekly": return `Every 3 weeks on ${days || "—"}`;
     case "semi-monthly": return "Twice a month — the 1st & 15th";
-    case "monthly": return `Monthly on ${dom}`;
-    case "bimonthly": return `Every other month on ${dom}${inMonths}`;
-    case "semi-annually": return `Twice a year on ${dom}${inMonths}`;
-    case "annually": return `Once a year on ${dom}${inMonths}`;
+    case "monthly": return `Monthly on ${dom}${wdOnly}`;
+    case "bimonthly": return `Every other month on ${dom}${inMonths}${wdOnly}`;
+    case "semi-annually": return `Twice a year on ${dom}${inMonths}${wdOnly}`;
+    case "annually": return `Once a year on ${dom}${inMonths}${wdOnly}`;
     default: return "—";
   }
 }
@@ -1465,6 +1507,7 @@ function summarizeTemplate(t) {
     intervalDays: descCfg.intervalDays,
     intervalMonths: descCfg.intervalMonths,
     dom: config.dom,
+    weekdaysOnly: config.weekdaysOnly,
     months: config.months,
     weekPhase: descCfg.weekPhase,
     start: descCfg.start,

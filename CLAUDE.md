@@ -90,6 +90,26 @@ Widget page (`src/widgetpage.js`):
   extract `<script>` from `renderWidgetPage(...)` and run `node --check` on it. A syntax check of
   `widgetpage.js` itself passes regardless, since the broken code is inside a string.
 
+`weekdays-only` (template label, monthly family):
+- Moves a weekend landing to the nearest weekday — **Sat back to Fri, Sun forward to Mon** — and
+  **never crosses out of the month**, because `isDueToday` is asked about one day at a time, so a
+  date pushed into the next month silently skips that cycle. `first` on a Saturday therefore goes
+  forward and `last` on a Sunday goes back.
+- Applies to **monthly / bimonthly / semi-annually / annually** only — it works by adjusting
+  `targetDayOfMonth`, which is the only thing `onTargetDay` consults. `semi-monthly` computes its
+  own days and the weekly family is already pinned by weekday labels.
+- Added for the investment chores (`middle` = the 15th, which lands on a weekend ~2 months in 7):
+  trades need a day the market is open. Accepted spellings: `weekdays-only`, `weekdaysonly`,
+  `weekday`, `businessday`.
+
+**Scheduling fields live in TWO parallel construction sites.** `buildDefs` (what actually
+generates) and `summarizeTemplate` (what `/describe` reports) each build their own chore object
+from the same `parseLabelConfig` output. Add a field to one and not the other and generation is
+right while the diagnostic lies — `weekdays-only` shipped exactly that way for one deploy:
+`/describe` kept reporting plain 15ths, including a Sunday, while generation was already correct.
+When adding any scheduling directive, grep for the field name and expect **two** assignment sites
+plus the `describeBase` summary text.
+
 Markers that protect manual intent (labels on the generated chore, not the template):
 - **`snoozed`** — set by `/chores snooze`. A snoozed chore sits on a date its template never
   generates, which is indistinguishable from a stale copy left by a schedule change, so the
