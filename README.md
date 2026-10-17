@@ -299,6 +299,10 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 | `GET /replace?key=…&issue=CHO-12` | Archives `CHO-12` and spawns a fresh copy (same title/labels/description, due today, assignee rotated to the other member). |
 | `GET /done?key=…&match=bathroom` | Marks the soonest-due active chore whose title contains the text as **Done** (excludes templates). Powers voice/shortcut "I cleaned the bathroom". |
 | `GET /cancel?key=…&match=bathroom` | Marks the soonest-due matching chore **Canceled** — clears it without counting as work done. Powers the widget's ✖. |
+| `GET /insights?key=…[&dry=1&days=120]` | Monthly chore review: computed recommendations (wrong weekday, cadence too frequent, chronically missed, logging gaps, effort drift) posted to the stats channel. `&dry=1` returns the findings and the rendered body without posting. Runs automatically on the 1st. |
+| `GET /webhooklog?key=…[&n=30]` | The last webhook arrivals and what became of each (accepted / bad-signature / stale / handler-threw). |
+| `GET /webhookcheck?key=…` | Linear’s own view of the webhook registration. |
+| `GET /refresh-digest?key=…` | Forces the in-place re-render of today’s digest message. |
 | `GET /snooze?key=…&match=bathroom` | Pushes the soonest-due matching chore out **one day**, anchored to today so an overdue chore lands on tomorrow. Powers the widget's 😴 and the digest's snooze row. Anything further out is a manual due-date edit. |
 | `GET /recent-done?key=…&days=21` | What the `needswork` autocomplete would offer, plus its in-Worker timing. That path runs inside Discord's 3s autocomplete budget and can't be exercised without signing an interaction. |
 | `GET /` | Health check — returns `linear-discord-bridge ok`. |
@@ -471,6 +475,8 @@ most-missed chores). It's well within D1's free tier (5 GB, 100k writes/day).
 | `src/db.js` | D1 analytics: snapshot, dashboard and `/stats` queries. |
 | `src/widgetpage.js` | The phone widget page (one big template literal — see CLAUDE.md). |
 | `src/dashboardpage.js` | The stats dashboard page. |
+| `src/insights.js` | Monthly review rules — pure, all numbers computed here. |
+| `src/insightspost.js` | Renders the monthly post; optional Claude wording. |
 | `test/` | Unit suite — `npm test`. |
 | `wrangler.toml` | Worker config, cron schedule, non-secret vars. |
 | `CLAUDE.md` | Non-obvious operational knowledge and the traps worth knowing. |

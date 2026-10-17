@@ -27,6 +27,8 @@ import {
 import { logChores, queryStats, queryDashboard, queryLeisure } from "./db.js";
 import { saveDigestMessage, getDigestMessage, clearDigestMessage } from "./db.js";
 import { logWebhook, recentWebhooks } from "./db.js";
+import { gatherInsights, parseTargetSplit } from "./insights.js";
+import { buildInsightsPost } from "./insightspost.js";
 import {
   fetchDueIssues,
   fetchActiveIssueCount,
@@ -437,6 +439,19 @@ async function handleRequest(request, env, ctx) {
       const rows = await recentWebhooks(env, parseInt(url.searchParams.get("n") || "30", 10))
         .catch((e) => ({ error: e.message }));
       return new Response(JSON.stringify(rows, null, 2) + "\n", {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.pathname === "/insights") {
+      // Monthly review. `&dry=1` returns the computed findings and the rendered
+      // body WITHOUT posting, so the recommendations can be read and the rules
+      // tuned before anything lands in Discord.
+      if (!authed(url, env)) return new Response("Not found", { status: 404 });
+      const r = await postInsights(env, {
+        dry: !!url.searchParams.get("dry"),
+        days: parseInt(url.searchParams.get("days") || "0", 10) || undefined,
+      }).catch((e) => ({ error: e.message }));
+      return new Response(JSON.stringify(r, null, 2) + "\n", {
         headers: { "Content-Type": "application/json" },
       });
     }
@@ -991,6 +1006,22 @@ async function handleCron(env) {
     }
   }
 
+  // 5b. Monthly chore review (1st of the month).
+  //
+  // Gated inside the daily run rather than given its own cron entry on purpose:
+  // the scheduled handler dispatches on the cron STRING, and anything that is
+  // not the leisure cron falls through to this full daily job — so a third
+  // trigger would have run generation, the digest and the sweep a second time
+  // every month. One trigger is easier to reason about than three.
+  if (localDate(new Date()).dom === 1) {
+    try {
+      const r = await postInsights(env);
+      console.log("monthly insights:", JSON.stringify(r));
+    } catch (err) {
+      console.error("Monthly insights failed:", err);
+    }
+  }
+
   // 6. Refresh template schedule comments (Sundays — keeps "next" dates current
   //    without colliding with Monday's heavier generation run).
   if (localDate(new Date()).weekday === 0) {
@@ -1293,6 +1324,55 @@ async function archiveOldChores(env, { dryRun = false } = {}) {
     }
   }
   return { archived: n, found: old.length, byState, retentionDays: days };
+}
+
+// Monthly chore review: computed findings, optionally worded by Claude.
+//
+// The estimate map is built the same way /dashboard builds it, from `estimate:`
+// and `effort:` on the templates, so the effort split here matches the number on
+// the dashboard rather than quietly using a different basis.
+async function postInsights(env, { dry = false, days } = {}) {
+  const costMap = {};
+  try {
+    for (const t of await fetchRecurringTemplates(env, recurringProject(env))) {
+      const em = (t.description || "").match(/^\s*estimate\s*:\s*([0-9hm ]+)$/im);
+      const mins = em ? parseDuration(em[1]) : undefined;
+      const ef = (t.description || "").match(/^\s*effort\s*:\s*([1-5])\s*$/im);
+      const effort = ef ? parseInt(ef[1], 10) : undefined;
+      if (mins || effort) costMap[(t.title || "").toLowerCase()] = choreCost(mins, effort);
+    }
+  } catch (e) {
+    // Without estimates the effort split falls back to a flat 15m per chore,
+    // which is worth reporting rather than failing the whole review over.
+    console.error("insights: template estimates unavailable:", e.message);
+  }
+
+  const data = await gatherInsights(env, {
+    days: days || parseInt(env.INSIGHTS_WINDOW_DAYS || "120", 10),
+    estimateOf: (title) => costMap[(title || "").toLowerCase()] ?? 15,
+    targetSplit: parseTargetSplit(env.ROTATION_WEIGHTS || "Alex:60,Kristal:40"),
+  });
+  if (!data) return { posted: false, reason: "no DB" };
+
+  const { source, message } = await buildInsightsPost(env, data);
+  if (dry) {
+    return {
+      dry: true,
+      source,
+      window: { since: data.since, until: data.until, days: data.windowDays },
+      summary: data.summary,
+      split: data.split,
+      titlesConsidered: data.titlesConsidered,
+      findings: data.findings,
+      body: message.embeds[0].description,
+    };
+  }
+
+  const url =
+    env.DISCORD_WEBHOOK_STATS || env.DISCORD_WEBHOOK_DUE || env.DISCORD_WEBHOOK_DEFAULT;
+  if (!url) return { posted: false, reason: "no webhook configured", source };
+  await postToDiscord(url, message);
+  return { posted: true, source, findings: data.findings.length };
 }
 
 // Posts the weekly scoreboard. On the cron it only runs Mondays; `force` (the

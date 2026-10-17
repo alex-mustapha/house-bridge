@@ -236,6 +236,29 @@ Diagnostics:
 - **`/recent-done?key=`** shows exactly what the `needswork` picker would offer plus its in-Worker
   timing — that path can't otherwise be exercised without signing a Discord interaction.
 
+Monthly review (`src/insights.js` + `src/insightspost.js`):
+- **Every number and every recommendation is computed**, in `analyze`, which is pure. The model in
+  `insightspost.js` is handed finished findings and asked to reword them; it is never given raw
+  data to draw conclusions from and is never the source of a figure. A monthly post with
+  confident, slightly-wrong numbers is worse than no post — you stop trusting it after the first
+  one you catch. Don't "simplify" this by passing the model the log.
+- No `ANTHROPIC_API_KEY` → `renderPlain` goes out instead. The feature degrades to less pretty,
+  never to silently missing.
+- **Rules need a rate, not just a count.** The first version fired on `missed >= 3` and reported
+  "missed 3 of 38 (8%)" as a problem, burying the findings that mattered. Every rule carries a
+  minimum sample size too; advice off three data points is a guess in a recommendation's clothing.
+- **One finding per chore** (`PRIORITY` + dedupe). Several rules fire on the same title and they
+  are not equally useful: "move it to Sunday" beats "it gets missed a lot", and for one chore the
+  missed and unlogged rules gave outright contradictory advice. `load-drift` is keyed by PERSON and
+  is exempt from the dedupe.
+- The `possibly-unlogged` vs `chronically-missed` split is deliberate: punctual-when-recorded but
+  often absent means the work happened and nobody ticked it; late-when-recorded means a real
+  problem. Don't collapse them.
+- It is gated inside the DAILY cron on `dom === 1`, not given its own trigger. The scheduled
+  handler dispatches on the cron string and anything that isn't `LEISURE_CRON` falls through to the
+  full daily job — a third trigger would have run generation, the digest and the sweep twice over
+  every month.
+
 ## Tests
 `npm test` — Node's built-in runner (`node --test`), no dependencies to install. Files live in
 `test/*.test.mjs`.
