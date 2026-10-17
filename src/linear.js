@@ -336,7 +336,7 @@ export async function setIssueState(env, id, stateId) {
 }
 
 // Mark the best-matching active chore done by (fuzzy) title — soonest-due wins.
-// Shared by the /done endpoint and the Alexa skill.
+// Shared by the /done endpoint, the widget and the digest dropdown.
 export async function markChoreDone(env, match) {
   const matches = await findActiveByTitle(env, match, choreProjects(env));
   if (!matches.length) return { ok: false, message: `No active task matching "${match}"` };

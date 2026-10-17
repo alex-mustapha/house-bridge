@@ -66,7 +66,6 @@ const LEISURE_CRON = "0 2 * * *";
 import { COMMANDS } from "./commands.js";
 import { renderDashboardPage } from "./dashboardpage.js";
 import { buildICS } from "./calendar.js";
-import { verifyAlexaRequest, handleAlexa } from "./alexa.js";
 
 // Parse DISCORD_MENTIONS ("Alex:123,Kristal:456") into { alex: "123", ... }.
 function parseMentions(spec) {
@@ -256,23 +255,6 @@ async function handleRequest(request, env, ctx) {
         return handleRequest(new Request(u), env, ctx);
       };
       const resp = await handleInteraction(interaction, env, ctx, dispatch);
-      return new Response(JSON.stringify(resp), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    // Alexa custom-skill requests (signed POST from Alexa).
-    if (url.pathname === "/alexa" && request.method === "POST") {
-      let payload;
-      try {
-        payload = JSON.parse(await request.text());
-      } catch {
-        return new Response("bad json", { status: 400 });
-      }
-      if (!verifyAlexaRequest(payload, env)) {
-        return new Response("unauthorized", { status: 401 });
-      }
-      const resp = await handleAlexa(payload, env);
       return new Response(JSON.stringify(resp), {
         headers: { "Content-Type": "application/json" },
       });

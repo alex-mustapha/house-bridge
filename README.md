@@ -299,6 +299,8 @@ On-demand HTTP endpoints for intervening outside the schedule. All require
 | `GET /replace?key=…&issue=CHO-12` | Archives `CHO-12` and spawns a fresh copy (same title/labels/description, due today, assignee rotated to the other member). |
 | `GET /done?key=…&match=bathroom` | Marks the soonest-due active chore whose title contains the text as **Done** (excludes templates). Powers voice/shortcut "I cleaned the bathroom". |
 | `GET /cancel?key=…&match=bathroom` | Marks the soonest-due matching chore **Canceled** — clears it without counting as work done. Powers the widget's ✖. |
+| `GET /snooze?key=…&match=bathroom` | Pushes the soonest-due matching chore out **one day**, anchored to today so an overdue chore lands on tomorrow. Powers the widget's 😴 and the digest's snooze row. Anything further out is a manual due-date edit. |
+| `GET /recent-done?key=…&days=21` | What the `needswork` autocomplete would offer, plus its in-Worker timing. That path runs inside Discord's 3s autocomplete budget and can't be exercised without signing an interaction. |
 | `GET /` | Health check — returns `linear-discord-bridge ok`. |
 
 `<CRON_KEY>` is the secret set via `wrangler secret put CRON_KEY`. **Never commit
@@ -313,35 +315,16 @@ the real value** — it guards every mutating endpoint above.
 | `GET /dashboard[?range=7\|30\|90\|365]` | Stats dashboard. Add `&user=<name>` for that person's private leisure panel — the shared link omits it entirely. |
 | `GET /cal/alex.ics` · `/cal/kristal.ics` · `/cal/unassigned.ics` | Calendar subscription feeds. |
 
-### Voice / "I just cleaned the X" (Alexa, Shortcuts, etc.)
+### Voice / "I just cleaned the X" (Siri Shortcuts, etc.)
 The `/done` endpoint marks a chore done by name, so any trigger can drive it:
-- **Alexa (natural phrase):** a custom skill needs an invocation name, so to say a
-  bare *"Alexa, I just cleaned the bathroom"* you use an **Alexa Routine** on that
-  phrase + a webhook bridge (IFTTT "Say a specific phrase" → Webhooks, or Voice
-  Monkey) that does `GET /done?key=…&match=bathroom`. One routine per chore phrase.
-- **iPhone/Siri Shortcut:** a Shortcut that hits the same URL — no third party.
 
-Marking done also fires the normal ✅ Discord post and the "all done today" check.
+- **iPhone/Siri Shortcut:** a Shortcut that hits
+  `GET /done?key=…&match=bathroom` — no third party involved.
 
-### Alexa custom skill ("Alexa, tell chores I cleaned the bathroom")
-The Worker serves an Alexa endpoint at `POST /alexa`. Setup (all in the web
-[Alexa Developer Console](https://developer.amazon.com/alexa/console/ask) — sign
-in with the **same Amazon account as your Echo** so the dev skill works on your
-devices without publishing):
-1. **Create Skill** → name `Chores` → model **Custom** → hosting **Provision your
-   own** → **Start from Scratch**.
-2. **Build → Invocation** → invocation name: `chores`.
-3. **Build → Interaction Model → JSON Editor** → paste `alexa-skill-model.json`
-   → **Save** → **Build Model**.
-4. **Build → Endpoint** → **HTTPS** → Default Region:
-   `https://<your-worker>/alexa` → SSL cert type: *"…sub-domain of a domain that
-   has a wildcard certificate…"* (true for `*.workers.dev`) → **Save**.
-5. Copy the **Skill ID** (Endpoint page) → `wrangler secret put ALEXA_SKILL_ID`.
-6. **Test** tab → set to **Development** → try "tell chores I cleaned the
-   bathroom", then say it on your Echo.
+Marking done also posts the usual completion embed to the activity channel and
+re-renders today's digest in place, whichever surface it came from.
 
-The `MarkDoneIntent` captures the chore as free text and routes through the same
-`markChoreDone` logic as `/done`.
+### Example calls
 
 ```
 curl "https://<worker>/run-cron?key=YOUR_KEY"
@@ -471,17 +454,41 @@ most-missed chores). It's well within D1's free tier (5 GB, 100k writes/day).
 | File | Responsibility |
 |---|---|
 | `src/index.js` | Worker entry: webhook handler, cron jobs, toolkit endpoints. |
+| `src/config.js` | The project/team names and defaults everything else keys off. |
 | `src/verify.js` | HMAC-SHA256 verification of Linear webhook signatures. |
 | `src/linear.js` | Linear GraphQL client + all queries/mutations. |
 | `src/discord.js` | Builds Discord embeds/messages and posts them. |
-| `src/recurring.js` | Recurring-chore engine: label parsing, cadence, rotation, replace. |
-| `src/stats.js` | Weekly scoreboard computation. |
-| `src/db.js` | D1 analytics: weekly snapshot + `/stats` queries. |
+| `src/interactions.js` | Slash commands and component (dropdown) handling. |
+| `src/commands.js` | Slash-command definitions registered with Discord. |
+| `src/recurring.js` | Recurring-chore engine: label parsing, cadence, rotation, sweep. |
+| `src/streak.js` | The one streak definition, shared by widget, recap and dashboard. |
+| `src/stats.js` | Weekly recap computation. |
+| `src/marks.js` | Derived warning marks (slipped repeatedly / detail missed). |
+| `src/weights.js` | Effort weighting used as the rotation tiebreak. |
+| `src/pauses.js` | D1-backed pause/hold windows. |
+| `src/leisure.js` | One person's private habit log (deliberately not a household metric). |
+| `src/calendar.js` | `.ics` subscription feeds. |
+| `src/db.js` | D1 analytics: snapshot, dashboard and `/stats` queries. |
+| `src/widgetpage.js` | The phone widget page (one big template literal — see CLAUDE.md). |
+| `src/dashboardpage.js` | The stats dashboard page. |
+| `test/` | Unit suite — `npm test`. |
 | `wrangler.toml` | Worker config, cron schedule, non-secret vars. |
+| `CLAUDE.md` | Non-obvious operational knowledge and the traps worth knowing. |
 | `SETUP.md` | First-time setup checklist. |
 
 ## Testing
+- **`npm test`** — the unit suite (Node's built-in runner; nothing to install).
+  Covers the pure logic: the streak definition, the cadence engine and
+  `weekdays-only`, the weekly recap, the digest/all-clear builders, and a render
+  of the widget page whose emitted script is compiled to catch the
+  template-literal breakage that has shipped three times. `test/parity.test.mjs`
+  is a structural guard: it fails if a new scheduling directive bypasses the
+  shared `scheduleFromConfig` builder. `test/modules.test.mjs` imports every
+  module, which catches a missing import that `node --check` passes.
+  One test is skipped deliberately, with its reason in the skip message.
 - `npm run tail` — live-stream Worker logs while you create/update an issue.
+  Request logs are also retained (`[observability]` in `wrangler.toml`), so a
+  failure from yesterday can still be read.
 - `curl https://<your-worker-url>/` — health check, returns `ok`.
 - Trigger the cron locally: `npm run cron:test`, then visit the printed
   `/__scheduled` URL (wrangler prints exact instructions).
